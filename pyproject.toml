@@ -1,0 +1,16 @@
+[project]
+name = "xiaozu-bot"
+version = "0.1.0"
+description = "xiaozu-bot"
+readme = "README.md"
+requires-python = ">=3.9, <4.0"
+
+[tool.nonebot]
+adapters = [
+    { name = "OneBot V12", module_name = "nonebot.adapters.onebot.v12" },
+    { name = "Console", module_name = "nonebot.adapters.console" },
+    {name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11"},
+]
+plugins = ["nonebot_plugin_status", "nonebot_plugin_docs", "nonebot_plugin_chatrecorder", "haruka_bot", "leetcode", "nonebot_plugin_apscheduler", "nonebot_plugin_bot_tap"]
+plugin_dirs = ["xiaozu_bot/plugins"]
+builtin_plugins = ["echo", "single_session"]
