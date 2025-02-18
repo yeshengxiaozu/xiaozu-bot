@@ -41,7 +41,7 @@ for map in maps:
     aliases[name] = alias
 def formalize(str: str) -> str:
     str = str.lower()
-    for s in [" ",".",",","-","'","!","，","！","…","。",":","："] :
+    for s in [" ",".",",","-","'","!","，","！","…","。",":","：","+","_"] :
         str = str.replace(s,"")
     return str
 
