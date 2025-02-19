@@ -544,7 +544,7 @@ maps = [
 	{
 		"file_path" : "StrawberryJam/5_grandmaster/FracturedIridescence",
 		"answer" : "破空之虹 Fractured Iridescence",
-		"alias" : ["破空之虹","fracturediridescence",],
+		"alias" : ["破空之虹","fracturediridescence","破空"],
 	},
 	{
 		"file_path" : "StrawberryJam/5_grandmaster/Superluminary",

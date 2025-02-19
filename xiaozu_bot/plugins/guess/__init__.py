@@ -29,12 +29,15 @@ __plugin_meta__ = PluginMetadata(
 
 guess_test = on_command("guess_test",permission=SUPERUSER)
 guess_start = on_command("guess_start")
+guess_start_hard = on_command("guess_start_hard")
 guess = on_command("guess")
 guess_giveup = on_command("guess_giveup")
 guess_removecooldown = on_command("guess_rc",permission=SUPERUSER)
 
 crop_width = 256
 crop_height = 256
+crop_width_hard = 128
+crop_height_hard = 128
 aliases = {}
 
 for map in maps:
@@ -53,12 +56,78 @@ def getid(event: Union[GroupMessageEvent,PrivateMessageEvent]) -> str:
     else:
         return "g" + str(event.group_id)
 
+def isnonsense(image) -> bool:
+    CONSTANT_VARIANCE = 100
+    pixels = image.getdata()
+    num_pixels = len(pixels)
+    red_sum = red_square_sum = 0
+    green_sum = green_square_sum = 0
+    blue_sum = blue_square_sum = 0
+    for p in pixels:
+        red_sum = red_sum + p[0]
+        red_square_sum = red_square_sum + p[0]**2
+        green_sum = green_sum + p[1]
+        green_square_sum = green_square_sum + p[1]**2
+        blue_sum = blue_sum + p[2]
+        blue_square_sum = blue_square_sum + p[2]**2
+    expect_red = red_sum / num_pixels
+    expect_red_square = red_square_sum / num_pixels
+    expect_green = green_sum / num_pixels
+    expect_green_square = green_square_sum / num_pixels
+    expect_blue = blue_sum / num_pixels
+    expect_blue_square = blue_square_sum / num_pixels
+    red_variance = expect_red_square - expect_red ** 2
+    green_variance = expect_green_square - expect_green ** 2
+    blue_variance = expect_blue_square - expect_blue ** 2
+    return red_variance + green_variance + blue_variance < CONSTANT_VARIANCE * 3
+
+@guess_start_hard.handle()
+async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
+    id = getid(event)
+    if r.ttl(f"guess_cooldown_{id}") > 0:
+        t = r.ttl(f"guess_cooldown_{id}")
+        await guess_start_hard.finish(f"休息一下吧！请{t}秒后再来玩哦~", at_sender = True)
+    answer = r.hget("guess_answer",f"{id}")
+    if answer != None and answer != "NOTHING" and isinstance(event,GroupMessageEvent):
+        await guess_start_hard.finish(f"请先输入*guess_giveup结束目前的题目！", at_sender = True)
+    file_names = []
+    while len(file_names) == 0:
+        map = random.choice(maps)
+        folder_path = Path("xiaozu_bot/plugins/guess/data/" + map["file_path"])
+        file_names = [f.name for f in folder_path.iterdir() if f.is_file()]
+    file_name = random.choice(file_names)
+    image_path = folder_path / file_name
+    answer = map["answer"]
+    image = Image.open(image_path)
+    width, height = image.size
+    left = random.randint(0, width - crop_width_hard)
+    top = random.randint(0, height - crop_height_hard)
+    right = left + crop_width
+    bottom = top + crop_height
+    cropped_image = image.crop((left, top, right, bottom))
+    if (isnonsense(cropped_image)):
+        left = random.randint(0, width - crop_width_hard)
+        top = random.randint(0, height - crop_height_hard)
+        right = left + crop_width
+        bottom = top + crop_height
+        cropped_image = image.crop((left, top, right, bottom))
+    cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
+    cropped_image.save(cropped_path)
+    r.set(f"guess_cooldown_{id}",answer,ex = 30)
+    r.hset("guess_answer",f"{id}",answer)
+    r.hset("guess_ori",f"{id}",str(image_path))
+    await guess_start_hard.send(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
+    await guess_start_hard.finish()
+
 @guess_start.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     id = getid(event)
     if r.ttl(f"guess_cooldown_{id}") > 0:
         t = r.ttl(f"guess_cooldown_{id}")
         await guess_start.finish(f"休息一下吧！请{t}秒后再来玩哦~", at_sender = True)
+    answer = r.hget("guess_answer",f"{id}")
+    if answer != None and answer != "NOTHING" and isinstance(event,GroupMessageEvent):
+        await guess_start.finish(f"请先输入*guess_giveup结束目前的题目！", at_sender = True)
     file_names = []
     while len(file_names) == 0:
         map = random.choice(maps)
@@ -74,6 +143,12 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     right = left + crop_width
     bottom = top + crop_height
     cropped_image = image.crop((left, top, right, bottom))
+    if (isnonsense(cropped_image)):
+        left = random.randint(0, width - crop_width)
+        top = random.randint(0, height - crop_height)
+        right = left + crop_width
+        bottom = top + crop_height
+        cropped_image = image.crop((left, top, right, bottom))
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     cropped_image.save(cropped_path)
     r.set(f"guess_cooldown_{id}",answer,ex = 30)
