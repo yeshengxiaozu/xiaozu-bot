@@ -1,9 +1,10 @@
 from nonebot import get_plugin_config
 from nonebot.plugin import PluginMetadata
 from nonebot.adapters.onebot.v11 import MessageSegment
-from nonebot.adapters.onebot.v11 import GroupMessageEvent
+from nonebot.adapters.onebot.v11 import GroupMessageEvent,MessageEvent
 from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
 from nonebot.params import CommandArg
+from nonebot import require
 from nonebot import on_command
 from typing import Union
 from PIL import Image
@@ -14,6 +15,7 @@ import redis
 
 from .config import Config
 from .data import maps
+msg = require("zhua_api").msg_api()
 
 random.seed()
 r = redis.Redis(host='localhost', port=6379, decode_responses=True)  
@@ -45,10 +47,15 @@ def formalize(str: str) -> str:
         str = str.replace(s,"")
     return str
 
+def getid(event: Union[GroupMessageEvent,PrivateMessageEvent]) -> str:
+    if isinstance(event,PrivateMessageEvent) or False:
+        return str(event.user_id)
+    else:
+        return "g" + str(event.group_id)
 
 @guess_start.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    id = event.user_id
+    id = getid(event)
     if r.ttl(f"guess_cooldown_{id}") > 0:
         t = r.ttl(f"guess_cooldown_{id}")
         await guess_start.finish(f"休息一下吧！请{t}秒后再来玩哦~", at_sender = True)
@@ -69,32 +76,40 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     cropped_image = image.crop((left, top, right, bottom))
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     cropped_image.save(cropped_path)
-    r.set(f"guess_cooldown_{id}",answer,ex = 60)
+    r.set(f"guess_cooldown_{id}",answer,ex = 30)
     r.hset("guess_answer",f"{id}",answer)
     r.hset("guess_ori",f"{id}",str(image_path))
-    await guess_start.finish(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
+    await guess_start.send(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
+    await guess_start.finish()
 
 @guess_giveup.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    id = event.user_id
+    id = getid(event)
+    if r.ttl(f"guess_cooldown_{id}") > 0:
+        t = r.ttl(f"guess_cooldown_{id}")
+        await guess_start.finish(f"你先别急！距离该命令可用还差{t}秒捏~", at_sender = True)
     answer = r.hget("guess_answer",f"{id}")
     if answer == None or answer == "NOTHING":
         await guess_giveup.finish("你目前没有题目！请输入*guess_start生成一个新题目。", at_sender = True)
     r.hset("guess_answer", f"{id}", "NOTHING")
-    image_path = Path(r.hget("guess_ori",f"{id}"))
+    image_path = Path(r.hget("guess_ori",f"{id}")) 
     await guess_giveup.finish(MessageSegment.text(f"你放弃了！答案是：{answer}。")+MessageSegment.image(image_path), at_sender = True)
 
 @guess.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], arg: Message = CommandArg()):
-    id = event.user_id
+    id = getid(event)
     input = formalize(str(arg))
     answer = r.hget("guess_answer",f"{id}")
     if answer == None or answer == "NOTHING":
         await guess.finish("你目前没有题目！请输入*guess_start生成一个新题目。", at_sender = True)
     if input in aliases[answer]: input = answer
     if input != answer:
-        cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
-        await guess.finish(MessageSegment.text("你的猜测是错误的！你的题目是")+MessageSegment.image(cropped_path), at_sender = True)
+        if random.randint(1,10) <= 2:
+            cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
+            await guess.finish(MessageSegment.text("你的猜测是错误的！你的题目是")+MessageSegment.image(cropped_path), at_sender = True)
+        else:
+            await msg.emoji_like(event.message_id,"424")
+            await guess.finish()
     r.hset("guess_answer", f"{id}", "NOTHING")
     image_path = Path(r.hget("guess_ori",f"{id}"))
     await guess.finish(MessageSegment.text(f"你猜对了！答案是：{answer}。")+MessageSegment.image(image_path), at_sender = True)
@@ -111,10 +126,12 @@ async def handle_function():
     cropped_image = image.crop((left, top, right, bottom))
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/"test.png"
     cropped_image.save(cropped_path)
-    await guess_test.finish(MessageSegment.image(cropped_path))
+    send_ret = await guess.send(MessageSegment.image(cropped_path))
+    guess.send(str(send_ret))
+    await guess_test.finish()
 
 @guess_removecooldown.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    id = event.user_id
+    id = getid(event)
     r.set(f"guess_cooldown_{id}","removed",ex = 1)
-    await guess_removecooldown.finish("已经移除你的生成题目cd！（本命令为SUPERUSER专用哦）")
+    await guess_removecooldown.finish("已经移除你（或你所在群）的生成题目cd！")

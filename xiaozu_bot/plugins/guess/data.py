@@ -136,7 +136,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/2_intermediate/FrostedFragments",
         "answer": "霜冻碎片 Frosted Fragments",
-        "alias": ["霜冻碎片","frostedfragments","霜冻","碎片"],
+        "alias": ["霜冻碎片","frostedfragments","霜冻","碎片","冻"],
     },
     {
         "file_path" : "StrawberryJam/2_intermediate/LowGBotany",
@@ -186,7 +186,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/2_intermediate/EATGIRL",
         "answer": "吃豆女孩 EAT GIRL",
-        "alias": ["吃豆女孩","eatgirl","吃豆","赤豆女孩","赤石","赤豆女孩","赤石女孩"],
+        "alias": ["吃豆女孩","eatgirl","吃豆","赤豆女孩","赤石","赤豆女孩","赤石女孩","持矢女孩"],
     },
     {
         "file_path" : "StrawberryJam/2_intermediate/TempleofaThousandSkies",
@@ -534,12 +534,12 @@ maps = [
 	{
 		"file_path" : "StrawberryJam/5_grandmaster/LavaLayer",
 		"answer" : "熔岩层 Lava Layer",
-		"alias" : ["熔岩层","lavalayer","堵路鱼","反步兵地雷","yump","金草莓圣经"],
+		"alias" : ["熔岩层","lavalayer","堵路鱼","反步兵地雷","yump","金草莓圣经","熔岩"],
 	},
 	{
 		"file_path" : "StrawberryJam/5_grandmaster/kevintechspambin",
 		"answer" : "kevintechspam.bin",
-		"alias" : ["kevin","kevintechspam.bin","kevin.bin","凯文彬","kevin一大串","kevin一长串","凯文点彬","凯文铁壳撕盘点彬"],
+		"alias" : ["kevin","kevintechspambin","kevinbin","凯文彬","kevin一大串","kevin一长串","凯文点彬","凯文铁壳撕盘点彬"],
 	},
 	{
 		"file_path" : "StrawberryJam/5_grandmaster/FracturedIridescence",

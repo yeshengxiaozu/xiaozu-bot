@@ -26,6 +26,7 @@ nsdd = on_command("nsdd")
 insult = on_command("insult")
 jwz = on_command("jwz")
 bet1 = on_endswith("，你的猜测失败了！",rule = bot)
+test = on_command("1145141919810")
 
 @ultra.handle()
 async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg()):
@@ -76,3 +77,8 @@ async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg())
         t = args[1]
     await msg.send_emoji(f"我能在患有健忘症的情况下通关{args[0]}吗？今天，我决定要进行一项之前从未有人达成过的挑战。{args[0]}推出已经有{t}了，是时候有人来在受健忘症影响的情况下通关{args[0]}了。这能被完成吗？这真的可能吗？","10068")
     await jwz.finish()
+
+@test.handle()
+async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg()):
+    ret = await jwz.send("这是一个测试消息！")
+    await jwz.finish(str(ret))

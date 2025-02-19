@@ -24,7 +24,6 @@ __plugin_meta__ = PluginMetadata(
 )
 
 config = get_plugin_config(Config)
-test = on_command("test")
 buy = on_command("buy")
 sell = on_command("sell")
 check = on_command("ck")
@@ -76,11 +75,6 @@ class msg_api:
         return mes
 
 msg = msg_api()
-
-@test.handle()
-async def handle_function():
-    berry_manager.check(3251605531,10)
-    await test.finish("test dong:nothing")
     
 @buy.handle()
 async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg()):
