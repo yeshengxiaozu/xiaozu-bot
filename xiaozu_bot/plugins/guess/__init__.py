@@ -7,7 +7,7 @@ from nonebot.params import CommandArg
 from nonebot import require
 from nonebot import on_command
 from typing import Union
-from PIL import Image
+from PIL import Image,ImageDraw
 from pathlib import Path
 from nonebot.permission import SUPERUSER
 import random
@@ -56,8 +56,7 @@ def getid(event: Union[GroupMessageEvent,PrivateMessageEvent]) -> str:
     else:
         return "g" + str(event.group_id)
 
-def isnonsense(image) -> bool:
-    CONSTANT_VARIANCE = 100
+def get_variance(image) -> tuple[float,float,float]:
     pixels = image.getdata()
     num_pixels = len(pixels)
     red_sum = red_square_sum = 0
@@ -79,7 +78,11 @@ def isnonsense(image) -> bool:
     red_variance = expect_red_square - expect_red ** 2
     green_variance = expect_green_square - expect_green ** 2
     blue_variance = expect_blue_square - expect_blue ** 2
-    return red_variance + green_variance + blue_variance < CONSTANT_VARIANCE * 3
+    return (red_variance, green_variance, blue_variance)
+
+def isnonsense(image) -> bool:
+    r,g,b = get_variance(image)
+    return r+g+b<300
 
 @guess_start_hard.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
@@ -102,19 +105,20 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     width, height = image.size
     left = random.randint(0, width - crop_width_hard)
     top = random.randint(0, height - crop_height_hard)
-    right = left + crop_width
-    bottom = top + crop_height
+    right = left + crop_width_hard
+    bottom = top + crop_width_hard
     cropped_image = image.crop((left, top, right, bottom))
     if (isnonsense(cropped_image)):
         left = random.randint(0, width - crop_width_hard)
         top = random.randint(0, height - crop_height_hard)
-        right = left + crop_width
-        bottom = top + crop_height
+        right = left + crop_width_hard
+        bottom = top + crop_width_hard
         cropped_image = image.crop((left, top, right, bottom))
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     cropped_image.save(cropped_path)
     r.set(f"guess_cooldown_{id}",answer,ex = 30)
     r.hset("guess_answer",f"{id}",answer)
+    r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
     r.hset("guess_ori",f"{id}",str(image_path))
     await guess_start_hard.send(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
     await guess_start_hard.finish()
@@ -138,21 +142,18 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     answer = map["answer"]
     image = Image.open(image_path)
     width, height = image.size
-    left = random.randint(0, width - crop_width)
-    top = random.randint(0, height - crop_height)
-    right = left + crop_width
-    bottom = top + crop_height
-    cropped_image = image.crop((left, top, right, bottom))
-    if (isnonsense(cropped_image)):
+    for i in range(0,5):
         left = random.randint(0, width - crop_width)
         top = random.randint(0, height - crop_height)
         right = left + crop_width
         bottom = top + crop_height
         cropped_image = image.crop((left, top, right, bottom))
+        if (not isnonsense(cropped_image)): break
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     cropped_image.save(cropped_path)
     r.set(f"guess_cooldown_{id}",answer,ex = 30)
     r.hset("guess_answer",f"{id}",answer)
+    r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
     r.hset("guess_ori",f"{id}",str(image_path))
     await guess_start.send(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
     await guess_start.finish()
@@ -167,8 +168,14 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     if answer == None or answer == "NOTHING":
         await guess_giveup.finish("你目前没有题目！请输入*guess_start生成一个新题目。", at_sender = True)
     r.hset("guess_answer", f"{id}", "NOTHING")
-    image_path = Path(r.hget("guess_ori",f"{id}")) 
-    await guess_giveup.finish(MessageSegment.text(f"你放弃了！答案是：{answer}。")+MessageSegment.image(image_path), at_sender = True)
+    image_path = Path(r.hget("guess_ori",f"{id}"))
+    pos = r.hget("guess_answer_position",f"{id}").split()
+    pos = [int(i) for i in pos]
+    image = Image.open(image_path)
+    ImageDraw.Draw(image).rectangle([(pos[0],pos[1]),(pos[2],pos[3])],fill = None, outline = "red", width = 4)
+    cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
+    image.save(cropped_path)
+    await guess.finish(MessageSegment.text(f"你放弃了！答案是：{answer}。")+MessageSegment.image(cropped_path), at_sender = True)
 
 @guess.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], arg: Message = CommandArg()):
@@ -187,23 +194,35 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], a
             await guess.finish()
     r.hset("guess_answer", f"{id}", "NOTHING")
     image_path = Path(r.hget("guess_ori",f"{id}"))
-    await guess.finish(MessageSegment.text(f"你猜对了！答案是：{answer}。")+MessageSegment.image(image_path), at_sender = True)
+    pos = r.hget("guess_answer_position",f"{id}").split()
+    pos = [int(i) for i in pos]
+    image = Image.open(image_path)
+    ImageDraw.Draw(image).rectangle([(pos[0],pos[1]),(pos[2],pos[3])],fill = None, outline = "red", width = 4)
+    cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
+    image.save(cropped_path)
+    await guess.finish(MessageSegment.text(f"你猜对了！答案是：{answer}。")+MessageSegment.image(cropped_path), at_sender = True)
 
 @guess_test.handle()
 async def handle_function():
-    image_path = f"xiaozu_bot/plugins/guess/data/test.jpg"
-    image = Image.open(image_path)
-    width, height = image.size
-    left = random.randint(0, width - crop_width)
-    top = random.randint(0, height - crop_height)
-    right = left + crop_width
-    bottom = top + crop_height
-    cropped_image = image.crop((left, top, right, bottom))
-    cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/"test.png"
-    cropped_image.save(cropped_path)
-    send_ret = await guess.send(MessageSegment.image(cropped_path))
-    guess.send(str(send_ret))
-    await guess_test.finish()
+    for i in range(0,5):
+        file_names = []
+        while len(file_names) == 0:
+            map = random.choice(maps)
+            folder_path = Path("xiaozu_bot/plugins/guess/data/" + map["file_path"])
+            file_names = [f.name for f in folder_path.iterdir() if f.is_file()]
+        file_name = random.choice(file_names)
+        image_path = folder_path / file_name
+        image = Image.open(image_path)
+        width, height = image.size
+        left = random.randint(0, width - crop_width)
+        top = random.randint(0, height - crop_height)
+        right = left + crop_width
+        bottom = top + crop_height
+        cropped_image = image.crop((left, top, right, bottom))
+        cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/"test.png"
+        cropped_image.save(cropped_path)
+        await guess_test.send(MessageSegment.image(cropped_path)+MessageSegment.text(str(get_variance(cropped_image))))
+    guess_test.finish()
 
 @guess_removecooldown.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):

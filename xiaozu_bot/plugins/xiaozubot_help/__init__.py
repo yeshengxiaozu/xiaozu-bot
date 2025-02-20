@@ -30,7 +30,7 @@ nsdd：你说得对，但是……
 insult：这破壁游戏……
 say：让机器人说一句话？（不定时开放）
 jwz x：我能在患有健忘症的情况下患有健忘症吗？
-guess(_start/giveup)：猜酱图（每个群共享题目哦！每人独立容易风控qaq）''')
+guess(_start(_hard)/giveup)：猜酱图 hard题目更小''')
     
 @helpb.handle()
 async def handle_function():
