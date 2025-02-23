@@ -131,12 +131,12 @@ maps = [
     {
         "file_path" : "StrawberryJam/2_intermediate/SeaofSoup",
         "answer": "汤之海 Sea of Soup",
-        "alias": ["汤之海","seaofsoup","汤汁海","汤海","海小汤","sos"],
+        "alias": ["汤之海","seaofsoup","汤汁海","汤海","海小汤","sos","汤","tzh"],
     },
     {
         "file_path" : "StrawberryJam/2_intermediate/FrostedFragments",
         "answer": "霜冻碎片 Frosted Fragments",
-        "alias": ["霜冻碎片","frostedfragments","霜冻","碎片","冻"],
+        "alias": ["霜冻碎片","frostedfragments","霜冻","碎片","冻","冰西瓜片"],
     },
     {
         "file_path" : "StrawberryJam/2_intermediate/LowGBotany",
@@ -144,7 +144,7 @@ maps = [
         "alias": ["低重力植物园","lowgbotany","植物园"],
     },
     {
-        "file_path" : "StrawberryJam/2_intermediate/",
+        "file_path" : "StrawberryJam/2_intermediate/FifthDimension",
         "answer": "第五维度 Fifth Dimension",
         "alias": ["第五维度","fifthdimension","第五","维度","五维","第五人格"],
     },
@@ -376,7 +376,7 @@ maps = [
 	{
 		"file_path" : "StrawberryJam/4_expert/TheCoreProblem",
 		"answer" : "核心问题 The Core Problem",
-		"alias" : ["核心问题","thecoreproblem","核心"],
+		"alias" : ["核心问题","thecoreproblem","问题"],
 	},
 	{
 		"file_path" : "StrawberryJam/4_expert/OvergrownLinn",
@@ -446,7 +446,7 @@ maps = [
 	{
 		"file_path" : "StrawberryJam/4_expert/Hypnagogia",
 		"answer" : "梦醒时分 Hypnagogia",
-		"alias" : ["梦醒时分","hypnagogia","梦醒","果嗨u训练场","假四黄"],
+		"alias" : ["梦醒时分","hypnagogia","梦醒","果嗨u训练场","假四黄","萌新","萌新时分"],
 	},
 	{
 		"file_path" : "StrawberryJam/4_expert/EtherealAscension",
@@ -481,7 +481,7 @@ maps = [
 	{
 		"file_path" : "StrawberryJam/4_expert/ChromaticComplex",
 		"answer" : "斑斓色彩 Chromatic Complex",
-		"alias" : ["斑斓色彩","chromaticcomplex","斑斓"],
+		"alias" : ["斑斓色彩","chromaticcomplex","斑斓","色图"],
 	},
 	{
 		"file_path" : "StrawberryJam/4_expert/FortressFall",
@@ -539,7 +539,7 @@ maps = [
 	{
 		"file_path" : "StrawberryJam/5_grandmaster/kevintechspambin",
 		"answer" : "kevintechspam.bin",
-		"alias" : ["kevin","kevintechspambin","kevinbin","凯文彬","kevin一大串","kevin一长串","凯文点彬","凯文铁壳撕盘点彬"],
+		"alias" : ["kevin","kevintechspambin","kevinbin","凯文","凯文彬","kevin一大串","kevin一长串","凯文点彬","凯文铁壳撕盘点彬"],
 	},
 	{
 		"file_path" : "StrawberryJam/5_grandmaster/FracturedIridescence",
@@ -609,7 +609,7 @@ maps = [
 	{
 		"file_path" : "StrawberryJam/5_grandmaster/TheSolarExpress",
 		"answer" : "烈冕号 The Solar Express",
-		"alias" : ["烈冕号","thesolarexpress","冕","solexpress","申必水晶","菠萝号","烈冕蚝","烈冕","tse","铁道"],
+		"alias" : ["烈冕号","thesolarexpress","冕","solexpress","申必水晶","菠萝号","烈冕蚝","烈冕","tse","铁道","大菠萝","大水晶","大黄鱼"],
 	},
 	{
 		"file_path" : "StrawberryJam/5_grandmaster/Nelumbo",

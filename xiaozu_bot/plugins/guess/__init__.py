@@ -16,6 +16,7 @@ import redis
 from .config import Config
 from .data import maps
 msg = require("zhua_api").msg_api()
+berry_manager = require("zhua_api").berry_manager
 
 random.seed()
 r = redis.Redis(host='localhost', port=6379, decode_responses=True)  
@@ -33,6 +34,7 @@ guess_start_hard = on_command("guess_start_hard")
 guess = on_command("guess")
 guess_giveup = on_command("guess_giveup")
 guess_removecooldown = on_command("guess_rc",permission=SUPERUSER)
+guess_count = on_command("guess_count")
 
 crop_width = 256
 crop_height = 256
@@ -88,8 +90,8 @@ def isnonsense(image) -> bool:
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     id = getid(event)
     if r.ttl(f"guess_cooldown_{id}") > 0:
-        t = r.ttl(f"guess_cooldown_{id}")
-        await guess_start_hard.finish(f"休息一下吧！请{t}秒后再来玩哦~", at_sender = True)
+        await msg.emoji_like(event.message_id,"424")
+        await guess_start_hard.finish()
     answer = r.hget("guess_answer",f"{id}")
     if answer != None and answer != "NOTHING" and isinstance(event,GroupMessageEvent):
         await guess_start_hard.finish(f"请先输入*guess_giveup结束目前的题目！", at_sender = True)
@@ -108,15 +110,16 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     right = left + crop_width_hard
     bottom = top + crop_width_hard
     cropped_image = image.crop((left, top, right, bottom))
-    if (isnonsense(cropped_image)):
+    for i in range(0,5):
         left = random.randint(0, width - crop_width_hard)
         top = random.randint(0, height - crop_height_hard)
         right = left + crop_width_hard
         bottom = top + crop_width_hard
         cropped_image = image.crop((left, top, right, bottom))
+        if (not isnonsense(cropped_image)): break
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     cropped_image.save(cropped_path)
-    r.set(f"guess_cooldown_{id}",answer,ex = 30)
+    r.set(f"guess_cooldown_{id}",answer,ex = 60)
     r.hset("guess_answer",f"{id}",answer)
     r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
     r.hset("guess_ori",f"{id}",str(image_path))
@@ -127,8 +130,8 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     id = getid(event)
     if r.ttl(f"guess_cooldown_{id}") > 0:
-        t = r.ttl(f"guess_cooldown_{id}")
-        await guess_start.finish(f"休息一下吧！请{t}秒后再来玩哦~", at_sender = True)
+        await msg.emoji_like(event.message_id,"424")
+        await guess_start.finish()
     answer = r.hget("guess_answer",f"{id}")
     if answer != None and answer != "NOTHING" and isinstance(event,GroupMessageEvent):
         await guess_start.finish(f"请先输入*guess_giveup结束目前的题目！", at_sender = True)
@@ -151,7 +154,7 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
         if (not isnonsense(cropped_image)): break
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     cropped_image.save(cropped_path)
-    r.set(f"guess_cooldown_{id}",answer,ex = 30)
+    r.set(f"guess_cooldown_{id}",answer,ex = 60)
     r.hset("guess_answer",f"{id}",answer)
     r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
     r.hset("guess_ori",f"{id}",str(image_path))
@@ -162,11 +165,12 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     id = getid(event)
     if r.ttl(f"guess_cooldown_{id}") > 0:
-        t = r.ttl(f"guess_cooldown_{id}")
-        await guess_start.finish(f"你先别急！距离该命令可用还差{t}秒捏~", at_sender = True)
+        await msg.emoji_like(event.message_id,"424")
+        await guess_giveup.finish()
     answer = r.hget("guess_answer",f"{id}")
     if answer == None or answer == "NOTHING":
-        await guess_giveup.finish("你目前没有题目！请输入*guess_start生成一个新题目。", at_sender = True)
+        await msg.emoji_like(event.message_id,"10068")
+        await guess_giveup.finish()
     r.hset("guess_answer", f"{id}", "NOTHING")
     image_path = Path(r.hget("guess_ori",f"{id}"))
     pos = r.hget("guess_answer_position",f"{id}").split()
@@ -183,15 +187,16 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], a
     input = formalize(str(arg))
     answer = r.hget("guess_answer",f"{id}")
     if answer == None or answer == "NOTHING":
-        await guess.finish("你目前没有题目！请输入*guess_start生成一个新题目。", at_sender = True)
+        await msg.emoji_like(event.message_id,"10068")
+        await guess.finish()
+    r.set("guess_total_tries",r.hget("guess_total_tries")+1)
     if input in aliases[answer]: input = answer
     if input != answer:
+        await msg.emoji_like(event.message_id,"424")
         if random.randint(1,10) <= 2:
             cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
             await guess.finish(MessageSegment.text("你的猜测是错误的！你的题目是")+MessageSegment.image(cropped_path), at_sender = True)
-        else:
-            await msg.emoji_like(event.message_id,"424")
-            await guess.finish()
+        await guess.finish()
     r.hset("guess_answer", f"{id}", "NOTHING")
     image_path = Path(r.hget("guess_ori",f"{id}"))
     pos = r.hget("guess_answer_position",f"{id}").split()
@@ -200,7 +205,23 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], a
     ImageDraw.Draw(image).rectangle([(pos[0],pos[1]),(pos[2],pos[3])],fill = None, outline = "red", width = 4)
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     image.save(cropped_path)
-    await guess.finish(MessageSegment.text(f"你猜对了！答案是：{answer}。")+MessageSegment.image(cropped_path), at_sender = True)
+    if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event):
+        if pos[2]-pos[0] == crop_width_hard:
+            berry_manager.setCoins(event.user_id,berry_manager.getCoins(event.user_id)+5)
+            append = "本次奖励5蓝莓"
+        else:
+            berry_manager.setCoins(event.user_id,berry_manager.getCoins(event.user_id)+2)
+            append = "本次奖励2蓝莓"
+    else:
+        append = ""
+    r.set("guess_total_right",r.hget("guess_total_right")+1)
+    await guess.finish(MessageSegment.text(f"你猜对了！答案是：{answer}。")+MessageSegment.image(cropped_path) + MessageSegment.text(append), at_sender = True)
+
+@guess_count.handle()
+async def handle_function():
+    t1 = r.get("guess_total_tries")
+    t2 = r.get("guess_total_right")
+    await guess_count.finish(f"全服总共进行了{t1}次猜测，猜对了{t2}道题。")
 
 @guess_test.handle()
 async def handle_function():

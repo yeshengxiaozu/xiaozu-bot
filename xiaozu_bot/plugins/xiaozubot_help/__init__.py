@@ -20,6 +20,7 @@ helpb = on_command("helpb")
 async def handle_function():
     await help.finish(
 '''欢迎使用小小卒！命令以*开头
+用户群：1035708051可以在里面对bot功能提建议什么的
 help：本命令！
 helpb：蓝莓相关功能说明
 小小卒对你回应按按钮：非法输入
@@ -30,7 +31,8 @@ nsdd：你说得对，但是……
 insult：这破壁游戏……
 say：让机器人说一句话？（不定时开放）
 jwz x：我能在患有健忘症的情况下患有健忘症吗？
-guess(_start(_hard)/giveup)：猜酱图 hard题目更小''')
+guess(_start(_hard)/giveup)：猜酱图 hard题目更小
+按钮是答错了，问号是目前没有题（一般是题目被答完了）''')
     
 @helpb.handle()
 async def handle_function():
@@ -48,4 +50,5 @@ roulette_pool：查询目前奖池蓝莓数XD
 使用各种命令时用蓝莓的变动替代草莓的变动
 在使用小卒bot的蓝莓相关功能前要先使用*buy
 将草莓1:1转化成蓝莓之后才能用于小卒bot相关功能
-之后可以用*sell将蓝莓重新转化成草莓实现提现''')
+之后可以用*sell将蓝莓重新转化成草莓实现提现
+此外：guess功能在且仅在bot群奖励蓝莓''')

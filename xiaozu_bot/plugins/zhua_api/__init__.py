@@ -33,9 +33,12 @@ give = on_command("give",permission=SUPERUSER)
 coins_fix = on_command("coins_fix",permission=SUPERUSER)
 
 class berry_manager:
-    async def is_berrybot(event: Event) -> bool:
+    def is_berrybot(event: Event) -> bool:
         return event.get_user_id() == "3948837959" or event.get_user_id() == "3928744142"
     rule_bot = Rule(is_berrybot)
+    def is_berrygroup(event: GroupMessageEvent) -> bool:
+        return event.group_id == messages.outer_group_id
+    rule_group = Rule(is_berrygroup)
 
     def setCoins(id: int, num: int):
         return r.hset("berit_coins",f"{id}",str(num))
