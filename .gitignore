@@ -141,3 +141,4 @@ dmypy.json
 # End of https://www.toptal.com/developers/gitignore/api/python
 
 xiaozu_bot/plugins/guess/pictures/
+xiaozu_bot/plugins/say/audios/831867557.wav

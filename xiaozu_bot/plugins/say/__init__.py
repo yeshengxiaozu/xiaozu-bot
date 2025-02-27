@@ -1,13 +1,16 @@
 from nonebot import get_plugin_config
 from nonebot.plugin import PluginMetadata
+from nonebot.adapters.onebot.v11 import MessageSegment
 from nonebot.adapters.onebot.v11 import PrivateMessageEvent
 from nonebot.adapters.onebot.v11 import Message, GroupMessageEvent
 from nonebot.params import CommandArg
 from nonebot import on_command
 from nonebot.rule import Rule
+from typing import Union
 from nonebot.permission import SUPERUSER
 from nonebot import require
 import requests
+import base64
 from pathlib import Path
 import os
 
@@ -51,39 +54,24 @@ class Cansay:
     sayenable = False
 
 @say.handle()
-async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg()):
+async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], arg: Message = CommandArg()):
     if not Cansay.sayenable:
         await say.finish("say功能目前不开放哦QAQ")
     text = str(arg)
+    if len(text) == 0:
+        await say.finish("你得在say后面加点东西……")
     if len(text) > 1000:
         await msg.emoji_like(event.message_id,"424")
         await say.finish("请善待小小卒！")
     res = requests.get("http://127.0.0.1:23456/voice/gpt-sovits?id=1&preset=default&text="+text)
     if res.status_code != 200:
         await say.finish()   
-    path = f"xiaozu_bot/plugins/say/audios/{event.message_id}.wav"
-    f = open(path,"wb+")
-    f.write(res.content)
-    f.close()
-    requests.post('http://localhost:3000/send_group_msg', json = json_group_audio(event.group_id,path))
-    os.remove(path)
-    await say.finish()
-
-@say.handle()
-async def handle_function(event: PrivateMessageEvent, arg: Message = CommandArg()):
-    if not Cansay.sayenable:
-        await say.finish("say功能目前不开放哦QAQ")
-    text = str(arg)
-    if len(text) > 1000:
-        await say.finish("请善待小小卒！")
-    res = requests.get("http://127.0.0.1:23456/voice/gpt-sovits?id=1&preset=default&text="+text)
-    if res.status_code != 200:
-        await say.finish()   
-    path = f"xiaozu_bot/plugins/say/audios/{event.message_id}.wav"
-    f = open(path,"wb+")
-    f.write(res.content)
-    f.close()
-    requests.post('http://localhost:3000/send_private_msg', json = json_private_audio(event.user_id,path))
+    b6 = base64.b64encode(res.content)
+    b6 = "base64://" + b6.decode('utf-8')
+    if isinstance(event,GroupMessageEvent):
+        requests.post('http://localhost:3000/send_group_msg', json = json_group_audio(event.group_id,b6))
+    else:
+        requests.post('http://localhost:3000/send_private_msg', json = json_private_audio(event.user_id,b6))
     os.remove(path)
     await say.finish()
 

@@ -32,6 +32,7 @@ roulette = on_command("roulette")
 get_map = on_command("map")
 get_pool = on_command("roulette_pool")
 donate = on_command("roulette_donate")
+roulette_count = on_command("roulette_count")
 set_pool = on_command("roulette_set_pool",permission=SUPERUSER)
 roulette_fix = on_command("roulette_fix",permission=SUPERUSER)
 rand_one = on_command("random")
@@ -47,8 +48,10 @@ async def handle_function(event: GroupMessageEvent):
     if r.get(f"roulette_status_{id}") == "pending":
         await roulette.finish("You have a pending roll. Please wait.",at_sender = True)
     if r.get(f"roulette_status_{id}") == "waiting":
-        await roulette.finish("Roulette have 3s cd. P-l-e-a-s-e w-a-i-t.",at_sender = True)
+        await msg.emoji_like(event.message_id,"424")
+        await roulette.finish()
     r.set(f"roulette_status_{id}","pending")
+    r.set("roulette_total",int(r.get("roulette_total"))+1)
     manager.setCoins(id,manager.getCoins(id)-10)
     manager.setCoins(event.self_id,manager.getCoins(event.self_id)+1)
     data.pool+=10
@@ -110,6 +113,11 @@ async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg())
     manager.setCoins(id,manager.getCoins(id)-num)
     await msg.send_at_emoji(id,f"你往池子里捐赠{num}蓝莓！\nPool: {data.pool}","144")
     await donate.finish()
+
+@roulette_count.handle()
+async def handle_function():
+    t = r.get("roulette_total")
+    await roulette_count.finish(f"全服总共进行了{t}次roulette。")
 
 @roulette_fix.handle()
 async def handle_function():

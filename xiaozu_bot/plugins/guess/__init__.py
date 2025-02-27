@@ -34,6 +34,7 @@ guess_start_hard = on_command("guess_start_hard")
 guess = on_command("guess")
 guess_giveup = on_command("guess_giveup")
 guess_removecooldown = on_command("guess_rc",permission=SUPERUSER)
+guess_cheat = on_command("guess_cheat",permission=SUPERUSER)
 guess_count = on_command("guess_count")
 
 crop_width = 256
@@ -48,7 +49,8 @@ for map in maps:
     aliases[name] = alias
 def formalize(str: str) -> str:
     str = str.lower()
-    for s in [" ",".",",","-","'","!","，","！","…","。",":","：","+","_"] :
+    for s in [" ",".",",","-","'","!","，","！","…","。",":","：","+","_",'''
+'''] :
         str = str.replace(s,"")
     return str
 
@@ -119,7 +121,7 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
         if (not isnonsense(cropped_image)): break
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     cropped_image.save(cropped_path)
-    r.set(f"guess_cooldown_{id}",answer,ex = 60)
+    r.set(f"guess_cooldown_{id}",answer,ex = 30)
     r.hset("guess_answer",f"{id}",answer)
     r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
     r.hset("guess_ori",f"{id}",str(image_path))
@@ -154,7 +156,7 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
         if (not isnonsense(cropped_image)): break
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     cropped_image.save(cropped_path)
-    r.set(f"guess_cooldown_{id}",answer,ex = 60)
+    r.set(f"guess_cooldown_{id}",answer,ex = 30)
     r.hset("guess_answer",f"{id}",answer)
     r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
     r.hset("guess_ori",f"{id}",str(image_path))
@@ -189,7 +191,7 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], a
     if answer == None or answer == "NOTHING":
         await msg.emoji_like(event.message_id,"10068")
         await guess.finish()
-    r.set("guess_total_tries",r.hget("guess_total_tries")+1)
+    r.set("guess_total_tries",int(r.get("guess_total_tries"))+1)
     if input in aliases[answer]: input = answer
     if input != answer:
         await msg.emoji_like(event.message_id,"424")
@@ -214,7 +216,7 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], a
             append = "本次奖励2蓝莓"
     else:
         append = ""
-    r.set("guess_total_right",r.hget("guess_total_right")+1)
+    r.set("guess_total_right",int(r.get("guess_total_right"))+1)
     await guess.finish(MessageSegment.text(f"你猜对了！答案是：{answer}。")+MessageSegment.image(cropped_path) + MessageSegment.text(append), at_sender = True)
 
 @guess_count.handle()
@@ -250,3 +252,10 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     id = getid(event)
     r.set(f"guess_cooldown_{id}","removed",ex = 1)
     await guess_removecooldown.finish("已经移除你（或你所在群）的生成题目cd！")
+
+@guess_cheat.handle()
+async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
+    id = getid(event)
+    answer = r.hget("guess_answer",f"{id}")
+    await msg.send_private(3251605531,str(id) + str(answer))
+    await guess_cheat.finish()

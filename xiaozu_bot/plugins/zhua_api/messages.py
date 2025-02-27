@@ -29,6 +29,15 @@ def json_group(group_id: int, text: str) -> set:
                 'text': text
                     }
         }]}
+def json_private(user_id: int, text: str) -> set:
+    return {
+        'user_id': user_id,
+        'message': [{
+            'type': 'text',
+            'data': {
+                'text': text
+                    }
+        }]}
 def json_group_at(group_id: int, id: int, text: str) -> set:
     return {
         'group_id': group_id,

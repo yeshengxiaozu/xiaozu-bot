@@ -58,7 +58,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/1_beginner/driveway",
         "answer": "如果我的“私人车道”让你差点死掉… If my 'driveway' almost did you in...",
-        "alias": ["如果我的私人车道让你差点死掉","ifmydrivewayalmostdidyouin","私人车道","driveway","如果我的私人车道"],
+        "alias": ["如果我的私人车道让你差点死掉","ifmydrivewayalmostdidyouin","私人车道","driveway","如果我的私人车道","车道"],
     },
     {
         "file_path" : "StrawberryJam/1_beginner/Treehive",
@@ -118,7 +118,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/1_beginner/ZZ_heartside",
         "answer": "蓝莓湾 Blueberry Bay",
-        "alias": ["蓝莓湾","blueberrybay","sjbhs","bhs","蓝莓","酱一心门","酱1心门","潮起潮落","ebbandflow"],
+        "alias": ["蓝莓湾","blueberrybay","sjbhs","bhs","蓝莓","酱一心门","酱1心门","一心门","1心门","潮起潮落","ebbandflow"],
     },
 
 
@@ -141,7 +141,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/2_intermediate/LowGBotany",
         "answer": "低重力植物园 Low-G Botany",
-        "alias": ["低重力植物园","lowgbotany","植物园"],
+        "alias": ["低重力植物园","lowgbotany","植物园","低重力"],
     },
     {
         "file_path" : "StrawberryJam/2_intermediate/FifthDimension",

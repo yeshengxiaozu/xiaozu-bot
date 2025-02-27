@@ -2,7 +2,7 @@ from nonebot import get_plugin_config
 from nonebot.plugin import PluginMetadata
 from nonebot import on_command,on_fullmatch
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
-from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
+from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent,MessageEvent
 from nonebot.params import CommandArg
 from nonebot.adapters import Event
 from nonebot.rule import Rule
@@ -30,6 +30,7 @@ check = on_command("ck")
 ckzhua = on_fullmatch({".ck","。ck"})
 test = on_command("test",permission=SUPERUSER)
 give = on_command("give",permission=SUPERUSER)
+extract = on_command("extract",permission=SUPERUSER)
 coins_fix = on_command("coins_fix",permission=SUPERUSER)
 
 class berry_manager:
@@ -60,6 +61,9 @@ class msg_api:
     group_id = outer_group_id
     async def send(self, text: str) -> dict:
         return json.loads(requests.post('http://localhost:3000/send_group_msg', json = json_group(self.group_id,text)).text)['data']
+    
+    async def send_private(self, id: int, text: str) -> dict:
+        return json.loads(requests.post('http://localhost:3000/send_private_msg', json = json_private(id,text)).text)['data']
     
     async def send_at(self, id: int, text: str) -> dict:
         return json.loads(requests.post('http://localhost:3000/send_group_msg', json = json_group_at(self.group_id,id,text)).text)['data']
@@ -188,6 +192,18 @@ async def handle_function(arg: Message = CommandArg()):
     num = int(args[1])
     berry_manager.setCoins(id,berry_manager.getCoins(id)+num)
     await give.finish(f"Success: {num} coins were given to id:{id}")
+
+@extract.handle()
+async def handle_function(event: MessageEvent, arg: Message = CommandArg()):
+    args = str(arg).lower().split()
+    if len(args) != 1:
+        extract.finish("INVALID SYNTAX")
+    num = int(args[1])
+    if berry_manager.getCoins(event.self_id) < num:
+        await extract.finish(f"bot don't have enough strawberries!")
+    berry_manager.setCoins(event.self_id,berry_manager.getCoins(event.self_id)-num)
+    berry_manager.setCoins(event.user_id,berry_manager.getCoins(event.user_id)+num)
+    await extract.finish(f"Success: {num} coins were extracted to admin")
 
 @coins_fix.handle()
 async def handle_function():
