@@ -27,6 +27,7 @@ config = get_plugin_config(Config)
 buy = on_command("buy")
 sell = on_command("sell")
 check = on_command("ck")
+check_bot = on_command("ckbot")
 ckzhua = on_fullmatch({".ck","。ck"})
 test = on_command("test",permission=SUPERUSER)
 give = on_command("give",permission=SUPERUSER)
@@ -34,8 +35,9 @@ extract = on_command("extract",permission=SUPERUSER)
 coins_fix = on_command("coins_fix",permission=SUPERUSER)
 
 class berry_manager:
-    def is_berrybot(event: Event) -> bool:
-        return event.get_user_id() == "3948837959" or event.get_user_id() == "3928744142"
+    def is_berrybot(event: GroupMessageEvent) -> bool:
+        return event.group_id == 1020661785
+        #return event.get_user_id() == "3948837959" or event.get_user_id() == "3928744142"
     rule_bot = Rule(is_berrybot)
     def is_berrygroup(event: GroupMessageEvent) -> bool:
         return event.group_id == messages.outer_group_id
@@ -49,6 +51,15 @@ class berry_manager:
             return 0
         return int(r.hget("berit_coins",f"{id}")) 
     
+    def ban(id: int, hrs: int):
+        r.set(f"forbid_{id}","forbidden",ex = hrs*3600)
+    
+    def recover(id: int):
+        r.set(f"forbid_{id}","recovered",ex = 1)
+    
+    def isforbid(id: int) -> bool:
+        return r.get(f"forbid_{id}") == "forbidden"
+    
     async def check(id: int, amount : int):
         requests.post('http://localhost:3000/send_group_msg', json = json_check(id,amount))
     check_finish = on_command("berry_check_finish", rule = rule_bot)
@@ -56,6 +67,9 @@ class berry_manager:
     async def change(id: int, amount : int):
         requests.post('http://localhost:3000/send_group_msg', json = json_change(id,amount))
     change_finish = on_command("berry_change_finish", rule = rule_bot)
+
+    forbid_guess = on_command("forbid_guess", rule = rule_bot)
+    forbid_guess_recover = on_command("forbid_guess_recover", rule = rule_bot)
 
 class msg_api:
     group_id = outer_group_id
@@ -147,6 +161,10 @@ async def handle_function(event: GroupMessageEvent):
     id = event.user_id
     await check.finish(f"你目前拥有{berry_manager.getCoins(id)}蓝莓",at_sender = True)
 
+@check_bot.handle()
+async def handle_function(event: MessageEvent):
+    await check_bot.finish(f"bot目前拥有{berry_manager.getCoins(event.self_id)}蓝莓")
+
 @check.handle()
 async def handle_function(event: PrivateMessageEvent):
     id = event.user_id
@@ -166,8 +184,16 @@ async def handle_function(event: GroupMessageEvent):
 async def handle_function(arg: Message = CommandArg()):
     args = str(arg).lower().split()
     id = int(args[0])
-    if args[2] != "true":
+    if args[2] == "404":
         await msg.send_at(id,"你没有这么多草莓！")
+        r.set(f"coins_status_{id}", "nothing")
+        await berry_manager.check_finish.finish()
+    elif args[2] == "502":
+        await msg.send_at(id,"请先解决你的债务！")
+        r.set(f"coins_status_{id}", "nothing")
+        await berry_manager.check_finish.finish()
+    elif args[2] != "200":
+        await msg.send_at(id,"someone told xiaozu there a problem with my 并非ai")
         r.set(f"coins_status_{id}", "nothing")
         await berry_manager.check_finish.finish()
     await berry_manager.change(id,-int(args[1]))
@@ -177,11 +203,33 @@ async def handle_function(arg: Message = CommandArg()):
     args = str(arg).lower().split()
     id = int(args[0])
     num = -int(args[1])
-    if args[2] != "true":
+    if args[2] == "502":
+        await msg.send_at(id,"请先解决你的债务！")
+        r.set(f"coins_status_{id}", "nothing")
+        await berry_manager.change_finish.finish()
+    elif args[2] != "200":
+        r.set(f"coins_status_{id}", "nothing")
         await berry_manager.change_finish.finish()
     berry_manager.setCoins(id,berry_manager.getCoins(id)+num)
     r.set(f"coins_status_{id}", "nothing")
     await msg.send_at(id,f"转化成功！一共转化了{abs(num)}草莓/蓝莓！")
+
+@berry_manager.forbid_guess.handle()
+async def handle_function(arg: Message = CommandArg()):
+    args = str(arg).lower().split()
+    id = int(args[0])
+    hrs = int(args[1])
+    berry_manager.ban(id,hrs)
+    await msg.send_at(id,"我不知道啊boom干的（蓝莓相关功能已禁用）")
+    await berry_manager.forbid_guess.finish()
+
+@berry_manager.forbid_guess_recover.handle()
+async def handle_function(arg: Message = CommandArg()):
+    args = str(arg).lower().split()
+    id = int(args[0])
+    berry_manager.recover(id)
+    await msg.send_at(id,"两只耳朵都听到了！（蓝莓相关功能已解禁）")
+    await berry_manager.forbid_guess_recover.finish()
 
 @give.handle()
 async def handle_function(arg: Message = CommandArg()):
@@ -198,7 +246,7 @@ async def handle_function(event: MessageEvent, arg: Message = CommandArg()):
     args = str(arg).lower().split()
     if len(args) != 1:
         extract.finish("INVALID SYNTAX")
-    num = int(args[1])
+    num = int(args[0])
     if berry_manager.getCoins(event.self_id) < num:
         await extract.finish(f"bot don't have enough strawberries!")
     berry_manager.setCoins(event.self_id,berry_manager.getCoins(event.self_id)-num)

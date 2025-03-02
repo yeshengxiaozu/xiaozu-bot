@@ -7,6 +7,7 @@ from nonebot.params import CommandArg
 from nonebot import require
 from nonebot import on_command
 from typing import Union
+from nonebot import logger
 from PIL import Image,ImageDraw
 from pathlib import Path
 from nonebot.permission import SUPERUSER
@@ -91,6 +92,9 @@ def isnonsense(image) -> bool:
 @guess_start_hard.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     id = getid(event)
+    if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event) and berry_manager.isforbid(event.user_id):
+        await msg.emoji_like(event.message_id,"128074")
+        await guess_start_hard.finish()
     if r.ttl(f"guess_cooldown_{id}") > 0:
         await msg.emoji_like(event.message_id,"424")
         await guess_start_hard.finish()
@@ -125,12 +129,16 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     r.hset("guess_answer",f"{id}",answer)
     r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
     r.hset("guess_ori",f"{id}",str(image_path))
+    #logger.success(str(id) + answer)
     await guess_start_hard.send(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
     await guess_start_hard.finish()
 
 @guess_start.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     id = getid(event)
+    if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event) and berry_manager.isforbid(event.user_id):
+        await msg.emoji_like(event.message_id,"128074")
+        await guess_start.finish()
     if r.ttl(f"guess_cooldown_{id}") > 0:
         await msg.emoji_like(event.message_id,"424")
         await guess_start.finish()
@@ -160,12 +168,16 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     r.hset("guess_answer",f"{id}",answer)
     r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
     r.hset("guess_ori",f"{id}",str(image_path))
+    #logger.success(str(id) + answer)
     await guess_start.send(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
     await guess_start.finish()
 
 @guess_giveup.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     id = getid(event)
+    if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event) and berry_manager.isforbid(event.user_id):
+        await msg.emoji_like(event.message_id,"128074")
+        await guess_giveup.finish()
     if r.ttl(f"guess_cooldown_{id}") > 0:
         await msg.emoji_like(event.message_id,"424")
         await guess_giveup.finish()
@@ -186,6 +198,9 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
 @guess.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], arg: Message = CommandArg()):
     id = getid(event)
+    if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event) and berry_manager.isforbid(event.user_id):
+        await msg.emoji_like(event.message_id,"128074")
+        await guess.finish("")
     input = formalize(str(arg))
     answer = r.hget("guess_answer",f"{id}")
     if answer == None or answer == "NOTHING":
@@ -210,9 +225,11 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], a
     if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event):
         if pos[2]-pos[0] == crop_width_hard:
             berry_manager.setCoins(event.user_id,berry_manager.getCoins(event.user_id)+5)
+            berry_manager.setCoins(event.self_id,berry_manager.getCoins(event.self_id)+2)
             append = "本次奖励5蓝莓"
         else:
             berry_manager.setCoins(event.user_id,berry_manager.getCoins(event.user_id)+2)
+            berry_manager.setCoins(event.self_id,berry_manager.getCoins(event.self_id)+1)
             append = "本次奖励2蓝莓"
     else:
         append = ""

@@ -191,7 +191,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/2_intermediate/TempleofaThousandSkies",
         "answer": "千空之寺 Temple of a Thousand Skies",
-        "alias": ["千空之寺","templeofathousandskies","千空","toats"],
+        "alias": ["千空之寺","templeofathousandskies","千空","toats","千空芝士"],
     },
     {
         "file_path" : "StrawberryJam/2_intermediate/SquaretheCircle",
@@ -221,7 +221,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/2_intermediate/ZZ_heartside",
         "answer": "树莓根下 Raspberry Roots",
-        "alias": ["树莓根下","raspberryroots","酱二心门","酱2心门","sjihs","ihs","树莓","生命之树","treeoflife"],
+        "alias": ["树莓根下","raspberryroots","酱二心门","酱2心门","sjihs","ihs","imhs","树莓","生命之树","treeoflife"],
     },
 
 
@@ -299,7 +299,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/3_advanced/RaindropsonRoses",
         "answer": "雨落玫瑰 Raindrops on Roses",
-        "alias": ["雨落玫瑰","raindropsonroses","雨落","raindrop"],
+        "alias": ["雨落玫瑰","raindropsonroses","雨落","raindrop","雨伞"],
     },
     {
         "file_path" : "StrawberryJam/3_advanced/ToggleTheory",
@@ -491,7 +491,7 @@ maps = [
 	{
 		"file_path" : "StrawberryJam/4_expert/GardenofKhutara",
 		"answer" : "库塔拉花园 Garden of Khu'tara",
-		"alias" : ["库塔拉花园","gardenofkhutara","库塔拉","花园","拉裤衩花园"],
+		"alias" : ["库塔拉花园","gardenofkhutara","库塔拉","拉裤衩花园"],
 	},
 	{
 		"file_path" : "StrawberryJam/4_expert/NarrowHollow",

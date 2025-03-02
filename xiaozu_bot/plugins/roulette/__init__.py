@@ -42,6 +42,9 @@ async def handle_function(event: GroupMessageEvent):
     if event.group_id != msg.group_id:
         await roulette.finish("这个功能无法在伯特群外使用！考虑使用*map作为替代品。")
     id = event.user_id
+    if manager.isforbid(id):
+        await msg.emoji_like(event.message_id,"128074")
+        await roulette.finish()
     if manager.getCoins(id)<10:
         await msg.send_at_emoji(id,"You don't have enough blueberries. 10 needed.\nUse *buy to convert strawberries.","144")
         await roulette.finish()
