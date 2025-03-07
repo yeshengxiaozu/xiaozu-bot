@@ -38,7 +38,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/1_beginner/MidnightSpire",
         "answer": "午夜之巅 Midnight Spire",
-        "alias": ["午夜之巅","midnightspire","午夜"],
+        "alias": ["午夜之巅","midnightspire"],
     },
     {
         "file_path" : "StrawberryJam/1_beginner/CassetteCliffs",
@@ -211,7 +211,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/2_intermediate/MidnightMonsoon",
         "answer": "午夜季风 Midnight Monsoon",
-        "alias": ["午夜季风","midnightmonsoon","季风","午夜"],
+        "alias": ["午夜季风","midnightmonsoon","季风"],
     },
     {
         "file_path" : "StrawberryJam/2_intermediate/PointlessMachines",

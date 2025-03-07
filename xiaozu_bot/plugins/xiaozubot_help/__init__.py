@@ -32,7 +32,8 @@ insult：这破壁游戏……
 say：让机器人说一句话？（不定时开放）
 jwz x：我能在患有健忘症的情况下患有健忘症吗？
 guess(_start(_hard)/giveup)：猜酱图 hard题目更小
-按钮是答错了，问号是目前没有题（一般是题目被答完了）''')
+按钮是答错了，问号是目前没有题（一般是题目被答完了）
+zhua：抓一个小卒？（只是随机抽一张图，没有库存等功能）''')
     
 @helpb.handle()
 async def handle_function():
