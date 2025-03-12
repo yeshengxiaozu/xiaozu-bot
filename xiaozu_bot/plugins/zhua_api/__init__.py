@@ -51,6 +51,9 @@ class berry_manager:
             return 0
         return int(r.hget("berit_coins",f"{id}")) 
     
+    def addCoins(id: int, num: int):
+        return r.hset("berit_coins",f"{id}",str(berry_manager.getCoins(id)+num))
+    
     def ban(id: int, hrs: int):
         r.set(f"forbid_{id}","forbidden",ex = hrs*3600)
     
@@ -104,7 +107,8 @@ async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg())
     args = str(arg).lower().split()
     id = event.user_id
     d = datetime.datetime.now()
-    if d.hour == 0 and d.minute < 30:
+    #if d.hour == 0 and d.minute < 30:
+    if True:
         await buy.finish("Fhloy/Foxelne正在冬眠[可怜]",at_sender = True)
     
     if r.get(f"coins_status_{id}") == "buying":
@@ -128,7 +132,8 @@ async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg())
     args = str(arg).lower().split()
     id = event.user_id
     d = datetime.datetime.now()
-    if d.hour == 0 and d.minute < 30:
+    #if d.hour == 0 and d.minute < 30:
+    if True:
         await sell.finish("Fhloy/Foxeline正在冬眠[可怜]",at_sender = True)
     
     if r.get(f"coins_status_{id}") == "buying":
@@ -210,7 +215,7 @@ async def handle_function(arg: Message = CommandArg()):
     elif args[2] != "200":
         r.set(f"coins_status_{id}", "nothing")
         await berry_manager.change_finish.finish()
-    berry_manager.setCoins(id,berry_manager.getCoins(id)+num)
+    berry_manager.addCoins(id,num)
     r.set(f"coins_status_{id}", "nothing")
     await msg.send_at(id,f"转化成功！一共转化了{abs(num)}草莓/蓝莓！")
 
@@ -238,7 +243,7 @@ async def handle_function(arg: Message = CommandArg()):
         give.finish("INVALID SYNTAX")
     id = int(args[0])
     num = int(args[1])
-    berry_manager.setCoins(id,berry_manager.getCoins(id)+num)
+    berry_manager.addCoins(id,num)
     await give.finish(f"Success: {num} coins were given to id:{id}")
 
 @extract.handle()
@@ -249,8 +254,8 @@ async def handle_function(event: MessageEvent, arg: Message = CommandArg()):
     num = int(args[0])
     if berry_manager.getCoins(event.self_id) < num:
         await extract.finish(f"bot don't have enough strawberries!")
-    berry_manager.setCoins(event.self_id,berry_manager.getCoins(event.self_id)-num)
-    berry_manager.setCoins(event.user_id,berry_manager.getCoins(event.user_id)+num)
+    berry_manager.addCoins(event.self_id,-num)
+    berry_manager.addCoins(event.user_id,num)
     await extract.finish(f"Success: {num} coins were extracted to admin")
 
 @coins_fix.handle()

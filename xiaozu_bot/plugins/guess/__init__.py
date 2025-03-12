@@ -3,10 +3,11 @@ from nonebot.plugin import PluginMetadata
 from nonebot.adapters.onebot.v11 import MessageSegment
 from nonebot.adapters.onebot.v11 import GroupMessageEvent,MessageEvent
 from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
+from typing import Union
 from nonebot.params import CommandArg
+from nonebot.matcher import Matcher
 from nonebot import require
 from nonebot import on_command
-from typing import Union
 from nonebot import logger
 from PIL import Image,ImageDraw
 from pathlib import Path
@@ -32,6 +33,7 @@ __plugin_meta__ = PluginMetadata(
 guess_test = on_command("guess_test",permission=SUPERUSER)
 guess_start = on_command("guess_start")
 guess_start_hard = on_command("guess_start_hard")
+guess_start_ultra = on_command("guess_start_ultra")
 guess = on_command("guess")
 guess_giveup = on_command("guess_giveup")
 guess_removecooldown = on_command("guess_rc",permission=SUPERUSER)
@@ -42,6 +44,8 @@ crop_width = 256
 crop_height = 256
 crop_width_hard = 128
 crop_height_hard = 128
+crop_width_ultra = 64
+crop_height_ultra = 64
 aliases = {}
 
 for map in maps:
@@ -89,62 +93,21 @@ def isnonsense(image) -> bool:
     r,g,b = get_variance(image)
     return r+g+b<300
 
-@guess_start_hard.handle()
-async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
+async def canStart(matcher: Matcher, event: Union[GroupMessageEvent,PrivateMessageEvent]):
     id = getid(event)
     if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event) and berry_manager.isforbid(event.user_id):
         await msg.emoji_like(event.message_id,"128074")
-        await guess_start_hard.finish()
+        await matcher.finish()
     if r.ttl(f"guess_cooldown_{id}") > 0:
         await msg.emoji_like(event.message_id,"424")
-        await guess_start_hard.finish()
+        await matcher.finish()
     answer = r.hget("guess_answer",f"{id}")
     if answer != None and answer != "NOTHING" and isinstance(event,GroupMessageEvent):
-        await guess_start_hard.finish(f"请先输入*guess_giveup结束目前的题目！", at_sender = True)
-    file_names = []
-    while len(file_names) == 0:
-        map = random.choice(maps)
-        folder_path = Path("xiaozu_bot/plugins/guess/data/" + map["file_path"])
-        file_names = [f.name for f in folder_path.iterdir() if f.is_file()]
-    file_name = random.choice(file_names)
-    image_path = folder_path / file_name
-    answer = map["answer"]
-    image = Image.open(image_path)
-    width, height = image.size
-    left = random.randint(0, width - crop_width_hard)
-    top = random.randint(0, height - crop_height_hard)
-    right = left + crop_width_hard
-    bottom = top + crop_width_hard
-    cropped_image = image.crop((left, top, right, bottom))
-    for i in range(0,5):
-        left = random.randint(0, width - crop_width_hard)
-        top = random.randint(0, height - crop_height_hard)
-        right = left + crop_width_hard
-        bottom = top + crop_width_hard
-        cropped_image = image.crop((left, top, right, bottom))
-        if (not isnonsense(cropped_image)): break
-    cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
-    cropped_image.save(cropped_path)
-    r.set(f"guess_cooldown_{id}",answer,ex = 30)
-    r.hset("guess_answer",f"{id}",answer)
-    r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
-    r.hset("guess_ori",f"{id}",str(image_path))
-    #logger.success(str(id) + answer)
-    await guess_start_hard.send(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
-    await guess_start_hard.finish()
+        await matcher.finish(f"请先输入*guess_giveup结束目前的题目！", at_sender = True)
 
-@guess_start.handle()
-async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
+async def guessStart(crop_size: tuple[int,int], matcher: Matcher, event: Union[GroupMessageEvent,PrivateMessageEvent]):
     id = getid(event)
-    if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event) and berry_manager.isforbid(event.user_id):
-        await msg.emoji_like(event.message_id,"128074")
-        await guess_start.finish()
-    if r.ttl(f"guess_cooldown_{id}") > 0:
-        await msg.emoji_like(event.message_id,"424")
-        await guess_start.finish()
-    answer = r.hget("guess_answer",f"{id}")
-    if answer != None and answer != "NOTHING" and isinstance(event,GroupMessageEvent):
-        await guess_start.finish(f"请先输入*guess_giveup结束目前的题目！", at_sender = True)
+    crop_width, crop_height = crop_size
     file_names = []
     while len(file_names) == 0:
         map = random.choice(maps)
@@ -155,7 +118,12 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     answer = map["answer"]
     image = Image.open(image_path)
     width, height = image.size
-    for i in range(0,5):
+    left = random.randint(0, width - crop_width)
+    top = random.randint(0, height - crop_height)
+    right = left + crop_width
+    bottom = top + crop_height
+    cropped_image = image.crop((left, top, right, bottom))
+    for i in range(0,20):
         left = random.randint(0, width - crop_width)
         top = random.randint(0, height - crop_height)
         right = left + crop_width
@@ -164,13 +132,34 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
         if (not isnonsense(cropped_image)): break
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     cropped_image.save(cropped_path)
-    r.set(f"guess_cooldown_{id}",answer,ex = 30)
+    r.set(f"guess_cooldown_{id}",answer,ex = 45)
     r.hset("guess_answer",f"{id}",answer)
     r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
     r.hset("guess_ori",f"{id}",str(image_path))
     #logger.success(str(id) + answer)
-    await guess_start.send(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
+    await matcher.send(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
+
+@guess_start.handle()
+async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
+    await canStart(guess_start, event)
+    id = getid(event)
+    await guessStart((256,256), guess_start, event)
     await guess_start.finish()
+
+@guess_start_hard.handle()
+async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
+    await canStart(guess_start_hard, event)
+    id = getid(event)
+    await guessStart((128,128), guess_start_hard, event)
+    await guess_start_hard.finish()
+
+@guess_start_ultra.handle()
+async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
+    await canStart(guess_start_ultra, event)
+    id = getid(event)
+    await guessStart((64,64), guess_start_ultra, event)
+    await guess_start_ultra.finish()
+
 
 @guess_giveup.handle()
 async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
@@ -210,7 +199,7 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], a
     if input in aliases[answer]: input = answer
     if input != answer:
         await msg.emoji_like(event.message_id,"424")
-        if random.randint(1,10) <= 2:
+        if random.randint(1,10) <= 1:
             cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
             await guess.finish(MessageSegment.text("你的猜测是错误的！你的题目是")+MessageSegment.image(cropped_path), at_sender = True)
         await guess.finish()
@@ -223,13 +212,17 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent], a
     cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
     image.save(cropped_path)
     if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event):
-        if pos[2]-pos[0] == crop_width_hard:
-            berry_manager.setCoins(event.user_id,berry_manager.getCoins(event.user_id)+5)
-            berry_manager.setCoins(event.self_id,berry_manager.getCoins(event.self_id)+2)
+        if pos[2]-pos[0] == crop_width_ultra:
+            berry_manager.addCoins(event.user_id,10)
+            berry_manager.addCoins(event.self_id,5)
+            append = "本次奖励10蓝莓"
+        elif pos[2]-pos[0] == crop_width_hard:
+            berry_manager.addCoins(event.user_id,5)
+            berry_manager.addCoins(event.self_id,2)
             append = "本次奖励5蓝莓"
         else:
-            berry_manager.setCoins(event.user_id,berry_manager.getCoins(event.user_id)+2)
-            berry_manager.setCoins(event.self_id,berry_manager.getCoins(event.self_id)+1)
+            berry_manager.addCoins(event.user_id,2)
+            berry_manager.addCoins(event.self_id,1)
             append = "本次奖励2蓝莓"
     else:
         append = ""

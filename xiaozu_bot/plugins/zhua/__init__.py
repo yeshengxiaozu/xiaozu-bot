@@ -1,11 +1,13 @@
 from nonebot import get_plugin_config
 from nonebot.plugin import PluginMetadata
 from nonebot.adapters.onebot.v11 import MessageSegment
-from nonebot.adapters.onebot.v11 import MessageEvent
-from nonebot import on_command
+from nonebot.adapters.onebot.v11 import GroupMessageEvent,MessageEvent
+from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
+from typing import Union
+from nonebot import on_command, require
 from pathlib import Path
 from nonebot.permission import SUPERUSER
-import random
+import random, redis
 
 from .config import Config
 
@@ -15,6 +17,8 @@ __plugin_meta__ = PluginMetadata(
     usage="",
     config=Config,
 )
+
+r = redis.Redis(host='localhost', port=6379, decode_responses=True)  
 
 descriptions = {
     "mc卒.png" : "小卒穿越进了mc，这是她的样子",
@@ -73,20 +77,47 @@ descriptions = {
     "野生克星.jpg" : "最基本的刺型。没什么好说的。",
     "思考卒.jpg" : "别吵，卒在烧烤",
     "bet2卒.jpg" : "。开枪自己",
+    "X卒.png" : "> <",
+    "按钮卒.png" : "xiaozu-notboom",
+    "流泪卒.png" : "[委屈]",
+    "黑脸卒.png" : "生气了",
+    "替身使者卒.jpg" : "竞技场神权，举办了",
+    "指指点点卒.jpg" : "you！",
+    "替身使者卒.jpg" : "可以魅惑敌人为你炼金",
+    "GD像素卒.png" : "小卒来到GD世界直接硬刚这里的Plat Demon, 这是她发生的变化",
+    "刺头卒.jpg" : "事实证明刺头人身还是太反人类了",
 }
 
 config = get_plugin_config(Config)
 
 zhua = on_command("zhua")
 zhua_test = on_command("zhua_test",permission=SUPERUSER)
+berry_manager = require("zhua_api").berry_manager
 
 @zhua.handle()
-async def handle_function(event: MessageEvent):
+async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
+    id = event.user_id
+    if r.get(f"zhua_cd_{id}") == "waiting":
+        t = r.ttl(f"zhua_cd_{id}")
+        await zhua.finish(f"别抓啦，{t}秒后再来吧",at_sender = True)
     folder_path = Path("xiaozu_bot/plugins/zhua/data/")
     file_name = random.choice(list(descriptions.keys()))
     name = file_name.split('.')[0]
     image_path = folder_path / file_name
-    await zhua.send(MessageSegment.text(f"恭喜你抓到一个小卒！\n") + MessageSegment.image(image_path) + MessageSegment.text(f"\n{name}\n{descriptions[file_name]}"),at_sender = True)
+    ra = random.random()
+    b = 0
+    if (ra < 0.01): b = 50
+    elif (ra < 0.05): b = 35
+    elif (ra < 0.2): b = 20
+    elif (ra < 0.5): b = 10
+    else: b = 5
+    if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event):
+        berry_manager.addCoins(event.user_id,b)
+        await zhua.send(MessageSegment.text(f"恭喜你抓到一个小卒！\n") + MessageSegment.image(image_path) + MessageSegment.text(f"\n{name}\n{descriptions[file_name]}\n\n你获得了{b}蓝莓"),at_sender = True)
+        r.set(f"zhua_cd_{id}","waiting",ex=1800)
+    else:
+        await zhua.send(MessageSegment.text(f"恭喜你抓到一个小卒！\n") + MessageSegment.image(image_path) + MessageSegment.text(f"\n{name}\n{descriptions[file_name]}\n\n你并没有获得{b}蓝莓"),at_sender = True)
+        r.set(f"zhua_cd_{id}","waiting",ex=600)
     await zhua.finish()
 
 @zhua_test.handle()

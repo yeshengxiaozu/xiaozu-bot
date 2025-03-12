@@ -70,11 +70,11 @@ async def handle_function(event: GroupMessageEvent):
         data.pool -= prizewined
         data.pool = max(data.pool,202)
         r.set('roulette_pool', str(data.pool))
-        r.set(f"roulette_status_{id}","waiting",ex=3)
+        r.set(f"roulette_status_{id}","waiting",ex=5)
         await msg.send_at_emoji(id,f"Your result is: {map_result}.\nCongradulated for winning {prizewined} blueberries!\n{data.pool} blueberries left in the pool.","144")
         await roulette.finish()
     else:
-        r.set(f"roulette_status_{id}","waiting",ex=3)
+        r.set(f"roulette_status_{id}","waiting",ex=5)
         await roulette.finish(f"Your result is: {map_result}.\n{data.pool} blueberries left in the pool.",at_sender = True)
 
 @get_pool.handle()

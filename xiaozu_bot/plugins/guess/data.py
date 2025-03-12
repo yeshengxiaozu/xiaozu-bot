@@ -48,7 +48,7 @@ maps = [
     {
         "file_path" : "StrawberryJam/1_beginner/RoseGarden",
         "answer": "玫瑰花园 Rose Garden",
-        "alias": ["玫瑰花园","rosegarden","玫瑰"],
+        "alias": ["玫瑰花园","rosegarden"],
     },
     {
         "file_path" : "StrawberryJam/1_beginner/OvertheCity",

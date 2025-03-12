@@ -1,7 +1,7 @@
 from nonebot import get_plugin_config
 from nonebot.plugin import PluginMetadata
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
-from nonebot import on_command
+from nonebot import on_command, require
 import datetime
 import random
 import redis
@@ -17,6 +17,7 @@ __plugin_meta__ = PluginMetadata(
 
 random.seed()
 r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+berry_manager = require("zhua_api").berry_manager
 
 config = get_plugin_config(Config)
 
@@ -47,4 +48,8 @@ async def handle_function(event: GroupMessageEvent):
     d = datetime.datetime.now()
     delta = (23-d.hour)*3600 + (59-d.minute)*60 + (59-d.second)
     r.set(f"jrrp_{id}",f"{rp}",ex=delta)
-    await jrrp.finish(f"你的今日人品是……{rp}！" + append,at_sender = True)
+    if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event):
+        berry_manager.addCoins(event.user_id,rp)
+        await jrrp.finish(f"你的今日人品是……{rp}！" + append + f"\n你获得了{rp}蓝莓",at_sender = True)
+    else:
+        await jrrp.finish(f"你的今日人品是……{rp}！")
