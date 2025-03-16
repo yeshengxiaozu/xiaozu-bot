@@ -111,7 +111,7 @@ async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
     elif (ra < 0.2): b = 20
     elif (ra < 0.5): b = 10
     else: b = 5
-    if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event):
+    if False and isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event):
         berry_manager.addCoins(event.user_id,b)
         await zhua.send(MessageSegment.text(f"恭喜你抓到一个小卒！\n") + MessageSegment.image(image_path) + MessageSegment.text(f"\n{name}\n{descriptions[file_name]}\n\n你获得了{b}蓝莓"),at_sender = True)
         r.set(f"zhua_cd_{id}","waiting",ex=1800)

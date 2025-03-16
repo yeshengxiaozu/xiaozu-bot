@@ -48,7 +48,7 @@ async def handle_function(event: GroupMessageEvent):
     d = datetime.datetime.now()
     delta = (23-d.hour)*3600 + (59-d.minute)*60 + (59-d.second)
     r.set(f"jrrp_{id}",f"{rp}",ex=delta)
-    if isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event):
+    if False and isinstance(event,GroupMessageEvent) and berry_manager.is_berrygroup(event):
         berry_manager.addCoins(event.user_id,rp)
         await jrrp.finish(f"你的今日人品是……{rp}！" + append + f"\n你获得了{rp}蓝莓",at_sender = True)
     else:

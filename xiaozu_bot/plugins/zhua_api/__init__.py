@@ -107,8 +107,7 @@ async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg())
     args = str(arg).lower().split()
     id = event.user_id
     d = datetime.datetime.now()
-    #if d.hour == 0 and d.minute < 30:
-    if True:
+    if False and d.hour == 0 and d.minute < 10:
         await buy.finish("Fhloy/Foxelne正在冬眠[可怜]",at_sender = True)
     
     if r.get(f"coins_status_{id}") == "buying":
@@ -132,8 +131,7 @@ async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg())
     args = str(arg).lower().split()
     id = event.user_id
     d = datetime.datetime.now()
-    #if d.hour == 0 and d.minute < 30:
-    if True:
+    if False and d.hour == 0 and d.minute < 10:
         await sell.finish("Fhloy/Foxeline正在冬眠[可怜]",at_sender = True)
     
     if r.get(f"coins_status_{id}") == "buying":
