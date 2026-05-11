@@ -239,6 +239,8 @@ dmypy.json
 
 # --- Plugin-specific runtime/generated files ---
 # guess: 图片库（运行时可变的题库/图片）
+xiaozu_bot/plugins/guess/data/
+xiaozu_bot/plugins/guess/data/**
 xiaozu_bot/plugins/guess/pictures/
 xiaozu_bot/plugins/guess/pictures/**
 
