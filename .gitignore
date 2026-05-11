@@ -1,3 +1,100 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtualenv / envs
+.env
+.env.*
+.venv/
+venv/
+ENV/
+env/
+venv.bak/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Type checkers
+.mypy_cache/
+.pyright/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# macOS
+.DS_Store
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+*.db
+
+# NoneBot / runtime artifacts
+*.pid
+*.sock
+
+# Local temp / generated files
+temp/
+temp/*
+audio_*.wav
+
+# Local model/cache folders (examples)
+models/
+model_cache/
+.cache/
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Misc
+coverage.xml
+*.cover
 
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python
@@ -139,3 +236,18 @@ dmypy.json
 .pytype/
 
 # End of https://www.toptal.com/developers/gitignore/api/python
+
+# --- Plugin-specific runtime/generated files ---
+# guess: 图片库（运行时可变的题库/图片）
+xiaozu_bot/plugins/guess/pictures/
+xiaozu_bot/plugins/guess/pictures/**
+
+# say: 生成的临时音频与缓存
+xiaozu_bot/plugins/say/audios/
+xiaozu_bot/plugins/say/*.wav
+xiaozu_bot/plugins/say/*.mp3
+
+# gdlevelsearch: 本地缓存/临时数据（如自动抓取的 levels 缓存）
+xiaozu_bot/plugins/gdlevelsearch/data/*.json
+xiaozu_bot/plugins/gdlevelsearch/data/*.cache
+xiaozu_bot/plugins/gdlevelsearch/data/*.tmp
