@@ -3,17 +3,19 @@ import requests
 import json
 import time
 import os
+from typing import Optional
 
 class Level:
-    def __init__(self, name, creator, length, checkpoints, id, description, video):
-        self.source = ""
-        self.name = name
-        self.creator = creator
-        self.length = length
-        self.checkpoints = checkpoints
-        self.id = id
-        self.description = description
-        self.video = video
+    source : str = "IDK"
+    name : Optional[str] = None
+    creator : Optional[str] = None
+    length : Optional[str] = None
+    checkpoints : Optional[str] = None
+    id : Optional[str] = None
+    description : Optional[str] = None
+    video : Optional[str] = None
+    tier : Optional[str] = None #for elimate the red lines
+    skillset : Optional[str] = None #for elimate the red lines
     def __init__(self, jsondict):
         self.name = jsondict['name']
         self.creator = jsondict['creator']
@@ -26,12 +28,9 @@ class Level:
         return f"Name: {self.name}\nCreator: {self.creator}\nID: {self.id}\nDescription: {self.description}\nVideo: {self.video}"
 
 class NLWlevel(Level):
-    def __init__(self, name, creator, id, description, video, tier, skillset, enjoyment):
-        super().__init__(name, creator, id, description, video)
-        self.source = "NLW"
-        self.tier = tier
-        self.skillset = skillset
-        self.enjoyment = enjoyment
+    tier : Optional[str] = None
+    skillset : Optional[str] = None
+    enjoyment : Optional[float] = None
     def __init__(self, jsondict):
         super().__init__(jsondict)
         self.source = "NLW"
@@ -42,11 +41,8 @@ class NLWlevel(Level):
         return f"Name: {self.name}\nCreator: {self.creator}\nID: {self.id}\nDescription: {self.description}\nVideo: {self.video}\nTier: {self.tier}\nSkillset: {self.skillset}\nEnjoyment: {self.enjoyment}"
 
 class IDSlevel(Level):
-    def __init__(self, name, creator, id, description, video, tier, skillset):
-        super().__init__(name, creator, id, description, video)
-        self.source = "IDS"
-        self.tier = tier
-        self.skillset = skillset
+    tier : Optional[str] = None
+    skillset : Optional[str] = None
     def __init__(self, jsondict):
         super().__init__(jsondict)
         self.source = "IDS"
@@ -56,11 +52,8 @@ class IDSlevel(Level):
         return f"Name: {self.name}\nCreator: {self.creator}\nID: {self.id}\nDescription: {self.description}\nVideo: {self.video}\nTier: {self.tier}\nSkillset: {self.skillset}"
 
 class HDSlevel(Level):
-    def __init__(self, name, creator, id, description, video, tier, skillset):
-        super().__init__(name, creator, id, description, video)
-        self.source = "HDS"
-        self.tier = tier
-        self.skillset = skillset
+    tier : Optional[str] = None
+    skillset : Optional[str] = None
     def __init__(self, jsondict):
         super().__init__(jsondict)
         self.source = "HDS"
@@ -70,11 +63,8 @@ class HDSlevel(Level):
         return f"Name: {self.name}\nCreator: {self.creator}\nID: {self.id}\nDescription: {self.description}\nVideo: {self.video}\nTier: {self.tier}\nSkillset: {self.skillset}"
 
 class LWlevel(Level):
-    def __init__(self, name, creator, id, description, video, tier, skillset):
-        super().__init__(name, creator, id, description, video)
-        self.source = "LW"
-        self.tier = tier
-        self.skillset = skillset
+    tier : Optional[str] = None
+    skillset : Optional[str] = None
     def __init__(self, jsondict):
         super().__init__(jsondict)
         self.source = "LW"

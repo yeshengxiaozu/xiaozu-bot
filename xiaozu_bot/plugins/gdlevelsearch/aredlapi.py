@@ -4,24 +4,24 @@ from nonebot import logger
 import requests
 import json
 import os,time
+from typing import Optional
 
 class AREDLLevel:
-    def __init__(self, id, position, name, points, legacy, level_id, two_player, tags, description, song, edel_enjoyment, is_edel_pending, gddl_tier, nlw_tier, verificationurl):
-        self.id = id
-        self.position = position
-        self.name = name
-        self.points = points
-        self.legacy = legacy
-        self.level_id = level_id
-        self.two_player = two_player
-        self.tags = tags
-        self.description = description
-        self.song = song
-        self.edel_enjoyment = edel_enjoyment
-        self.is_edel_pending = is_edel_pending
-        self.gddl_tier = gddl_tier
-        self.nlw_tier = nlw_tier
-        self.verificationurl = verificationurl
+    id : str
+    position : Optional[int] = None
+    name : str
+    points : Optional[float] = None
+    legacy : bool
+    level_id : int
+    two_player : bool
+    tags : list[str]
+    description : Optional[str] = None
+    song : Optional[int] = None
+    edel_enjoyment : Optional[float] = None
+    is_edel_pending : Optional[bool] = None
+    gddl_tier : Optional[float] = None
+    nlw_tier : Optional[str] = None
+    verificationurl : Optional[str] = None
     def __init__(self, jsondict):
         self.id = jsondict['id']
         self.position = jsondict['position']
@@ -39,7 +39,7 @@ class AREDLLevel:
         self.nlw_tier = jsondict['nlw_tier']
         self.verificationurl = None
     def __str__(self):
-        return f"ID: {self.id}\nPosition: {self.position}\nName: {self.name}\nPoints: {self.points}\nLegacy: {self.legacy}\nLevel ID: {self.level_id}\nTwo Player: {self.two_player}\nTags: {', '.join(self.tags)}\nDescription: {self.description}\nSong: {self.song}\nEdel Enjoyment: {self.edel_enjoyment}\nIs Edel Pending: {self.is_edel_pending}\nGDDL Tier: {self.gddl_tier}\nNLW Tier: {self.nlw_tier}\nVerification URL: {self.verificationurl}"
+        return f"ID: {self.id}\nPosition: {self.position}\nName: {self.name}\nPoints: {self.points}\nLegacy: {self.legacy}\nLevel ID: {self.level_id}\nTwo Player: {self.two_player}\nTags: {', '.join(self.tags if self.tags else [])}\nDescription: {self.description}\nSong: {self.song}\nEdel Enjoyment: {self.edel_enjoyment}\nIs Edel Pending: {self.is_edel_pending}\nGDDL Tier: {self.gddl_tier}\nNLW Tier: {self.nlw_tier}\nVerification URL: {self.verificationurl}"
 
 aredllevels = []
 arepllevels = []
@@ -95,7 +95,7 @@ def get_aredl_levels():
         levels_data.append(level_data)
     if levels_data.__len__() > 0:
         with open(aredlfilepath, "w") as f:
-            json.dump({"timestamp": time.time(), "levels": levels_data}, f)
+            json.dump({"timestamp": time.time(), "levels": levels_data}, f, indent=4)
     else:
         logger.error(f"failed to save {aredllevels.__len__()} level datas")
     return aredllevels
@@ -153,7 +153,7 @@ def get_arepl_levels():
         levels_data.append(level_data)
     if levels_data.__len__() > 0:
         with open(areplfilepath, "w") as f:
-            json.dump({"timestamp": time.time(), "levels": levels_data}, f)
+            json.dump({"timestamp": time.time(), "levels": levels_data}, f, indent=4)
     else:
         logger.error(f"failed to save {arepllevels.__len__()} level datas")
     return arepllevels

@@ -31,7 +31,7 @@ texttest=on_command("texttest",permission=SUPERUSER)
 mdtest=on_command("mdtest",permission=SUPERUSER)
 
 @htmltest.handle()
-async def handle_function(bot: Bot, event: Event, args: Message = CommandArg()):
+async def handle_htmltest(bot: Bot, event: Event, args: Message = CommandArg()):
     text = args.extract_plain_text().strip()
     pic = await html_to_pic(text)
     if isinstance(event, GroupMessageEvent):
@@ -39,7 +39,7 @@ async def handle_function(bot: Bot, event: Event, args: Message = CommandArg()):
     await htmltest.finish()
 
 @texttest.handle()
-async def handle_function(bot: Bot, event: Event, args: Message = CommandArg()):
+async def handle_texttest(bot: Bot, event: Event, args: Message = CommandArg()):
     text = args.extract_plain_text().strip()
     pic = await text_to_pic(text,css_path="imageinfo.css")
     if isinstance(event, GroupMessageEvent):
@@ -47,7 +47,7 @@ async def handle_function(bot: Bot, event: Event, args: Message = CommandArg()):
     await texttest.finish()
 
 @mdtest.handle()
-async def handle_function(bot: Bot, event: Event, args: Message = CommandArg()):
+async def handle_mdtest(bot: Bot, event: Event, args: Message = CommandArg()):
     text = args.extract_plain_text().strip()
     pic = await md_to_pic(text,css_path="imageinfo.css")
     if isinstance(event, GroupMessageEvent):
