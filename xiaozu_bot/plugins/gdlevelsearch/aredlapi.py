@@ -171,14 +171,14 @@ for level in arepllevels:
     if level.level_id not in aredl_dict:
         aredl_dict[level.level_id] = level
 
-class aredl:
-    def getlevelbyid(id):
-        if id in aredl_dict:
-            logger.info(f"Level ID {id} found in aredl_dict as #{aredl_dict[id].position}")
-            return aredl_dict[id]
-        else:
-            for level in aredllevels:
-                if level.level_id == id:
-                    logger.warning(f"Level ID {id} found in aredllevels_backup as #{level.position}")
-                    return level
-            return None
+class Aredl:
+    @staticmethod
+    def getlevelbyid(level_id: int) -> Optional[AREDLLevel]:
+        if level_id in aredl_dict:
+            logger.info(f"Level ID {level_id} found in aredl_dict as #{aredl_dict[level_id].position}")
+            return aredl_dict[level_id]
+        for level in aredllevels:
+            if level.level_id == level_id:
+                logger.warning(f"Level ID {level_id} found in aredllevels_backup as #{level.position}")
+                return level
+        return None

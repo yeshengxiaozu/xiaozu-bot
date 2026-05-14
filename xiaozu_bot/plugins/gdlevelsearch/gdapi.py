@@ -1,12 +1,15 @@
 import base64
 import requests
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Final, Dict, Any, Optional, List
 from urllib.parse import unquote
 
 # 配置日志，方便调试（若不需要可注释掉）
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+DEMON_STARS = 10
+LENGTH_PLAT = 5
 
 OFFICIAL_SONG_MAP = {
     -1: ("Practice: Stay Inside Me", "OcularNebula"),
@@ -55,48 +58,48 @@ OFFICIAL_SONG_MAP = {
 class GDLevel:
     """Geometry Dash 关卡数据类"""
 
-    FIELD_MAP: Dict[int, tuple] = {
-        1:  ('level_id', int),
-        2:  ('level_name', str),
-        3:  ('description', 'base64'),
-        4:  ('level_string', str),
-        5:  ('version', int),
-        6:  ('player_id', int),
-        8:  ('difficulty_denominator', int),
-        9:  ('difficulty_numerator', int),
-        10: ('downloads', int),
-        12: ('official_song', int),
-        13: ('game_version', int),
-        14: ('likes', int),
-        15: ('length', int),
-        17: ('is_demon', bool),
-        18: ('stars', int),
-        19: ('feature_score', int),
-        25: ('is_auto', bool),
-        26: ('record_string', str),
-        27: ('password', str),
-        28: ('upload_date', str),
-        29: ('update_date', str),
-        30: ('copied_id', int),
-        31: ('is_two_player', bool),
-        35: ('custom_song_id', int),
-        36: ('extra_string', str),
-        37: ('coins', int),
-        38: ('verified_coins', bool),
-        39: ('stars_requested', int),
-        40: ('low_detail_mode', bool),
-        41: ('daily_number', int),
-        42: ('epic', int),
-        43: ('demon_difficulty', int),
-        44: ('is_gauntlet', bool),
-        45: ('objects', int),
-        46: ('editor_time', int),
-        47: ('editor_time_copies', int),
-        48: ('settings_string', str),
-        52: ('song_ids', str),
-        53: ('sfx_ids', str),
-        54: ('unknown54', int),
-        57: ('verification_time', int),
+    FIELD_MAP: Final = {
+        1:  ("level_id", int),
+        2:  ("level_name", str),
+        3:  ("description", "base64"),
+        4:  ("level_string", str),
+        5:  ("version", int),
+        6:  ("player_id", int),
+        8:  ("difficulty_denominator", int),
+        9:  ("difficulty_numerator", int),
+        10: ("downloads", int),
+        12: ("official_song", int),
+        13: ("game_version", int),
+        14: ("likes", int),
+        15: ("length", int),
+        17: ("is_demon", bool),
+        18: ("stars", int),
+        19: ("feature_score", int),
+        25: ("is_auto", bool),
+        26: ("record_string", str),
+        27: ("password", str),
+        28: ("upload_date", str),
+        29: ("update_date", str),
+        30: ("copied_id", int),
+        31: ("is_two_player", bool),
+        35: ("custom_song_id", int),
+        36: ("extra_string", str),
+        37: ("coins", int),
+        38: ("verified_coins", bool),
+        39: ("stars_requested", int),
+        40: ("low_detail_mode", bool),
+        41: ("daily_number", int),
+        42: ("epic", int),
+        43: ("demon_difficulty", int),
+        44: ("is_gauntlet", bool),
+        45: ("objects", int),
+        46: ("editor_time", int),
+        47: ("editor_time_copies", int),
+        48: ("settings_string", str),
+        52: ("song_ids", str),
+        53: ("sfx_ids", str),
+        54: ("unknown54", int),
+        57: ("verification_time", int),
     }
 
     level_id: int = 0
@@ -271,6 +274,26 @@ class GDLevel:
         if custom_id and custom_id != 0:
             return f"Custom song (ID:{custom_id}) not loaded"
         return None
+
+    def is_pemon(self) -> bool:
+        return int(self.length) == LENGTH_PLAT if self.length is not None else False
+
+    def is_demon_detail(self) -> bool:
+        return self.stars == DEMON_STARS and not self.is_pemon()
+
+    def difficulty_label(self) -> str:
+        stars = int(self.stars) if self.stars is not None else None
+        if stars is None:
+            return "Unknown"
+        sign = "🌙" if self.is_pemon() else"⭐"
+
+        if stars < DEMON_STARS: #nondemon
+            return ["Unrated",f"1{sign}auto",f"2{sign}easy",f"3{sign}normal",f"4{sign}hard",
+                    f"5{sign}hard",f"6{sign}harder",f"7{sign}harder",f"8{sign}insane",f"9{sign}insane"][stars]
+        if self.demon_difficulty is not None:
+            return f"{['Hard','Unknown','Unknown','Easy','Medium','Insane','Extreme'][self.demon_difficulty]} {'Pemon' if self.is_pemon() else 'Demon'}"
+            #bro what is rubtap doing it dont make sense
+        return "10⭐demon"
 
     def __repr__(self) -> str:
         return f"<GDLevel {self.level_name!r} (ID:{self.level_id})>"

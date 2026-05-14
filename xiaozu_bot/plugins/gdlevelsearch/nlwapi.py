@@ -1,13 +1,16 @@
-from nonebot import logger
-import requests
 import json
 import time
-import os
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional, Union
+
+import requests
+from nonebot import logger
+
+HTTP_OK = 200
 
 class Level:
     source : str = "IDK"
-    name : Optional[str] = None
+    name : str
     creator : Optional[str] = None
     length : Optional[str] = None
     checkpoints : Optional[str] = None
@@ -16,63 +19,55 @@ class Level:
     video : Optional[str] = None
     tier : Optional[str] = None #for elimate the red lines
     skillset : Optional[str] = None #for elimate the red lines
-    def __init__(self, jsondict):
-        self.name = jsondict['name']
-        self.creator = jsondict['creator']
-        self.length = jsondict['length'] if 'length' in jsondict else None
-        self.checkpoints = jsondict['checkpoints'] if 'checkpoints' in jsondict else None
-        self.id = jsondict['id'] if 'id' in jsondict else None
-        self.description = jsondict['description'] if 'description' in jsondict else None
-        self.video = jsondict['video']
-    def __str__(self):
+    def __init__(self, jsondict: dict[str, Any]) -> None:
+        self.name = jsondict["name"]
+        self.creator = jsondict["creator"]
+        self.length = jsondict.get("length")
+        self.checkpoints = jsondict.get("checkpoints")
+        self.id = jsondict.get("id")
+        self.description = jsondict.get("description")
+        self.video = jsondict["video"]
+    def __str__(self) -> str:
         return f"Name: {self.name}\nCreator: {self.creator}\nID: {self.id}\nDescription: {self.description}\nVideo: {self.video}"
 
 class NLWlevel(Level):
     tier : Optional[str] = None
     skillset : Optional[str] = None
     enjoyment : Optional[float] = None
-    def __init__(self, jsondict):
+    def __init__(self, jsondict: dict[str, Any]) -> None:
         super().__init__(jsondict)
         self.source = "NLW"
-        self.tier = jsondict['tier']
-        self.skillset = jsondict['skillset']
-        self.enjoyment = jsondict['enjoyment']
-    def __str__(self):
-        return f"Name: {self.name}\nCreator: {self.creator}\nID: {self.id}\nDescription: {self.description}\nVideo: {self.video}\nTier: {self.tier}\nSkillset: {self.skillset}\nEnjoyment: {self.enjoyment}"
+        self.tier = jsondict["tier"]
+        self.skillset = jsondict["skillset"]
+        self.enjoyment = jsondict["enjoyment"]
 
 class IDSlevel(Level):
     tier : Optional[str] = None
     skillset : Optional[str] = None
-    def __init__(self, jsondict):
+    def __init__(self, jsondict: dict[str, Any]) -> None:
         super().__init__(jsondict)
         self.source = "IDS"
-        self.tier = jsondict['tier']
-        self.skillset = jsondict['skillset']
-    def __str__(self):
-        return f"Name: {self.name}\nCreator: {self.creator}\nID: {self.id}\nDescription: {self.description}\nVideo: {self.video}\nTier: {self.tier}\nSkillset: {self.skillset}"
+        self.tier = jsondict["tier"]
+        self.skillset = jsondict["skillset"]
 
 class HDSlevel(Level):
     tier : Optional[str] = None
     skillset : Optional[str] = None
-    def __init__(self, jsondict):
+    def __init__(self, jsondict: dict[str, Any]) -> None:
         super().__init__(jsondict)
         self.source = "HDS"
-        self.tier = jsondict['tier']
-        self.skillset = jsondict['skillset']
-    def __str__(self):
-        return f"Name: {self.name}\nCreator: {self.creator}\nID: {self.id}\nDescription: {self.description}\nVideo: {self.video}\nTier: {self.tier}\nSkillset: {self.skillset}"
+        self.tier = jsondict["tier"]
+        self.skillset = jsondict["skillset"]
 
 class LWlevel(Level):
     tier : Optional[str] = None
     skillset : Optional[str] = None
-    def __init__(self, jsondict):
+    def __init__(self, jsondict: dict[str, Any]) -> None:
         super().__init__(jsondict)
         self.source = "LW"
-        self.tier = jsondict['tier']
-        self.skillset = jsondict['skillset']
-        self.enjoyment = jsondict['enjoyment']
-    def __str__(self):
-        return f"Name: {self.name}\nCreator: {self.creator}\nID: {self.id}\nDescription: {self.description}\nVideo: {self.video}\nTier: {self.tier}\nSkillset: {self.skillset}"
+        self.tier = jsondict["tier"]
+        self.skillset = jsondict["skillset"]
+        self.enjoyment = jsondict["enjoyment"]
 
 nlwlevels = []
 idslevels = []
@@ -86,11 +81,11 @@ lwlevel_dict = {}
 hdslevel_dict = {}
 
 #把request到创建字典的过程封装成函数
-def fetch_nlw_levels():
+def fetch_nlw_levels() -> None:
     #从https://nlw.oat.zone/中的/list获取信息
     nlwurl = "https://nlw.oat.zone/list?type=all"
     response = requests.get(nlwurl)
-    if response.status_code == 200:
+    if response.status_code == HTTP_OK:
         data = response.json()
         #data中的每个元素都是一个关卡的信息，遍历data并将信息储存在nlwlevels中
         for level_data in data:
@@ -99,7 +94,7 @@ def fetch_nlw_levels():
     #从ids获取信息并如法炮制
     idsurl= "https://nlw.oat.zone/ids?type=all"
     response = requests.get(idsurl)
-    if response.status_code == 200:
+    if response.status_code == HTTP_OK:
         data = response.json()
         for level_data in data:
             idslevel_instance = IDSlevel(level_data)
@@ -107,18 +102,18 @@ def fetch_nlw_levels():
 
 #创建一个函数来调用fetch_nlw_levels以获取信息，并且将获取的信息存储到本地json中，优先从本地json获取信息
 #与此同时，在本地json中创建一个时间戳，以便在下一次调用函数时判断是否需要重新获取信息，暂定每天重新获取一次
-def get_nlw_levels():
+def get_nlw_levels() -> None:  # noqa: C901, PLR0912, PLR0915
     work_folder = "xiaozu_bot/plugins/gdlevelsearch/data"
     nlwfilename = "nlw_levels.json"
-    nlwfilepath = os.path.join(work_folder, nlwfilename)
+    nlwfilepath = Path(work_folder) / nlwfilename
     idsfilename = "ids_levels.json"
-    idsfilepath = os.path.join(work_folder, idsfilename)
+    idsfilepath = Path(work_folder) / idsfilename
     lwfilename = "lw_levels.json"
-    lwfilepath = os.path.join(work_folder, lwfilename)
+    lwfilepath = Path(work_folder) / lwfilename
     hdsfilename = "hds_levels.json"
-    hdsfilepath = os.path.join(work_folder, hdsfilename)
-    if os.path.exists(nlwfilepath):
-        with open(nlwfilepath, "r") as f:
+    hdsfilepath = Path(work_folder) / hdsfilename
+    if Path.exists(nlwfilepath):
+        with Path.open(nlwfilepath, "r") as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if True:
@@ -129,7 +124,7 @@ def get_nlw_levels():
             logger.info(f"Sussefully load {nlwlevels.__len__()} levels from nlw_levels.json")
             if timestamp and time.time() - timestamp > 7 * 24 * 3600:
                 logger.warning("NLW本地缓存已经使用超过一周，建议再次fetch获取关卡")
-        with open(idsfilepath, "r") as f:
+        with Path.open(idsfilepath, "r") as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if True:
@@ -140,7 +135,7 @@ def get_nlw_levels():
             logger.info(f"Sussefully load {idslevels.__len__()} levels from ids_levels.json")
             if timestamp and time.time() - timestamp > 7 * 24 * 3600:
                 logger.warning("IDS本地缓存已经使用超过一周，建议再次fetch获取关卡")
-        with open(lwfilepath, "r") as f:
+        with Path.open(lwfilepath, "r") as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if True:
@@ -151,7 +146,7 @@ def get_nlw_levels():
             logger.info(f"Sussefully load {lwlevels.__len__()} levels from lw_levels.json")
             if timestamp and time.time() - timestamp > 7 * 24 * 3600:
                 logger.warning("LW本地缓存已经使用超过一周，建议再次fetch获取关卡")
-        with open(hdsfilepath, "r") as f:
+        with Path.open(hdsfilepath, "r") as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if True:
@@ -165,6 +160,7 @@ def get_nlw_levels():
         return
     logger.error("本地缓存不存在")
     return #因为无代理环境难以自动fetch，改为在另一设备手动执行fetch
+    """
     fetch_nlw_levels()
     levels_data = []
     for level in nlwlevels:
@@ -195,6 +191,7 @@ def get_nlw_levels():
         levels_data.append(level_data)
     with open(idsfilepath, "w") as f:
         json.dump({"timestamp": time.time(), "levels": levels_data}, f)
+    """
 
 
 get_nlw_levels()
@@ -207,30 +204,35 @@ for level in lwlevels:
 for level in hdslevels:
     hdslevel_dict[level.id] = level
 
-class nlw:
-    def nlw_query_level(id):
-        return nlwlevel_dict.get(id)
+class Nlw:
+    @staticmethod
+    def nlw_query_level(level_id: Union[str,int]) -> Optional[NLWlevel]:
+        return nlwlevel_dict.get(level_id)
 
-    def ids_query_level(id):
-        return idslevel_dict.get(id)
-    
-    def lw_query_level(id):
-        return lwlevel_dict.get(id)
-    
-    def hds_query_level(id):
-        return hdslevel_dict.get(id)
+    @staticmethod
+    def ids_query_level(level_id: Union[str,int]) -> Optional[IDSlevel]:
+        return idslevel_dict.get(level_id)
 
-    def getlevelbyid(id):
-        level = nlw.nlw_query_level(id)
+    @staticmethod
+    def lw_query_level(level_id: Union[str,int]) -> Optional[LWlevel]:
+        return lwlevel_dict.get(level_id)
+
+    @staticmethod
+    def hds_query_level(level_id: Union[str,int]) -> Optional[HDSlevel]:
+        return hdslevel_dict.get(level_id)
+
+    @staticmethod
+    def getlevelbyid(level_id: Union[str,int]) -> Optional[Level]:
+        level = Nlw.nlw_query_level(level_id)
         if level:
             logger.info(f"find the level as NLW {level.tier} Tier")
             return level
-        level = nlw.lw_query_level(id)
+        level = Nlw.lw_query_level(level_id)
         if level:
             logger.info(f"find the level as LW {level.tier} Tier")
             return level
-        leveli = nlw.ids_query_level(id)
-        levelh = nlw.hds_query_level(id)
+        leveli = Nlw.ids_query_level(level_id)
+        levelh = Nlw.hds_query_level(level_id)
         level = None
         if leveli and levelh:
             if leveli.tier != "Legacy":
@@ -250,4 +252,3 @@ class nlw:
             logger.info(f"find the level as HDS {levelh.tier} Tier")
             level = levelh
         return level
-        return None
