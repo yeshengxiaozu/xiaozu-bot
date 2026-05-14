@@ -14,19 +14,22 @@ from .nlwapi import Nlw, hdslevels, idslevels, lwlevels, nlwlevels
 from .platapi import getderivedlevels, platdata_main_entries
 from .platapi import getlevelbyid as get_plat_level_by_id
 
-#i have no idea is this amount of exposal is bad but looked it worked
+# i have no idea is this amount of exposal is bad but looked it worked
 
 
-#fallback function since I should already get it using gdapi
+# fallback function since I should already get it using gdapi
 def get_creator(level_id: int) -> Optional[str]:
     logger.warning("get_creator got called: " + str(level_id))
     try:
-        data = requests.get(f"https://history.geometrydash.eu/api/v1/level/{level_id}", timeout = 10)
+        data = requests.get(
+            f"https://history.geometrydash.eu/api/v1/level/{level_id}", timeout=10
+        )
         return data.json()["cache_username"]
     except Exception:  # noqa: BLE001
         return None
 
-#nice little function that extract exactly what i need
+
+# nice little function that extract exactly what i need
 def get_difficulty(level_id: int) -> Optional[str]:
     logger.info("get_difficulty got called: " + str(level_id))
     try:
@@ -35,9 +38,11 @@ def get_difficulty(level_id: int) -> Optional[str]:
         return None
     return data.difficulty_label() if data else None
 
-#constrants
+
+# constrants
 DEMON_STARS = 10
 LENGTH_PLAT = 5
+
 
 class LevelInfo:
     def __init__(
@@ -49,7 +54,9 @@ class LevelInfo:
         creatorname: Optional[str] = None,
     ) -> None:
         # 基础信息
-        self.id = int(gdlevel.level_id) if gdlevel and gdlevel.level_id is not None else None
+        self.id = (
+            int(gdlevel.level_id) if gdlevel and gdlevel.level_id is not None else None
+        )
         self.name = gdlevel.level_name if gdlevel else None
         self.creator_name = creatorname or (gdlevel.creator_name if gdlevel else None)
         self.creator = self.creator_name or (nlw_info.creator if nlw_info else None)
@@ -64,12 +71,32 @@ class LevelInfo:
         self.demon_difficulty = gdlevel.demon_difficulty if gdlevel else None
         self.length_exact = nlw_info.length if nlw_info else None
         self.checkpoints = nlw_info.checkpoints if nlw_info else None
-        self.difficulty = gddl_info.Meta.Difficulty if gddl_info and gddl_info.Meta else None
+        self.difficulty = (
+            gddl_info.Meta.Difficulty if gddl_info and gddl_info.Meta else None
+        )
 
-        self.songid = gddl_info.Meta.Song.ID if gddl_info and gddl_info.Meta and gddl_info.Meta.Song else (gdlevel.song_id if gdlevel else None)
-        self.songname = gddl_info.Meta.Song.Name if gddl_info and gddl_info.Meta and gddl_info.Meta.Song else (gdlevel.song_name if gdlevel else None)
-        self.songauthor = gddl_info.Meta.Song.Author if gddl_info and gddl_info.Meta and gddl_info.Meta.Song else (gdlevel.song_author if gdlevel else None)
-        self.is2p = gddl_info.Meta.IsTwoPlayer if gddl_info and gddl_info.Meta else gdlevel.is_two_player if gdlevel else None
+        self.songid = (
+            gddl_info.Meta.Song.ID
+            if gddl_info and gddl_info.Meta and gddl_info.Meta.Song
+            else (gdlevel.song_id if gdlevel else None)
+        )
+        self.songname = (
+            gddl_info.Meta.Song.Name
+            if gddl_info and gddl_info.Meta and gddl_info.Meta.Song
+            else (gdlevel.song_name if gdlevel else None)
+        )
+        self.songauthor = (
+            gddl_info.Meta.Song.Author
+            if gddl_info and gddl_info.Meta and gddl_info.Meta.Song
+            else (gdlevel.song_author if gdlevel else None)
+        )
+        self.is2p = (
+            gddl_info.Meta.IsTwoPlayer
+            if gddl_info and gddl_info.Meta
+            else gdlevel.is_two_player
+            if gdlevel
+            else None
+        )
 
         # GDDL 数据
         self.gddl_rating = gddl_info.Rating if gddl_info else None
@@ -181,16 +208,26 @@ class LevelInfo:
         stars = int(self.stars) if self.stars is not None else None
         if stars is None:
             return self.difficulty or "Unknown"
-        sign = "🌙" if self.is_pemon() else"⭐"
+        sign = "🌙" if self.is_pemon() else "⭐"
 
-        if stars < DEMON_STARS: #nondemon
-            return ["Unrated",f"1{sign}auto",f"2{sign}easy",f"3{sign}normal",f"4{sign}hard",
-                    f"5{sign}hard",f"6{sign}harder",f"7{sign}harder",f"8{sign}insane",f"9{sign}insane"][stars]
+        if stars < DEMON_STARS:  # nondemon
+            return [
+                "Unrated",
+                f"1{sign}auto",
+                f"2{sign}easy",
+                f"3{sign}normal",
+                f"4{sign}hard",
+                f"5{sign}hard",
+                f"6{sign}harder",
+                f"7{sign}harder",
+                f"8{sign}insane",
+                f"9{sign}insane",
+            ][stars]
         if self.demon_difficulty:
-            return f"{['Hard','Unknown','Unknown','Easy','Medium','Insane','Extreme'][self.demon_difficulty]} {'Pemon' if self.is_pemon() else 'Demon'}"
-            #bro what is rubtap doing it dont make sense
+            return f"{['Hard', 'Unknown', 'Unknown', 'Easy', 'Medium', 'Insane', 'Extreme'][self.demon_difficulty]} {'Pemon' if self.is_pemon() else 'Demon'}"
+            # bro what is rubtap doing it dont make sense
         if self.difficulty:
-            return f"{self.difficulty} {'Pemon' if self.length == LENGTH_PLAT else 'Demon'}" #make sense
+            return f"{self.difficulty} {'Pemon' if self.length == LENGTH_PLAT else 'Demon'}"  # make sense
         return "10⭐demon"
 
     def is_pemon(self) -> bool:
@@ -209,8 +246,14 @@ class SearchResult:
     difficulty: Optional[str] = None
 
 
-def _add_search_result(results: dict[int, SearchResult], level_id: int, name: str,  # noqa: PLR0913
-                        creator: Optional[str] = None, gddl_tier: Optional[str] = None, difficulty: Optional[str] = None):
+def _add_search_result(
+    results: dict[int, SearchResult],
+    level_id: int,
+    name: str,
+    creator: Optional[str] = None,
+    gddl_tier: Optional[str] = None,
+    difficulty: Optional[str] = None,
+):
     if level_id is None:
         return
     if level_id in results:
@@ -233,17 +276,31 @@ def search_by_name(name: str) -> list[SearchResult]:  # noqa: C901, PLR0912
         if not level or not getattr(level, "Meta", None):
             continue
         if getattr(level.Meta, "Name", "").strip().lower() == normalized:
-            _add_search_result(results, int(level.ID), level.Meta.Name, None, str(round(level.Rating,2)) if level.Rating else None,
-                                level.Meta.Difficulty + (" Pemon" if level.is_pemon() else " Demon"))
-            logger.info(f"Find a result in GDDL: tier {getattr(level, 'Rating', 'Unknown')}")
-
+            _add_search_result(
+                results,
+                int(level.ID),
+                level.Meta.Name,
+                None,
+                str(round(level.Rating, 2)) if level.Rating else None,
+                level.Meta.Difficulty + (" Pemon" if level.is_pemon() else " Demon"),
+            )
+            logger.info(
+                f"Find a result in GDDL: tier {getattr(level, 'Rating', 'Unknown')}"
+            )
 
     # 2) AREDL exact match
     for level in aredllevels:
         if not level or not getattr(level, "name", None):
             continue
         if level.name.strip().lower() == normalized:
-            _add_search_result(results, int(level.level_id), level.name, None, getattr(level, "gddl_tier", None), "Extreme Demon")
+            _add_search_result(
+                results,
+                int(level.level_id),
+                level.name,
+                None,
+                getattr(level, "gddl_tier", None),
+                "Extreme Demon",
+            )
             logger.info("Find a result in AREDL: #" + str(level.position) or "Unknown")
 
     # 3) NLW exact match
@@ -251,15 +308,32 @@ def search_by_name(name: str) -> list[SearchResult]:  # noqa: C901, PLR0912
         if not level or not getattr(level, "name", None):
             continue
         if level.name.strip().lower() == normalized:
-            _add_search_result(results, int(level.id or "0"), level.name, getattr(level, "creator", None), None)
-            logger.info(f"Find a result in {level.source}: " + str(level.tier) or "Unknown" + " Tier", None)
+            _add_search_result(
+                results,
+                int(level.id or "0"),
+                level.name,
+                getattr(level, "creator", None),
+                None,
+            )
+            logger.info(
+                f"Find a result in {level.source}: " + str(level.tier)
+                or "Unknown" + " Tier",
+                None,
+            )
 
     # 4) Platdata exact match
-    for level in (platdata_main_entries):
+    for level in platdata_main_entries:
         if not level or not getattr(level, "name", None):
             continue
         if level.name.strip().lower() == normalized:
-            _add_search_result(results, int(level.id), level.name, getattr(level, "creator", None), getattr(level, "tier", "").strip(), None)
+            _add_search_result(
+                results,
+                int(level.id),
+                level.name,
+                getattr(level, "creator", None),
+                getattr(level, "tier", "").strip(),
+                None,
+            )
 
     if results:
         return list(results.values())
@@ -307,7 +381,7 @@ from nonebot.rule import Rule
 
 def _format_demon_message(level_info: LevelInfo) -> str:  # noqa: C901
     creator = level_info.creator or level_info.creator_name
-    msgstr = f'{level_info.name} {"by " + creator if creator else ""}'
+    msgstr = f"{level_info.name} {'by ' + creator if creator else ''}"
 
     if level_info.creator_sheet and (
         not creator
@@ -318,9 +392,13 @@ def _format_demon_message(level_info: LevelInfo) -> str:  # noqa: C901
     difficulty_label = level_info.difficulty_label()
     msgstr += f" ({difficulty_label})"
 
-    length_info = f"Length: {level_info.length_exact}" if level_info.length_exact else ""
-    check_info = f"Checkpoints: {level_info.checkpoints}" if level_info.checkpoints else ""
-    msgstr += f'\nID: {level_info.id} {length_info}{" " if length_info and check_info else ""}{check_info}'
+    length_info = (
+        f"Length: {level_info.length_exact}" if level_info.length_exact else ""
+    )
+    check_info = (
+        f"Checkpoints: {level_info.checkpoints}" if level_info.checkpoints else ""
+    )
+    msgstr += f"\nID: {level_info.id} {length_info}{' ' if length_info and check_info else ''}{check_info}"
 
     if level_info.gddl_rating:
         rating_2p = ""
@@ -347,7 +425,9 @@ def _format_demon_message(level_info: LevelInfo) -> str:  # noqa: C901
         msgstr += f"\nGDDL Tags: {tags_str}"
 
     if level_info.aredl_position:
-        tags_str = ", ".join(level_info.aredl_tags) if level_info.aredl_tags else "Unknown"
+        tags_str = (
+            ", ".join(level_info.aredl_tags) if level_info.aredl_tags else "Unknown"
+        )
         if level_info.aredl_legacy:
             msgstr += f"\nAREDL #Legacy ({tags_str})"
         else:
@@ -355,7 +435,9 @@ def _format_demon_message(level_info: LevelInfo) -> str:  # noqa: C901
 
     if level_info.nlw_tier:
         skillset = f"({level_info.nlw_skillset})" if level_info.nlw_skillset else ""
-        msgstr += f"\n{level_info.spredsheet_souce} Tier: {level_info.nlw_tier}{skillset}"
+        msgstr += (
+            f"\n{level_info.spredsheet_souce} Tier: {level_info.nlw_tier}{skillset}"
+        )
 
     if level_info.edel_enjoyment and level_info.edel_enjoyment > 0:
         msgstr += f"\nEDEL Enjoyment: {level_info.edel_enjoyment}"
@@ -366,7 +448,11 @@ def _format_demon_message(level_info: LevelInfo) -> str:  # noqa: C901
 def _format_pemon_message(level_info: LevelInfo) -> str:  # noqa: C901, PLR0912
     plat_info = get_plat_level_by_id(level_info.id)
     creator = level_info.creator or level_info.creator_name
-    lines = [f"{level_info.name} by {creator} ({level_info.difficulty_label()})"] if creator else [f"{level_info.name} ({level_info.difficulty_label()})"]
+    lines = (
+        [f"{level_info.name} by {creator} ({level_info.difficulty_label()})"]
+        if creator
+        else [f"{level_info.name} ({level_info.difficulty_label()})"]
+    )
 
     id_line = f"ID: {level_info.id}"
     if level_info.checkpoints is not None:
@@ -393,13 +479,15 @@ def _format_pemon_message(level_info: LevelInfo) -> str:  # noqa: C901, PLR0912
     if plat_info and plat_info.enjoyment is not None:
         enjoyment_parts.append(f"{plat_info.enjoyment}(PEL)")
     if level_info.edel_enjoyment is not None:
-        enjoyment_parts.append(f"{round(level_info.edel_enjoyment,0)}(EDEL)")
+        enjoyment_parts.append(f"{round(level_info.edel_enjoyment, 0)}(EDEL)")
     if enjoyment_parts:
         lines.append(f"Enjoyment: {'/'.join(enjoyment_parts)}")
 
     if level_info.nlw_tier:
         skillset = f"({level_info.nlw_skillset})" if level_info.nlw_skillset else ""
-        lines.append(f"{level_info.spredsheet_souce} Tier: {level_info.nlw_tier}{skillset}")
+        lines.append(
+            f"{level_info.spredsheet_souce} Tier: {level_info.nlw_tier}{skillset}"
+        )
 
     if plat_info and plat_info.derived_levels:
         for child in getderivedlevels(plat_info):
@@ -446,7 +534,9 @@ def _format_pemon_image_text(level_info: LevelInfo) -> str:
         f"Song: [{level_info.songid}] {level_info.songname} ({level_info.songauthor})<br>Description: {level_info.description}",
     ]
     if level_info.nlw_description:
-        parts.append(f"{level_info.spredsheet_souce} Description: {level_info.nlw_description}")
+        parts.append(
+            f"{level_info.spredsheet_souce} Description: {level_info.nlw_description}"
+        )
     if level_info.aredl_description:
         parts.append(f"AREDL Description: {level_info.aredl_description}")
     return "<p>".join(parts)
@@ -457,7 +547,9 @@ def _format_demon_image_text(level_info: LevelInfo) -> str:
         f"Song: [{level_info.songid}] {level_info.songname} ({level_info.songauthor})<br>Description: {level_info.description}",
     ]
     if level_info.nlw_description:
-        parts.append(f"{level_info.spredsheet_souce} Description: {level_info.nlw_description}")
+        parts.append(
+            f"{level_info.spredsheet_souce} Description: {level_info.nlw_description}"
+        )
     if level_info.aredl_description:
         parts.append(f"AREDL Description: {level_info.aredl_description}")
     return "<p>".join(parts)

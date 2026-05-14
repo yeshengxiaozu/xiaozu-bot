@@ -1,48 +1,55 @@
-#https://api.aredl.net/v2/docs
-#get /api/aredl/levels/{level_id}
-from nonebot import logger
-import requests
+# https://api.aredl.net/v2/docs
+# get /api/aredl/levels/{level_id}
 import json
-import os,time
+import os
+import time
 from typing import Optional
 
+import requests
+from nonebot import logger
+
+
 class AREDLLevel:
-    id : str
-    position : Optional[int] = None
-    name : str
-    points : Optional[float] = None
-    legacy : bool
-    level_id : int
-    two_player : bool
-    tags : list[str]
-    description : Optional[str] = None
-    song : Optional[int] = None
-    edel_enjoyment : Optional[float] = None
-    is_edel_pending : Optional[bool] = None
-    gddl_tier : Optional[float] = None
-    nlw_tier : Optional[str] = None
-    verificationurl : Optional[str] = None
+    id: str
+    position: Optional[int] = None
+    name: str
+    points: Optional[float] = None
+    legacy: bool
+    level_id: int
+    two_player: bool
+    tags: list[str]
+    description: Optional[str] = None
+    song: Optional[int] = None
+    edel_enjoyment: Optional[float] = None
+    is_edel_pending: Optional[bool] = None
+    gddl_tier: Optional[float] = None
+    nlw_tier: Optional[str] = None
+    verificationurl: Optional[str] = None
+
     def __init__(self, jsondict):
-        self.id = jsondict['id']
-        self.position = jsondict['position']
-        self.name = jsondict['name']
-        self.points = jsondict['points']
-        self.legacy = jsondict['legacy']
-        self.level_id = jsondict['level_id']
-        self.two_player = jsondict['two_player']
-        self.tags = jsondict['tags']
-        self.description = jsondict['description']
-        self.song = jsondict['song']
-        self.edel_enjoyment = jsondict['edel_enjoyment']
-        self.is_edel_pending = jsondict['is_edel_pending']
-        self.gddl_tier = jsondict['gddl_tier']
-        self.nlw_tier = jsondict['nlw_tier']
+        self.id = jsondict["id"]
+        self.position = jsondict["position"]
+        self.name = jsondict["name"]
+        self.points = jsondict["points"]
+        self.legacy = jsondict["legacy"]
+        self.level_id = jsondict["level_id"]
+        self.two_player = jsondict["two_player"]
+        self.tags = jsondict["tags"]
+        self.description = jsondict["description"]
+        self.song = jsondict["song"]
+        self.edel_enjoyment = jsondict["edel_enjoyment"]
+        self.is_edel_pending = jsondict["is_edel_pending"]
+        self.gddl_tier = jsondict["gddl_tier"]
+        self.nlw_tier = jsondict["nlw_tier"]
         self.verificationurl = None
+
     def __str__(self):
-        return f"ID: {self.id}\nPosition: {self.position}\nName: {self.name}\nPoints: {self.points}\nLegacy: {self.legacy}\nLevel ID: {self.level_id}\nTwo Player: {self.two_player}\nTags: {', '.join(self.tags if self.tags else [])}\nDescription: {self.description}\nSong: {self.song}\nEdel Enjoyment: {self.edel_enjoyment}\nIs Edel Pending: {self.is_edel_pending}\nGDDL Tier: {self.gddl_tier}\nNLW Tier: {self.nlw_tier}\nVerification URL: {self.verificationurl}"
+        return f"ID: {self.id}\nPosition: {self.position}\nName: {self.name}\nPoints: {self.points}\nLegacy: {self.legacy}\nLevel ID: {self.level_id}\nTwo Player: {self.two_player}\nTags: {', '.join(self.tags or [])}\nDescription: {self.description}\nSong: {self.song}\nEdel Enjoyment: {self.edel_enjoyment}\nIs Edel Pending: {self.is_edel_pending}\nGDDL Tier: {self.gddl_tier}\nNLW Tier: {self.nlw_tier}\nVerification URL: {self.verificationurl}"
+
 
 aredllevels = []
 arepllevels = []
+
 
 def fetch_aredl_levels():
     url = "https://api.aredl.net/v2/api/aredl/levels"
@@ -55,22 +62,24 @@ def fetch_aredl_levels():
         aredllevels = [AREDLLevel(level) for level in levels]
         logger.info(f"successfully fetch {levels.__len__()} levels from {url}")
         return aredllevels
-    else:
-        logger.error(f"failed to fetch from {url}")
-        return []
+    logger.error(f"failed to fetch from {url}")
+    return []
+
 
 def get_aredl_levels():
     work_folder = "xiaozu_bot/plugins/gdlevelsearch/data"
     aredlfilename = "aredl_levels.json"
     aredlfilepath = os.path.join(work_folder, aredlfilename)
     if os.path.exists(aredlfilepath):
-        with open(aredlfilepath, "r") as f:
+        with open(aredlfilepath) as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if timestamp and time.time() - timestamp < 24 * 3600:
                 levels_data = data.get("levels", [])
                 aredllevels = [AREDLLevel(level_data) for level_data in levels_data]
-                logger.info(f"successly load {levels_data.__len__()} levels from aredl_levels.json")
+                logger.info(
+                    f"successly load {levels_data.__len__()} levels from aredl_levels.json"
+                )
                 return aredllevels
     logger.info("cache expired, trying to re-fetch levels...")
     aredllevels = fetch_aredl_levels()
@@ -100,6 +109,7 @@ def get_aredl_levels():
         logger.error(f"failed to save {aredllevels.__len__()} level datas")
     return aredllevels
 
+
 def fetch_arepl_levels():
     url = "https://api.aredl.net/v2/api/arepl/levels"
     headers = {
@@ -111,16 +121,16 @@ def fetch_arepl_levels():
         arepllevels = [AREDLLevel(level) for level in levels]
         logger.info(f"successfully fetch {levels.__len__()} levels from {url}")
         return arepllevels
-    else:
-        logger.error(f"failed to fetch from {url}")
-        return []
+    logger.error(f"failed to fetch from {url}")
+    return []
+
 
 def get_arepl_levels():
     work_folder = "xiaozu_bot/plugins/gdlevelsearch/data"
     areplfilename = "arepl_levels.json"
     areplfilepath = os.path.join(work_folder, areplfilename)
     if os.path.exists(areplfilepath):
-        with open(areplfilepath, "r") as f:
+        with open(areplfilepath) as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if timestamp and time.time() - timestamp < 24 * 3600:
@@ -129,7 +139,9 @@ def get_arepl_levels():
                 for level_data in levels_data:
                     aredllevel_instance = AREDLLevel(level_data)
                     arepllevels.append(aredllevel_instance)
-                logger.info(f"successly load {levels_data.__len__()} levels from arepl_levels.json")
+                logger.info(
+                    f"successly load {levels_data.__len__()} levels from arepl_levels.json"
+                )
                 return arepllevels
     arepllevels = fetch_arepl_levels()
     levels_data = []
@@ -158,6 +170,7 @@ def get_arepl_levels():
         logger.error(f"failed to save {arepllevels.__len__()} level datas")
     return arepllevels
 
+
 aredllevels = get_aredl_levels()
 arepllevels = get_arepl_levels()
 aredl_dict = {}
@@ -165,20 +178,25 @@ aredl_dict = {}
 for level in aredllevels:
     if level.level_id not in aredl_dict:
         aredl_dict[level.level_id] = level
-    #同关卡保留第一个也就是排位高的，用于兼容2p
+    # 同关卡保留第一个也就是排位高的，用于兼容2p
 
 for level in arepllevels:
     if level.level_id not in aredl_dict:
         aredl_dict[level.level_id] = level
 
+
 class Aredl:
     @staticmethod
     def getlevelbyid(level_id: int) -> Optional[AREDLLevel]:
         if level_id in aredl_dict:
-            logger.info(f"Level ID {level_id} found in aredl_dict as #{aredl_dict[level_id].position}")
+            logger.info(
+                f"Level ID {level_id} found in aredl_dict as #{aredl_dict[level_id].position}"
+            )
             return aredl_dict[level_id]
         for level in aredllevels:
             if level.level_id == level_id:
-                logger.warning(f"Level ID {level_id} found in aredllevels_backup as #{level.position}")
+                logger.warning(
+                    f"Level ID {level_id} found in aredllevels_backup as #{level.position}"
+                )
                 return level
         return None

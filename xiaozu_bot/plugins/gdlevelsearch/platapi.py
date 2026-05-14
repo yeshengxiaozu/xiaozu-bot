@@ -54,7 +54,9 @@ class PlatInfo:
         derived_levels = data.get("derived_levels", [])
         if not isinstance(derived_levels, list):
             derived_levels = []
-        derived_levels = [str(level).strip() for level in derived_levels if level is not None]
+        derived_levels = [
+            str(level).strip() for level in derived_levels if level is not None
+        ]
 
         enjoyment = data.get("enjoyment")
         if enjoyment is not None:
@@ -105,7 +107,9 @@ class PlatData:
     """Loads plat_combined.json and exposes lookup helpers."""
 
     def __init__(self, cache_file: Optional[str] = None) -> None:
-        self.cache_file = cache_file or (Path(__file__).parent / "data" / "plat_combined.json")
+        self.cache_file = cache_file or (
+            Path(__file__).parent / "data" / "plat_combined.json"
+        )
         self.entries: list[PlatInfo] = []
         self.main_entries: list[PlatInfo] = []
         self.derived_entries: list[PlatInfo] = []
@@ -165,6 +169,7 @@ platdata_derived_entries: list[PlatInfo] = platdata.derived_entries
 platdata_by_id: dict[str, PlatInfo] = platdata.by_id
 platdata_by_name: dict[str, PlatInfo] = platdata.by_name
 
+
 def fetch(cache_file: Optional[str] = None) -> list[PlatInfo]:
     """Reload plat data from JSON and return PlatInfo entries."""
     global platdata, platdata_entries, platdata_main_entries, platdata_derived_entries, platdata_by_id  # noqa: PLW0603
@@ -175,11 +180,13 @@ def fetch(cache_file: Optional[str] = None) -> list[PlatInfo]:
     platdata_by_id = platdata.by_id
     return platdata_entries
 
-def getlevelbyid(level_id: Optional[Union[str,int]]) -> Optional[PlatInfo]:
+
+def getlevelbyid(level_id: Optional[Union[str, int]]) -> Optional[PlatInfo]:
     """Get a main PlatInfo entry by its id."""
     if not level_id:
         return None
     return platdata.getlevelbyid(str(level_id))
+
 
 def getderivedlevels(level: PlatInfo) -> list[PlatInfo]:
     """Get all derived entry from one PlatInfo entry"""

@@ -1,25 +1,33 @@
-from nonebot import get_plugin_config
-from nonebot.plugin import PluginMetadata
-from nonebot.adapters.onebot.v11 import MessageSegment,Bot,Event
-from nonebot.adapters.onebot.v11 import GroupMessageEvent,MessageEvent
-from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
-from typing import Union
-from nonebot.params import CommandArg
-from nonebot.matcher import Matcher
-from nonebot import require
-from nonebot import on_command
-from nonebot import logger
-from PIL import Image,ImageDraw
-from pathlib import Path
-from nonebot.permission import SUPERUSER
+import asyncio
 import random
+from pathlib import Path
+from typing import Union
+
 import redis
+from nonebot import on_command
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment, PrivateMessageEvent
+from nonebot.matcher import Matcher
+from nonebot.params import CommandArg
+from nonebot.permission import SUPERUSER
+from nonebot.plugin import PluginMetadata
+from PIL import Image, ImageDraw
 
 from .config import Config
 from .data import maps
 
-random.seed()
-r = redis.Redis(host='localhost', port=6379, decode_responses=True)  
+DATA_DIR = Path("xiaozu_bot/plugins/guess/data")
+PICTURES_DIR = Path("xiaozu_bot/plugins/guess/pictures")
+COOLDOWN_PREFIX = "guess_cooldown_"
+ANSWER_KEY = "guess_answer"
+ANSWER_POSITION_KEY = "guess_answer_position"
+ANSWER_ORI_KEY = "guess_ori"
+TOTAL_TRIES_KEY = "guess_total_tries"
+TOTAL_RIGHT_KEY = "guess_total_right"
+NOTHING_ANSWER = "NOTHING"
+NOISE_THRESHOLD = 300
+MAX_CROP_RETRIES = 20
+
+r = redis.Redis(host="localhost", port=6379, decode_responses=True)
 
 __plugin_meta__ = PluginMetadata(
     name="guess",
@@ -28,14 +36,14 @@ __plugin_meta__ = PluginMetadata(
     config=Config,
 )
 
-guess_test = on_command("guess_test",permission=SUPERUSER)
+guess_test = on_command("guess_test", permission=SUPERUSER)
 guess_start = on_command("guess_start")
 guess_start_hard = on_command("guess_start_hard")
 guess_start_ultra = on_command("guess_start_ultra")
 guess = on_command("guess")
 guess_giveup = on_command("guess_giveup")
-guess_removecooldown = on_command("guess_rc",permission=SUPERUSER)
-guess_cheat = on_command("guess_cheat",permission=SUPERUSER)
+guess_removecooldown = on_command("guess_rc", permission=SUPERUSER)
+guess_cheat = on_command("guess_cheat", permission=SUPERUSER)
 guess_count = on_command("guess_count")
 
 crop_width = 256
@@ -44,16 +52,14 @@ crop_width_hard = 128
 crop_height_hard = 128
 crop_width_ultra = 64
 crop_height_ultra = 64
-aliases = {}
+aliases: dict[str, list[str]] = {}
 
-for map in maps:
-    name = map["answer"]
-    alias = map["alias"]
-    aliases[name] = alias
+for map_info in maps:
+    aliases[map_info["answer"]] = map_info["alias"]
 def formalize(str: str) -> str:
     str = str.lower()
-    for s in [" ",".",",","-","'","!","，","！","…","。",":","：","+","_",'''
-'''] :
+    for s in [" ",".",",","-","'","!","，","！","…","。",":","：","+","_","""
+"""] :
         str = str.replace(s,"")
     return str
 
@@ -87,133 +93,219 @@ def get_variance(image) -> tuple[float,float,float]:
     blue_variance = expect_blue_square - expect_blue ** 2
     return (red_variance, green_variance, blue_variance)
 
+async def _list_files(folder_path: Path) -> list[str]:
+    """异步获取文件夹下所有文件的名称列表"""
+    def sync_list():
+        if not folder_path.exists():
+            return []
+        return [f.name for f in folder_path.iterdir() if f.is_file()]
+    return await asyncio.to_thread(sync_list)
+
 def isnonsense(image) -> bool:
-    r,g,b = get_variance(image)
-    return r+g+b<300
+    return sum(get_variance(image)) < NOISE_THRESHOLD
 
-async def canStart(matcher: Matcher, event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    id = getid(event)
-    if r.ttl(f"guess_cooldown_{id}") > 0:
-        await bot.call_api("set_msg_emoji_like",message_id=event.message_id, emoji_id = "424")
+
+async def can_start(matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+    session_id = getid(event)
+    if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
+        await matcher.bot.call_api(
+            "set_msg_emoji_like",
+            message_id=event.message_id,
+            emoji_id="424",
+        )
         await matcher.finish()
-    answer = r.hget("guess_answer",f"{id}")
-    if answer != None and answer != "NOTHING" and isinstance(event,GroupMessageEvent):
-        await matcher.finish(f"请先输入*guess_giveup结束目前的题目！", at_sender = True)
 
-async def guessStart(crop_size: tuple[int,int], matcher: Matcher, event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    id = getid(event)
+    answer = r.hget(ANSWER_KEY, session_id)
+    if answer is not None and answer != NOTHING_ANSWER and isinstance(event, GroupMessageEvent):
+        await matcher.finish("请先输入*guess_giveup结束目前的题目！", at_sender=True)
+
+
+async def guessStart(
+    crop_size: tuple[int, int], matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]
+) -> None:
+    session_id = getid(event)
     crop_width, crop_height = crop_size
-    file_names = []
-    while len(file_names) == 0:
-        map = random.choice(maps)
-        folder_path = Path("xiaozu_bot/plugins/guess/data/" + map["file_path"])
-        file_names = [f.name for f in folder_path.iterdir() if f.is_file()]
+    file_names: list[str] = []
+    map_info = None
+
+    while not file_names:
+        map_info = random.choice(maps)
+        folder_path = DATA_DIR / map_info["file_path"]
+        file_names = await _list_files(folder_path)
+
     file_name = random.choice(file_names)
     image_path = folder_path / file_name
-    answer = map["answer"]
+    answer = map_info["answer"]
+
     image = Image.open(image_path)
     width, height = image.size
+
     left = random.randint(0, width - crop_width)
     top = random.randint(0, height - crop_height)
     right = left + crop_width
     bottom = top + crop_height
     cropped_image = image.crop((left, top, right, bottom))
-    for i in range(0,20):
+
+    for _ in range(MAX_CROP_RETRIES):
         left = random.randint(0, width - crop_width)
         top = random.randint(0, height - crop_height)
         right = left + crop_width
         bottom = top + crop_height
         cropped_image = image.crop((left, top, right, bottom))
-        if (not isnonsense(cropped_image)): break
-    cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
+        if not isnonsense(cropped_image):
+            break
+
+    PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+    cropped_path = PICTURES_DIR / f"{session_id}.png"
     cropped_image.save(cropped_path)
-    r.set(f"guess_cooldown_{id}",answer,ex = 45)
-    r.hset("guess_answer",f"{id}",answer)
-    r.hset("guess_answer_position",f"{id}",str(left)+' '+str(top)+' '+str(right)+' '+str(bottom))
-    r.hset("guess_ori",f"{id}",str(image_path))
-    #logger.success(str(id) + answer)
-    await matcher.send(MessageSegment.image(cropped_path) + MessageSegment.text(f"这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),at_sender = True)
+
+    r.set(f"{COOLDOWN_PREFIX}{session_id}", answer, ex=45)
+    r.hset(ANSWER_KEY, session_id, answer)
+    r.hset(
+        ANSWER_POSITION_KEY,
+        session_id,
+        f"{left} {top} {right} {bottom}",
+    )
+    r.hset(ANSWER_ORI_KEY, session_id, str(image_path))
+
+    await matcher.send(
+        MessageSegment.image(cropped_path)
+        + MessageSegment.text("这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),
+        at_sender=True,
+    )
+
 
 @guess_start.handle()
-async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    await canStart(guess_start, event)
-    await guessStart((256,256), guess_start, event)
+async def handle_guess_start(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+    await can_start(guess_start, event)
+    await guessStart((256, 256), guess_start, event)
     await guess_start.finish()
 
+
 @guess_start_hard.handle()
-async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    await canStart(guess_start_hard, event)
-    await guessStart((128,128), guess_start_hard, event)
+async def handle_guess_start_hard(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+    await can_start(guess_start_hard, event)
+    await guessStart((128, 128), guess_start_hard, event)
     await guess_start_hard.finish()
 
+
 @guess_start_ultra.handle()
-async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    await canStart(guess_start_ultra, event)
-    await guessStart((64,64), guess_start_ultra, event)
+async def handle_guess_start_ultra(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+    await can_start(guess_start_ultra, event)
+    await guessStart((64, 64), guess_start_ultra, event)
     await guess_start_ultra.finish()
 
 
 @guess_giveup.handle()
-async def handle_function(bot:Bot, event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    id = getid(event)
-    if r.ttl(f"guess_cooldown_{id}") > 0:
-        await bot.call_api("set_msg_emoji_like",message_id=event.message_id, emoji_id = "424")
+async def handle_guess_giveup(bot: Bot, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+    session_id = getid(event)
+    if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
+        await bot.call_api(
+            "set_msg_emoji_like",
+            message_id=event.message_id,
+            emoji_id="424",
+        )
         await guess_giveup.finish()
-    answer = r.hget("guess_answer",f"{id}")
-    if answer == None or answer == "NOTHING":
-        await bot.call_api("set_msg_emoji_like",message_id=event.message_id, emoji_id = "10068")
+
+    answer = r.hget(ANSWER_KEY, session_id)
+    if answer is None or answer == NOTHING_ANSWER:
+        await bot.call_api(
+            "set_msg_emoji_like",
+            message_id=event.message_id,
+            emoji_id="10068",
+        )
         await guess_giveup.finish()
-    r.hset("guess_answer", f"{id}", "NOTHING")
-    image_path = Path(r.hget("guess_ori",f"{id}"))
-    pos = r.hget("guess_answer_position",f"{id}").split()
-    pos = [int(i) for i in pos]
+
+    r.hset(ANSWER_KEY, session_id, NOTHING_ANSWER)
+    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id))
+    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()]
     image = Image.open(image_path)
-    ImageDraw.Draw(image).rectangle([(pos[0],pos[1]),(pos[2],pos[3])],fill = None, outline = "red", width = 4)
-    cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
+    ImageDraw.Draw(image).rectangle(
+        [(pos[0], pos[1]), (pos[2], pos[3])], fill=None, outline="red", width=4
+    )
+
+    PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+    cropped_path = PICTURES_DIR / f"{session_id}.png"
     image.save(cropped_path)
-    await guess.finish(MessageSegment.text(f"你放弃了！答案是：{answer}。")+MessageSegment.image(cropped_path), at_sender = True)
+
+    await guess_giveup.finish(
+        MessageSegment.text(f"你放弃了！答案是：{answer}。")
+        + MessageSegment.image(cropped_path),
+        at_sender=True,
+    )
+
 
 @guess.handle()
-async def handle_function(bot:Bot, event: Union[GroupMessageEvent,PrivateMessageEvent], arg: Message = CommandArg()):
-    id = getid(event)
-    input = formalize(str(arg))
-    answer = r.hget("guess_answer",f"{id}")
-    if answer == None or answer == "NOTHING":
-        await bot.call_api("set_msg_emoji_like",message_id=event.message_id, emoji_id = "10068")
+async def handle_guess(bot: Bot, event: Union[GroupMessageEvent, PrivateMessageEvent], arg: Message = CommandArg()) -> None:
+    session_id = getid(event)
+    guess_input = formalize(str(arg))
+    answer = r.hget(ANSWER_KEY, session_id)
+    if answer is None or answer == NOTHING_ANSWER:
+        await bot.call_api(
+            "set_msg_emoji_like",
+            message_id=event.message_id,
+            emoji_id="10068",
+        )
         await guess.finish()
-    r.set("guess_total_tries",int(r.get("guess_total_tries"))+1)
-    if input in aliases[answer]: input = answer
-    if input != answer:
-        await bot.call_api("set_msg_emoji_like",message_id=event.message_id, emoji_id = "424")
-        if random.randint(1,10) <= 1:
-            cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
-            await guess.finish(MessageSegment.text("你的猜测是错误的！你的题目是")+MessageSegment.image(cropped_path), at_sender = True)
+
+    if guess_input in aliases.get(answer, []):
+        guess_input = answer
+
+    r.set(TOTAL_TRIES_KEY, int(r.get(TOTAL_TRIES_KEY) or 0) + 1)
+
+    if guess_input != answer:
+        await bot.call_api(
+            "set_msg_emoji_like",
+            message_id=event.message_id,
+            emoji_id="424",
+        )
+        if random.randint(1, 10) <= 1:
+            cropped_path = PICTURES_DIR / f"{session_id}.png"
+            await guess.finish(
+                MessageSegment.text("你的猜测是错误的！你的题目是")
+                + MessageSegment.image(cropped_path),
+                at_sender=True,
+            )
         await guess.finish()
-    r.hset("guess_answer", f"{id}", "NOTHING")
-    image_path = Path(r.hget("guess_ori",f"{id}"))
-    pos = r.hget("guess_answer_position",f"{id}").split()
-    pos = [int(i) for i in pos]
+
+    r.hset(ANSWER_KEY, session_id, NOTHING_ANSWER)
+    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id))
+    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()]
     image = Image.open(image_path)
-    ImageDraw.Draw(image).rectangle([(pos[0],pos[1]),(pos[2],pos[3])],fill = None, outline = "red", width = 4)
-    cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/f"{id}.png"
+    ImageDraw.Draw(image).rectangle(
+        [(pos[0], pos[1]), (pos[2], pos[3])], fill=None, outline="red", width=4
+    )
+
+    PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+    cropped_path = PICTURES_DIR / f"{session_id}.png"
     image.save(cropped_path)
-    r.set("guess_total_right",int(r.get("guess_total_right"))+1)
-    await guess.finish(MessageSegment.text(f"你猜对了！答案是：{answer}。")+MessageSegment.image(cropped_path), at_sender = True)
+
+    r.set(TOTAL_RIGHT_KEY, int(r.get(TOTAL_RIGHT_KEY) or 0) + 1)
+    await guess.finish(
+        MessageSegment.text(f"你猜对了！答案是：{answer}。")
+        + MessageSegment.image(cropped_path),
+        at_sender=True,
+    )
+
 
 @guess_count.handle()
-async def handle_function():
-    t1 = r.get("guess_total_tries")
-    t2 = r.get("guess_total_right")
-    await guess_count.finish(f"全服总共进行了{t1}次猜测，猜对了{t2}道题。")
+async def handle_guess_count() -> None:
+    t1 = r.get(TOTAL_TRIES_KEY)
+    t2 = r.get(TOTAL_RIGHT_KEY)
+    await guess_count.finish(
+        f"全服总共进行了{t1}次猜测，猜对了{t2}道题。"
+    )
+
 
 @guess_test.handle()
-async def handle_function():
-    for i in range(0,5):
-        file_names = []
-        while len(file_names) == 0:
-            map = random.choice(maps)
-            folder_path = Path("xiaozu_bot/plugins/guess/data/" + map["file_path"])
-            file_names = [f.name for f in folder_path.iterdir() if f.is_file()]
+async def handle_guess_test() -> None:
+    for _ in range(5):
+        file_names: list[str] = []
+        while not file_names:
+            map_info = random.choice(maps)
+            folder_path = DATA_DIR / map_info["file_path"]
+            file_names = await _list_files(folder_path)
+
         file_name = random.choice(file_names)
         image_path = folder_path / file_name
         image = Image.open(image_path)
@@ -223,20 +315,31 @@ async def handle_function():
         right = left + crop_width
         bottom = top + crop_height
         cropped_image = image.crop((left, top, right, bottom))
-        cropped_path = Path()/"xiaozu_bot"/"plugins"/"guess"/"pictures"/"test.png"
+
+        PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+        cropped_path = PICTURES_DIR / "test.png"
         cropped_image.save(cropped_path)
-        await guess_test.send(MessageSegment.image(cropped_path)+MessageSegment.text(str(get_variance(cropped_image))))
+        await guess_test.send(
+            MessageSegment.image(cropped_path)
+            + MessageSegment.text(str(get_variance(cropped_image)))
+        )
     guess_test.finish()
 
+
 @guess_removecooldown.handle()
-async def handle_function(event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    id = getid(event)
-    r.set(f"guess_cooldown_{id}","removed",ex = 1)
+async def handle_guess_removecooldown(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+    session_id = getid(event)
+    r.set(f"{COOLDOWN_PREFIX}{session_id}", "removed", ex=1)
     await guess_removecooldown.finish("已经移除你（或你所在群）的生成题目cd！")
 
+
 @guess_cheat.handle()
-async def handle_function(bot: Bot, event: Union[GroupMessageEvent,PrivateMessageEvent]):
-    id = getid(event)
-    answer = r.hget("guess_answer",f"{id}")
-    await bot.call_api("send_private_msg",user_id=event.user_id, message=[{"type": "text","data":{"text":str(id)+str(answer)}}])
+async def handle_guess_cheat(bot: Bot, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+    session_id = getid(event)
+    answer = r.hget(ANSWER_KEY, session_id)
+    await bot.call_api(
+        "send_private_msg",
+        user_id=event.user_id,
+        message=[{"type": "text", "data": {"text": str(session_id) + str(answer)}}],
+    )
     await guess_cheat.finish()
