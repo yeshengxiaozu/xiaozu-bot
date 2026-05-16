@@ -3,7 +3,6 @@ import random
 from pathlib import Path
 from typing import Union
 
-import redis
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment, PrivateMessageEvent
 from nonebot.matcher import Matcher
@@ -11,6 +10,8 @@ from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from PIL import Image, ImageDraw
+
+from xiaozu_bot.utils.json_storage import JsonRedis
 
 from .config import Config
 from .data import maps
@@ -27,7 +28,7 @@ NOTHING_ANSWER = "NOTHING"
 NOISE_THRESHOLD = 300
 MAX_CROP_RETRIES = 20
 
-r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+r = JsonRedis("xiaozu_bot/plugins/guess/data/storage.json")
 
 __plugin_meta__ = PluginMetadata(
     name="guess",
@@ -56,20 +57,19 @@ aliases: dict[str, list[str]] = {}
 
 for map_info in maps:
     aliases[map_info["answer"]] = map_info["alias"]
-def formalize(str: str) -> str:
-    str = str.lower()
+def formalize(str: str) -> str:  # noqa: A002
+    str = str.lower()  # noqa: A001
     for s in [" ",".",",","-","'","!","，","！","…","。",":","：","+","_","""
 """] :
-        str = str.replace(s,"")
+        str = str.replace(s,"")  # noqa: A001
     return str
 
 def getid(event: Union[GroupMessageEvent,PrivateMessageEvent]) -> str:
     if isinstance(event,PrivateMessageEvent) or False:
         return str(event.user_id)
-    else:
-        return "g" + str(event.group_id)
+    return "g" + str(event.group_id)
 
-def get_variance(image) -> tuple[float,float,float]:
+def get_variance(image) -> tuple[float,float,float]:  # noqa: ANN001
     pixels = image.getdata()
     num_pixels = len(pixels)
     red_sum = red_square_sum = 0
@@ -101,14 +101,14 @@ async def _list_files(folder_path: Path) -> list[str]:
         return [f.name for f in folder_path.iterdir() if f.is_file()]
     return await asyncio.to_thread(sync_list)
 
-def isnonsense(image) -> bool:
+def isnonsense(image: Image.Image) -> bool:
     return sum(get_variance(image)) < NOISE_THRESHOLD
 
 
-async def can_start(matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+async def can_start(bot: Bot, matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
     session_id = getid(event)
     if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
-        await matcher.bot.call_api(
+        await bot.call_api(
             "set_msg_emoji_like",
             message_id=event.message_id,
             emoji_id="424",
@@ -120,15 +120,16 @@ async def can_start(matcher: Matcher, event: Union[GroupMessageEvent, PrivateMes
         await matcher.finish("请先输入*guess_giveup结束目前的题目！", at_sender=True)
 
 
-async def guessStart(
+async def guessstart(
     crop_size: tuple[int, int], matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]
 ) -> None:
     session_id = getid(event)
     crop_width, crop_height = crop_size
     file_names: list[str] = []
+    folder_path = Path()
     map_info = None
 
-    while not file_names:
+    while not file_names or not map_info:
         map_info = random.choice(maps)
         folder_path = DATA_DIR / map_info["file_path"]
         file_names = await _list_files(folder_path)
@@ -155,7 +156,7 @@ async def guessStart(
         if not isnonsense(cropped_image):
             break
 
-    PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+    PICTURES_DIR.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
     cropped_path = PICTURES_DIR / f"{session_id}.png"
     cropped_image.save(cropped_path)
 
@@ -176,23 +177,23 @@ async def guessStart(
 
 
 @guess_start.handle()
-async def handle_guess_start(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
-    await can_start(guess_start, event)
-    await guessStart((256, 256), guess_start, event)
+async def handle_guess_start(bot: Bot, matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+    await can_start(bot, matcher, event)
+    await guessstart((256, 256), matcher, event)
     await guess_start.finish()
 
 
 @guess_start_hard.handle()
-async def handle_guess_start_hard(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
-    await can_start(guess_start_hard, event)
-    await guessStart((128, 128), guess_start_hard, event)
+async def handle_guess_start_hard(bot: Bot,  matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+    await can_start(bot, matcher, event)
+    await guessstart((128, 128), matcher, event)
     await guess_start_hard.finish()
 
 
 @guess_start_ultra.handle()
-async def handle_guess_start_ultra(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
-    await can_start(guess_start_ultra, event)
-    await guessStart((64, 64), guess_start_ultra, event)
+async def handle_guess_start_ultra(bot: Bot,  matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+    await can_start(bot, matcher, event)
+    await guessstart((64, 64), matcher, event)
     await guess_start_ultra.finish()
 
 
@@ -217,14 +218,14 @@ async def handle_guess_giveup(bot: Bot, event: Union[GroupMessageEvent, PrivateM
         await guess_giveup.finish()
 
     r.hset(ANSWER_KEY, session_id, NOTHING_ANSWER)
-    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id))
-    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()]
+    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id)) # pyright: ignore[reportArgumentType]
+    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()] # pyright: ignore[reportOptionalMemberAccess]
     image = Image.open(image_path)
     ImageDraw.Draw(image).rectangle(
         [(pos[0], pos[1]), (pos[2], pos[3])], fill=None, outline="red", width=4
     )
 
-    PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+    PICTURES_DIR.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
     cropped_path = PICTURES_DIR / f"{session_id}.png"
     image.save(cropped_path)
 
@@ -269,14 +270,14 @@ async def handle_guess(bot: Bot, event: Union[GroupMessageEvent, PrivateMessageE
         await guess.finish()
 
     r.hset(ANSWER_KEY, session_id, NOTHING_ANSWER)
-    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id))
-    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()]
+    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id)) # pyright: ignore[reportArgumentType]
+    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()] # pyright: ignore[reportOptionalMemberAccess]
     image = Image.open(image_path)
     ImageDraw.Draw(image).rectangle(
         [(pos[0], pos[1]), (pos[2], pos[3])], fill=None, outline="red", width=4
     )
 
-    PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+    PICTURES_DIR.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
     cropped_path = PICTURES_DIR / f"{session_id}.png"
     image.save(cropped_path)
 
@@ -307,7 +308,7 @@ async def handle_guess_test() -> None:
             file_names = await _list_files(folder_path)
 
         file_name = random.choice(file_names)
-        image_path = folder_path / file_name
+        image_path = folder_path / file_name # type: ignore  # noqa: PGH003
         image = Image.open(image_path)
         width, height = image.size
         left = random.randint(0, width - crop_width)
@@ -316,14 +317,14 @@ async def handle_guess_test() -> None:
         bottom = top + crop_height
         cropped_image = image.crop((left, top, right, bottom))
 
-        PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+        PICTURES_DIR.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
         cropped_path = PICTURES_DIR / "test.png"
         cropped_image.save(cropped_path)
         await guess_test.send(
             MessageSegment.image(cropped_path)
             + MessageSegment.text(str(get_variance(cropped_image)))
         )
-    guess_test.finish()
+    await guess_test.finish()
 
 
 @guess_removecooldown.handle()

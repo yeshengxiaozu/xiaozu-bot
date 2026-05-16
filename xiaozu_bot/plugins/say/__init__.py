@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 from typing import Union
 
-import requests
 from nonebot import get_plugin_config, on_command, require
 from nonebot.adapters.onebot.v11 import (
     Bot,
@@ -29,14 +28,14 @@ __plugin_meta__ = PluginMetadata(
 )
 
 
-def json_group_audio(group_id: int, path: str) -> set:
+def json_group_audio(group_id: int, path: str) -> dict:
     return {
         "group_id": group_id,
         "message": [{"type": "record", "data": {"file": path}}],
     }
 
 
-def json_private_audio(user_id: int, path: str) -> set:
+def json_private_audio(user_id: int, path: str) -> dict:
     return {"user_id": user_id, "message": [{"type": "record", "data": {"file": path}}]}
 
 
@@ -109,15 +108,9 @@ async def handle_function(
     except Exception as e:
         await say.finish(f"生成音频失败: {e}")
     if isinstance(event, GroupMessageEvent):
-        requests.post(
-            "http://localhost:3000/send_group_msg",
-            json=json_group_audio(event.group_id, file_path),
-        )
+        await bot.call_api("send_group_msg", **json_group_audio(event.group_id, file_path))
     else:
-        requests.post(
-            "http://localhost:3000/send_private_msg",
-            json=json_private_audio(event.user_id, file_path),
-        )
+        await bot.call_api("send_private_msg", **json_private_audio(event.user_id, file_path))
     os.remove(file_path)
     await say.finish()
 
@@ -157,14 +150,8 @@ async def handle_function(
     except Exception as e:
         await say.finish(f"生成音频失败: {e}")
     if isinstance(event, GroupMessageEvent):
-        requests.post(
-            "http://localhost:3000/send_group_msg",
-            json=json_group_audio(event.group_id, file_path),
-        )
+        await bot.call_api("send_group_msg", **json_group_audio(event.group_id, file_path))
     else:
-        requests.post(
-            "http://localhost:3000/send_private_msg",
-            json=json_private_audio(event.user_id, file_path),
-        )
+        await bot.call_api("send_private_msg", **json_private_audio(event.user_id, file_path))
     os.remove(file_path)
     await say_instructed.finish("")

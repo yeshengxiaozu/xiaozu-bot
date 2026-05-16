@@ -12,11 +12,11 @@ __plugin_meta__ = PluginMetadata(
 
 config = get_plugin_config(Config)
 
-help = on_command("help")
+help = on_command("help")  # noqa: A001
 
 
 @help.handle()
-async def handle_function():
+async def handle_function() -> None:
     await help.finish(
         """欢迎使用小小卒！命令以*开头
 用户群：1035708051可以在里面对bot功能提建议什么的

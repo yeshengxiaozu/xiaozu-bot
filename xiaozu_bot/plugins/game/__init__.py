@@ -1,3 +1,4 @@
+# 这个代码是我复制粘贴移植的，能跑就不需要动
 # 导入定时任务库
 from nonebot import get_bots, on_command, on_fullmatch, require
 from nonebot.adapters.onebot.v11 import (

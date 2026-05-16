@@ -62,8 +62,11 @@ class GDDLLevel:
     DefaultRating: Optional[int] = None
     Showcase: Optional[str] = None
     Meta: LevelMeta
+    Tags: list[dict[str,str]]
 
-    def __init__(self, jsondict: dict[str, Any]) -> None:
+    def __init__(self, jsondict: dict[str, Any], tags: Optional[list[dict[str, str]]] = None) -> None:
+        if tags is None:
+            tags = []
         self.ID = jsondict["ID"]
         self.Rating = jsondict["Rating"]
         self.Enjoyment = jsondict["Enjoyment"]
@@ -77,12 +80,28 @@ class GDDLLevel:
         self.DefaultRating = jsondict["DefaultRating"]
         self.Showcase = jsondict["Showcase"]
         self.Meta = LevelMeta(jsondict["Meta"])
+        self.Tags = tags or []
 
     def is_pemon(self) -> bool:
         return self.Meta.is_pemon()
 
 
 class Gddl:
+    @staticmethod
+    def getleveltags(level_id: Union[str, Any]) -> list[dict[str, Any]]:
+        url = f"https://gdladder.com/api/level/{level_id}/tags"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {apikey}",
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code == HTTP_OK:
+            data = response.json()
+            return [
+                {"Name": tag["Tag"]["Name"], "Count": tag["ReactCount"]} for tag in data
+            ]
+        return []
+
     @staticmethod
     def getlevelsbyname(name: str) -> list[GDDLLevel]:
         url = "https://gdladder.com/api/level/search"
@@ -111,23 +130,9 @@ class Gddl:
             response = requests.get(url, headers=headers)
             if response.status_code == HTTP_OK:
                 data = response.json()
-                return GDDLLevel(data)
+                tags = Gddl.getleveltags(id)
+                return GDDLLevel(data, tags)
         except requests.RequestException as e:
             logger.error(f"Error fetching level by ID: {e}")
             return None
         return None
-
-    @staticmethod
-    def getleveltags(level_id: Union[str, Any]) -> list[dict[str, Any]]:
-        url = f"https://gdladder.com/api/level/{level_id}/tags"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {apikey}",
-        }
-        response = requests.get(url, headers=headers)
-        if response.status_code == HTTP_OK:
-            data = response.json()
-            return [
-                {"Name": tag["Tag"]["Name"], "Count": tag["ReactCount"]} for tag in data
-            ]
-        return []

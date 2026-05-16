@@ -5,11 +5,10 @@ from typing import Optional
 import requests
 from nonebot import logger
 
-from .aredlapi import Aredl, AREDLLevel, aredllevels
+from .aredlapi import Aredl, aredllevels
 from .gdapi import GDLevel, get_level_by_id
-from .gddlapi import Gddl, GDDLLevel
+from .gddlapi import Gddl
 from .imageinfo import send_ttp
-from .nlwapi import Level as NLWLevel
 from .nlwapi import Nlw, hdslevels, idslevels, lwlevels, nlwlevels
 from .platapi import getderivedlevels, platdata_main_entries
 from .platapi import getlevelbyid as get_plat_level_by_id
@@ -17,7 +16,7 @@ from .platapi import getlevelbyid as get_plat_level_by_id
 # i have no idea is this amount of exposal is bad but looked it worked
 
 
-# fallback function since I should already get it using gdapi
+# fallback function since I should already get it using gdapi if this get called we f*cked up
 def get_creator(level_id: int) -> Optional[str]:
     logger.warning("get_creator got called: " + str(level_id))
     try:
@@ -38,205 +37,6 @@ def get_difficulty(level_id: int) -> Optional[str]:
         return None
     return data.difficulty_label() if data else None
 
-
-# constrants
-DEMON_STARS = 10
-LENGTH_PLAT = 5
-
-
-class LevelInfo:
-    def __init__(
-        self,
-        gdlevel: GDLevel,
-        gddl_info: Optional[GDDLLevel] = None,
-        aredl_info: Optional[AREDLLevel] = None,
-        nlw_info: Optional[NLWLevel] = None,
-        creatorname: Optional[str] = None,
-    ) -> None:
-        # 基础信息
-        self.id = (
-            int(gdlevel.level_id) if gdlevel and gdlevel.level_id is not None else None
-        )
-        self.name = gdlevel.level_name if gdlevel else None
-        self.creator_name = creatorname or (gdlevel.creator_name if gdlevel else None)
-        self.creator = self.creator_name or (nlw_info.creator if nlw_info else None)
-        self.creator_sheet = nlw_info.creator if nlw_info else None
-        self.description = gdlevel.description if gdlevel else None
-        self.length = (
-            gdlevel.length
-            if gdlevel and gdlevel.length is not None
-            else (gddl_info.Meta.Length if gddl_info and gddl_info.Meta else None)
-        )
-        self.stars = gdlevel.stars if gdlevel else None
-        self.demon_difficulty = gdlevel.demon_difficulty if gdlevel else None
-        self.length_exact = nlw_info.length if nlw_info else None
-        self.checkpoints = nlw_info.checkpoints if nlw_info else None
-        self.difficulty = (
-            gddl_info.Meta.Difficulty if gddl_info and gddl_info.Meta else None
-        )
-
-        self.songid = (
-            gddl_info.Meta.Song.ID
-            if gddl_info and gddl_info.Meta and gddl_info.Meta.Song
-            else (gdlevel.song_id if gdlevel else None)
-        )
-        self.songname = (
-            gddl_info.Meta.Song.Name
-            if gddl_info and gddl_info.Meta and gddl_info.Meta.Song
-            else (gdlevel.song_name if gdlevel else None)
-        )
-        self.songauthor = (
-            gddl_info.Meta.Song.Author
-            if gddl_info and gddl_info.Meta and gddl_info.Meta.Song
-            else (gdlevel.song_author if gdlevel else None)
-        )
-        self.is2p = (
-            gddl_info.Meta.IsTwoPlayer
-            if gddl_info and gddl_info.Meta
-            else gdlevel.is_two_player
-            if gdlevel
-            else None
-        )
-
-        # GDDL 数据
-        self.gddl_rating = gddl_info.Rating if gddl_info else None
-        self.gddl_enjoyment = gddl_info.Enjoyment if gddl_info else None
-        self.gddl_ratingcount = gddl_info.RatingCount if gddl_info else None
-        self.gddl_enjoymentcount = gddl_info.EnjoymentCount if gddl_info else None
-        self.gddl_2prating = gddl_info.TwoPlayerRating if gddl_info else None
-        self.gddl_2penjoyment = gddl_info.TwoPlayerEnjoyment if gddl_info else None
-        self.gddl_tags = []  # 通过 getlevelinfo 填充
-
-        # AREDL 数据
-        self.aredl_position = aredl_info.position if aredl_info else None
-        self.aredl_legacy = aredl_info.legacy if aredl_info else None
-        self.aredl_tags = aredl_info.tags if aredl_info else None
-        self.aredl_description = aredl_info.description if aredl_info else None
-        self.edel_pending = aredl_info.is_edel_pending if aredl_info else None
-        self.edel_enjoyment = aredl_info.edel_enjoyment if aredl_info else None
-
-        # NLW / 其他来源数据
-        self.spredsheet_souce = nlw_info.source if nlw_info else None
-        self.nlw_tier = nlw_info.tier if nlw_info else None
-        self.nlw_skillset = nlw_info.skillset if nlw_info else None
-        self.nlw_description = nlw_info.description if nlw_info else None
-
-        # 视频链接（当前未启用）
-        # self.gddl_vid = gddl_info.Showcase if gddl_info.Showcase else None
-        # self.nlw_vid = nlw_info.video if nlw_info else None
-        # self.aredl_vid = aredl_info.verificationurl if aredl_info else None
-
-    def __str__(self) -> str:
-        return self.totext()
-
-    def totext(self) -> str:
-        lines = []
-
-        # 标题行
-        creator_str = f" by {self.creator}" if self.creator else ""
-        difficulty_label = self.difficulty_label()
-        lines.append(f"ID: {self.id}")
-        lines.append(f"{self.name}{creator_str} ({difficulty_label})")
-
-        # 描述与歌曲
-        lines.append(f"Description: {self.description}")
-        lines.append(f"Song: [{self.songid}] {self.songname} ({self.songauthor})")
-        lines.append("")  # 空行，保持原输出风格
-
-        # GDDL 评分与享受度（含双人支持）
-        if self.gddl_rating:
-            rating_2p = self._format_2p(self.gddl_2prating)
-            lines.append(
-                f"GDDL Rating: {round(self.gddl_rating, 2)}{rating_2p} ({self.gddl_ratingcount})"
-            )
-        if self.gddl_enjoyment:
-            enjoy_2p = self._format_2p(self.gddl_2penjoyment)
-            lines.append(
-                f"GDDL Enjoyment: {round(self.gddl_enjoyment, 2)}{enjoy_2p} ({self.gddl_enjoymentcount})"
-            )
-
-        # GDDL 标签（最多三个）
-        if self.gddl_tags:
-            tags_str = ", ".join(
-                f"{tag['Name']}({tag['Count']})" for tag in self.gddl_tags[:3]
-            )
-            lines.append(f"GDDL Tags: {tags_str}")
-
-        # AREDL 信息
-        if self.aredl_position:
-            tags_str = ", ".join(self.aredl_tags) if self.aredl_tags else "Unknown"
-            if self.aredl_legacy:
-                lines.append(f"AREDL #Legacy ({tags_str})")
-            else:
-                lines.append(f"AREDL #{self.aredl_position} ({tags_str})")
-
-        # NLW Tier / 技能组
-        if self.nlw_tier:
-            skillset = f"({self.nlw_skillset})" if self.nlw_skillset else ""
-            lines.append(f"{self.spredsheet_souce} Tier: {self.nlw_tier}{skillset}")
-
-        # EDEL Enjoyment
-        if self.edel_enjoyment and self.edel_enjoyment > 0:
-            lines.append(f"EDEL Enjoyment: {self.edel_enjoyment}")
-
-        # 详细描述（NLW & AREDL）
-        if self.nlw_description:
-            lines.append(f"{self.spredsheet_souce} Description: {self.nlw_description}")
-        if self.aredl_description:
-            lines.append(f"AREDL Description: {self.aredl_description}")
-
-        # 视频链接（群聊中禁用，保留原逻辑）
-        """
-        if False and (self.aredl_vid or self.nlw_vid or self.gddl_vid):
-            lines.append("Videos:")
-            if self.gddl_vid:
-                lines.append(f"GDDL: https://youtu.be/{self.gddl_vid}")
-            if self.nlw_vid:
-                lines.append(f"{self.spredsheet_souce}: {self.nlw_vid}")
-            if self.aredl_vid:
-                lines.append(f"AREDL: {self.aredl_vid}")
-        """
-        return "\n".join(lines)
-
-    def _format_2p(self, two_p_value: Optional[float]):
-        """格式化双人评分后缀，无数据时返回空字符串"""
-        if self.is2p and two_p_value:
-            return f" / {round(two_p_value, 2)}(2p)"
-        return ""
-
-    def difficulty_label(self) -> str:
-        stars = int(self.stars) if self.stars is not None else None
-        if stars is None:
-            return self.difficulty or "Unknown"
-        sign = "🌙" if self.is_pemon() else "⭐"
-
-        if stars < DEMON_STARS:  # nondemon
-            return [
-                "Unrated",
-                f"1{sign}auto",
-                f"2{sign}easy",
-                f"3{sign}normal",
-                f"4{sign}hard",
-                f"5{sign}hard",
-                f"6{sign}harder",
-                f"7{sign}harder",
-                f"8{sign}insane",
-                f"9{sign}insane",
-            ][stars]
-        if self.demon_difficulty:
-            return f"{['Hard', 'Unknown', 'Unknown', 'Easy', 'Medium', 'Insane', 'Extreme'][self.demon_difficulty]} {'Pemon' if self.is_pemon() else 'Demon'}"
-            # bro what is rubtap doing it dont make sense
-        if self.difficulty:
-            return f"{self.difficulty} {'Pemon' if self.length == LENGTH_PLAT else 'Demon'}"  # make sense
-        return "10⭐demon"
-
-    def is_pemon(self) -> bool:
-        return int(self.length) == LENGTH_PLAT if self.length is not None else False
-
-    def is_demon_detail(self) -> bool:
-        return self.stars == DEMON_STARS and not self.is_pemon()
-
-
 @dataclass
 class SearchResult:
     id: int
@@ -246,7 +46,7 @@ class SearchResult:
     difficulty: Optional[str] = None
 
 
-def _add_search_result(
+def _add_search_result(  # noqa: PLR0913
     results: dict[int, SearchResult],
     level_id: int,
     name: str,
@@ -359,19 +159,11 @@ def search_by_name(name: str) -> list[SearchResult]:  # noqa: C901, PLR0912
     return []
 
 
-def getlevelinfo(level_id: int) -> Optional[LevelInfo]:
+def getlevelinfo(level_id: int) -> Optional[GDLevel]:
     gdlevel = get_level_by_id(level_id)
     if not gdlevel:
         return None
-
-    gddl_info = Gddl.getlevelbyid(level_id)
-    aredl_info = Aredl.getlevelbyid(level_id)
-    nlw_info = Nlw.getlevelbyid(level_id)
-    creator_name = gdlevel.creator_name or get_creator(level_id)
-    level_info = LevelInfo(gdlevel, gddl_info, aredl_info, nlw_info, creator_name)
-    level_info.gddl_tags = Gddl.getleveltags(level_id) if gddl_info else []
-    return level_info
-
+    return gdlevel
 
 from nonebot import on_command, on_message
 from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageEvent
@@ -379,85 +171,92 @@ from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
 
-def _format_demon_message(level_info: LevelInfo) -> str:  # noqa: C901
-    creator = level_info.creator or level_info.creator_name
-    msgstr = f"{level_info.name} {'by ' + creator if creator else ''}"
+def _format_demon_message(level_info: GDLevel) -> str:  # noqa: C901
+    level_id = level_info.level_id
+    gddl_info = Gddl.getlevelbyid(level_id)
+    aredl_info = Aredl.getlevelbyid(level_id)
+    nlw_info = Nlw.getlevelbyid(level_id)
+    creator = level_info.creator_name
+    msgstr = f"{level_info.level_name} {'by ' + creator if creator else ''}"
 
-    if level_info.creator_sheet and (
+    if nlw_info and nlw_info.creator and (
         not creator
-        or level_info.creator_sheet.strip().lower() != creator.strip().lower()
+        or nlw_info.creator.strip().lower() != creator.strip().lower()
     ):
-        msgstr += f" (by {level_info.creator_sheet})"
+        msgstr += f" (by {nlw_info.creator})"
 
-    difficulty_label = level_info.difficulty_label()
-    msgstr += f" ({difficulty_label})"
+    msgstr += f" ({level_info.difficulty_label()})"
 
-    length_info = (
-        f"Length: {level_info.length_exact}" if level_info.length_exact else ""
-    )
-    check_info = (
-        f"Checkpoints: {level_info.checkpoints}" if level_info.checkpoints else ""
-    )
-    msgstr += f"\nID: {level_info.id} {length_info}{' ' if length_info and check_info else ''}{check_info}"
+    length_info = (f"Length: {nlw_info.length}" if nlw_info and nlw_info.length else "")
+    msgstr += f"\nID: {level_info.level_id} {length_info}"
 
-    if level_info.gddl_rating:
-        rating_2p = ""
-        if level_info.is2p and level_info.gddl_2prating:
-            rating_2p = f" / {round(level_info.gddl_2prating, 2)}(2p)"
-        msgstr += (
-            f"\nGDDL Rating: {round(level_info.gddl_rating, 2)}{rating_2p}"
-            f" ({level_info.gddl_ratingcount})"
-        )
+    if gddl_info:
+        if gddl_info.Rating:
+            rating_2p = ""
+            if gddl_info.Meta.IsTwoPlayer and gddl_info.TwoPlayerRating:
+                rating_2p = f" / {round(gddl_info.TwoPlayerRating, 2)}(2p)"
+            msgstr += (
+                f"\nGDDL Rating: {round(gddl_info.Rating, 2)}{rating_2p}"
+                f" ({gddl_info.RatingCount})"
+            )
 
-    if level_info.gddl_enjoyment:
-        enjoy_2p = ""
-        if level_info.is2p and level_info.gddl_2penjoyment:
-            enjoy_2p = f" / {round(level_info.gddl_2penjoyment, 2)}(2p)"
-        msgstr += (
-            f"\nGDDL Enjoyment: {round(level_info.gddl_enjoyment, 2)}{enjoy_2p}"
-            f" ({level_info.gddl_enjoymentcount})"
-        )
+        if gddl_info.Enjoyment:
+            enjoy_2p = ""
+            if gddl_info.Meta.IsTwoPlayer and gddl_info.TwoPlayerEnjoyment:
+                enjoy_2p = f" / {round(gddl_info.TwoPlayerEnjoyment, 2)}(2p)"
+            msgstr += (
+                f"\nGDDL Enjoyment: {round(gddl_info.Enjoyment, 2)}{enjoy_2p}"
+                f" ({gddl_info.EnjoymentCount})"
+            )
 
-    if level_info.gddl_tags:
-        tags_str = ", ".join(
-            f"{tag['Name']}({tag['Count']})" for tag in level_info.gddl_tags[:3]
-        )
-        msgstr += f"\nGDDL Tags: {tags_str}"
+        if gddl_info.Tags:
+            tags_str = ", ".join(
+                f"{tag['Name']}({tag['Count']})" for tag in gddl_info.Tags[:3]
+            )
+            msgstr += f"\nGDDL Tags: {tags_str}"
 
-    if level_info.aredl_position:
+    if aredl_info:
         tags_str = (
-            ", ".join(level_info.aredl_tags) if level_info.aredl_tags else "Unknown"
+            ", ".join(aredl_info.tags) if aredl_info.tags else "Unknown"
         )
-        if level_info.aredl_legacy:
+        if aredl_info.legacy:
             msgstr += f"\nAREDL #Legacy ({tags_str})"
         else:
-            msgstr += f"\nAREDL #{level_info.aredl_position} ({tags_str})"
+            msgstr += f"\nAREDL #{aredl_info.position} ({tags_str})"
 
-    if level_info.nlw_tier:
-        skillset = f"({level_info.nlw_skillset})" if level_info.nlw_skillset else ""
+    if nlw_info:
+        skillset = f"({nlw_info.skillset})" if nlw_info.skillset else ""
         msgstr += (
-            f"\n{level_info.spredsheet_souce} Tier: {level_info.nlw_tier}{skillset}"
+            f"\n{nlw_info.source} Tier: {nlw_info.tier}{skillset}"
         )
 
-    if level_info.edel_enjoyment and level_info.edel_enjoyment > 0:
-        msgstr += f"\nEDEL Enjoyment: {level_info.edel_enjoyment}"
+    if aredl_info and aredl_info.edel_enjoyment:
+        msgstr += f"\nEDEL Enjoyment: {aredl_info.edel_enjoyment}"
 
     return msgstr
 
 
-def _format_pemon_message(level_info: LevelInfo) -> str:  # noqa: C901, PLR0912
-    plat_info = get_plat_level_by_id(level_info.id)
-    creator = level_info.creator or level_info.creator_name
-    lines = (
-        [f"{level_info.name} by {creator} ({level_info.difficulty_label()})"]
-        if creator
-        else [f"{level_info.name} ({level_info.difficulty_label()})"]
-    )
+def _format_pemon_message(level_info: GDLevel) -> str:  # noqa: C901, PLR0912
+    level_id = level_info.level_id
+    plat_info = get_plat_level_by_id(level_info.level_id)
+    gddl_info = Gddl.getlevelbyid(level_id)
+    aredl_info = Aredl.getlevelbyid(level_id)
+    nlw_info = Nlw.getlevelbyid(level_id)
+    creator = level_info.creator_name
 
-    id_line = f"ID: {level_info.id}"
-    if level_info.checkpoints is not None:
-        id_line += f" Checkpoints: {level_info.checkpoints}"
-    lines.append(id_line)
+    _firstline = f"{level_info.level_name} {'by ' + creator if creator else ''}"
+
+    if nlw_info and nlw_info.creator and (
+        not creator
+        or nlw_info.creator.strip().lower() != creator.strip().lower()
+    ):
+        _firstline += f" (by {nlw_info.creator})"
+    _firstline += f" ({level_info.difficulty_label()})"
+
+    lines = [_firstline]
+
+    check_info = (f": {nlw_info.checkpoints}" if nlw_info and nlw_info.checkpoints else "")
+    lines.append(f"ID: {level_info.level_id} {check_info}")
 
     if plat_info and plat_info.tier:
         lines.append(f"Difficulty：{plat_info.tier}")
@@ -467,8 +266,8 @@ def _format_pemon_message(level_info: LevelInfo) -> str:  # noqa: C901, PLR0912
         rank_parts.append(f"{plat_info.tpl}(TPL)")
     if plat_info and plat_info.pemonlist:
         rank_parts.append(f"{plat_info.pemonlist}(Pemonlist)")
-    if level_info.aredl_position:
-        rank_parts.append(f"{level_info.aredl_position}(AREDL)")
+    if aredl_info:
+        rank_parts.append(f"{aredl_info.position}(AREDL)")
     if rank_parts:
         lines.append(f"Rank：{'/'.join(rank_parts)}")
 
@@ -478,39 +277,44 @@ def _format_pemon_message(level_info: LevelInfo) -> str:  # noqa: C901, PLR0912
     enjoyment_parts = []
     if plat_info and plat_info.enjoyment is not None:
         enjoyment_parts.append(f"{plat_info.enjoyment}(PEL)")
-    if level_info.edel_enjoyment is not None:
-        enjoyment_parts.append(f"{round(level_info.edel_enjoyment, 0)}(EDEL)")
+    if aredl_info and aredl_info.edel_enjoyment is not None:
+        enjoyment_parts.append(f"{round(aredl_info.edel_enjoyment, 0)}(EDEL)")
+    if gddl_info and gddl_info.Enjoyment:
+        enjoyment_parts.append(f"{round(gddl_info.Enjoyment,2)}(GDDL)")
     if enjoyment_parts:
         lines.append(f"Enjoyment: {'/'.join(enjoyment_parts)}")
 
-    if level_info.nlw_tier:
-        skillset = f"({level_info.nlw_skillset})" if level_info.nlw_skillset else ""
-        lines.append(
-            f"{level_info.spredsheet_souce} Tier: {level_info.nlw_tier}{skillset}"
-        )
+    if aredl_info:
+        tags_str = ", ".join(aredl_info.tags) if aredl_info.tags else "Unknown"
+        if aredl_info.legacy:
+            lines.append(f"\nAREDL #Legacy ({tags_str})")
+        else:
+            lines.append(f"\nAREDL #{aredl_info.position} ({tags_str})")
+
+    if nlw_info:
+        skillset = f"({nlw_info.skillset})" if nlw_info.skillset else ""
+        lines.append(f"\n{nlw_info.source} Tier: {nlw_info.tier}{skillset}")
 
     if plat_info and plat_info.derived_levels:
         for child in getderivedlevels(plat_info):
             lines.append(f"-- {child.name}")
             if child.tier:
-                lines.append(f"Difficulty {child.tier}")
+                lines.append(f"Difficulty: {child.tier}")
             if child.enjoyment is not None:
                 lines.append(f"PEL Enjoyment: {child.enjoyment}")
 
     return "\n".join(lines)
 
 
-def _format_non_demon_message(level_info: LevelInfo) -> str:
-    creator = level_info.creator or level_info.creator_name
-    header = f"{level_info.name}"
-    if creator:
-        header += f" by {creator}"
-    lines = [header]
+def _format_non_demon_message(level_info: GDLevel) -> str:
+    level_id = level_info.level_id
+    creator = level_info.creator_name
+    lines = [f"{level_info.level_name} {'by ' + creator if creator else ''}"]
 
     difficulty_label = level_info.difficulty_label()
     lines.append(f"Difficulty: {difficulty_label}")
 
-    plat_info = get_plat_level_by_id(level_info.id)
+    plat_info = get_plat_level_by_id(level_id)
     if plat_info:
         plat_line = f"Plat: {plat_info.tier or 'Unknown'}"
         if plat_info.tpl:
@@ -522,40 +326,47 @@ def _format_non_demon_message(level_info: LevelInfo) -> str:
             lines.append(f"Tags: {', '.join(plat_info.tags)}")
         if plat_info.enjoyment is not None:
             lines.append(f"Enjoyment: {plat_info.enjoyment}(PEL)")
-        if plat_info.derived_from:
-            parent = get_plat_level_by_id(plat_info.derived_from)
-            if parent:
-                lines.append(f"Derived from: {parent.name}")
+
+    if plat_info and plat_info.derived_levels:
+        for child in getderivedlevels(plat_info):
+            lines.append(f"-- {child.name}")
+            if child.tier:
+                lines.append(f"Difficulty: {child.tier}")
+            if child.enjoyment is not None:
+                lines.append(f"PEL Enjoyment: {child.enjoyment}")
     return "\n".join(lines)
 
 
-def _format_pemon_image_text(level_info: LevelInfo) -> str:
-    parts = [
-        f"Song: [{level_info.songid}] {level_info.songname} ({level_info.songauthor})<br>Description: {level_info.description}",
-    ]
-    if level_info.nlw_description:
+def _format_demon_image_text(level_info: GDLevel) -> str:
+    level_id = level_info.level_id
+    nlw_info = Nlw.getlevelbyid(level_id)
+    aredl_info = Aredl.getlevelbyid(level_id)
+    parts = []
+    parts.append(f"Song: [{level_info.song_id}] {level_info.song_name} ({level_info.song_author})<br>" + f"Description: {level_info.description}")
+    if nlw_info and nlw_info.description:
         parts.append(
-            f"{level_info.spredsheet_souce} Description: {level_info.nlw_description}"
+            f"{nlw_info.source} Description: {nlw_info.description}"
         )
-    if level_info.aredl_description:
-        parts.append(f"AREDL Description: {level_info.aredl_description}")
+    if aredl_info and aredl_info.description:
+        parts.append(f"AREDL Description: {aredl_info.description}")
     return "<p>".join(parts)
 
 
-def _format_demon_image_text(level_info: LevelInfo) -> str:
-    parts = [
-        f"Song: [{level_info.songid}] {level_info.songname} ({level_info.songauthor})<br>Description: {level_info.description}",
-    ]
-    if level_info.nlw_description:
-        parts.append(
-            f"{level_info.spredsheet_souce} Description: {level_info.nlw_description}"
-        )
-    if level_info.aredl_description:
-        parts.append(f"AREDL Description: {level_info.aredl_description}")
+def _format_pemon_image_text(level_info: GDLevel) -> str:
+    level_id = level_info.level_id
+    nlw_info = Nlw.getlevelbyid(level_id)
+    aredl_info = Aredl.getlevelbyid(level_id)
+    parts = []
+    parts.append(f"Song: [{level_info.song_id}] {level_info.song_name} ({level_info.song_author})<br>" + f"Description: {level_info.description}")
+    if nlw_info and nlw_info.description:
+        parts.append(f"{nlw_info.source} Description: {nlw_info.description}")
+    if aredl_info and aredl_info.description:
+        parts.append(f"AREDL Description: {aredl_info.description}")
     return "<p>".join(parts)
 
 
-async def send_result(bot: Bot, event: Event, level_info: LevelInfo) -> None:
+
+async def send_result(bot: Bot, event: Event, level_info: GDLevel) -> None:
     if level_info.is_pemon():
         msgstr = _format_pemon_message(level_info)
         await bot.send(event=event, message=msgstr)
