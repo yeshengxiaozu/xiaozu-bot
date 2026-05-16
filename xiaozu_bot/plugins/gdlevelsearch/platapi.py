@@ -128,7 +128,7 @@ class PlatData:
                 self.by_id[entry.id] = entry
 
         self.by_name = {}
-        for entry in self.derived_entries:
+        for entry in self.entries:
             if entry.name and entry.name not in self.by_name:
                 self.by_name[entry.name] = entry
 
@@ -161,6 +161,11 @@ class PlatData:
     def getlevelbyid(self, level_id: str) -> Optional[PlatInfo]:
         return self.by_id.get(str(level_id).strip())
 
+    def getlevelbyname(self, name: str) -> Optional[PlatInfo]:
+        return self.by_name.get(name.strip())
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
 
 platdata = PlatData()
 platdata_entries: list[PlatInfo] = platdata.entries
@@ -180,14 +185,20 @@ def fetch(cache_file: Optional[str] = None) -> list[PlatInfo]:
     platdata_by_id = platdata.by_id
     return platdata_entries
 
+class Platapi:
+    @staticmethod
+    def getlevelbyid(level_id: Optional[Union[str, int]]) -> Optional[PlatInfo]:
+        """Get a main PlatInfo entry by its id."""
+        if not level_id:
+            return None
+        return platdata.getlevelbyid(str(level_id))
 
-def getlevelbyid(level_id: Optional[Union[str, int]]) -> Optional[PlatInfo]:
-    """Get a main PlatInfo entry by its id."""
-    if not level_id:
-        return None
-    return platdata.getlevelbyid(str(level_id))
+    @staticmethod
+    def getlevelbyname(name: str) -> Optional[PlatInfo]:
+        """Get a main PlatInfo entry by its name."""
+        return platdata.getlevelbyname(name)
 
-
-def getderivedlevels(level: PlatInfo) -> list[PlatInfo]:
-    """Get all derived entry from one PlatInfo entry"""
-    return [platdata_by_name[derived_name] for derived_name in level.derived_levels]
+    @staticmethod
+    def getderivedlevels(level: PlatInfo) -> list[PlatInfo]:
+        """Get all derived entry from one PlatInfo entry"""
+        return [platdata_by_name[derived_name] for derived_name in level.derived_levels]

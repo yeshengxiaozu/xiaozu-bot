@@ -30,9 +30,8 @@ class Level:
         self.description = jsondict.get("description")
         self.video = jsondict["video"]
 
-    def __str__(self) -> str:
-        return f"Name: {self.name}\nCreator: {self.creator}\nID: {self.id}\nDescription: {self.description}\nVideo: {self.video}"
-
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
 
 class NLWlevel(Level):
     tier: Optional[str] = None
@@ -93,7 +92,9 @@ lwlevel_dict = {}
 hdslevel_dict = {}
 
 
-# 把request到创建字典的过程封装成函数
+# TODO：把这个函数重构为调用一套通过google sheet api获取信息并交互性从SUPERUSER处获取无法自动处理的id的信息
+# 目前无法解决的技术性困难是不挂梯子没法访问google挂梯子无法访问gdhistory
+"""
 def fetch_nlw_levels() -> None:
     # 从https://nlw.oat.zone/中的/list获取信息
     nlwurl = "https://nlw.oat.zone/list?type=all"
@@ -112,11 +113,10 @@ def fetch_nlw_levels() -> None:
         for level_data in data:
             idslevel_instance = IDSlevel(level_data)
             idslevels.append(idslevel_instance)
+"""
 
-
-# 创建一个函数来调用fetch_nlw_levels以获取信息，并且将获取的信息存储到本地json中，优先从本地json获取信息
-# 与此同时，在本地json中创建一个时间戳，以便在下一次调用函数时判断是否需要重新获取信息，暂定每天重新获取一次
 def get_nlw_levels() -> None:  # noqa: C901, PLR0912, PLR0915
+    """从各路json中获取信息并存储到内存"""
     work_folder = "xiaozu_bot/plugins/gdlevelsearch/data"
     nlwfilename = "nlw_levels.json"
     nlwfilepath = Path(work_folder) / nlwfilename
@@ -228,24 +228,42 @@ for level in hdslevels:
 
 
 class Nlw:
+    """nlwapi的接口类"""
     @staticmethod
     def nlw_query_level(level_id: Union[str, int]) -> Optional[NLWlevel]:
+        """从NLW表格中查询指定id的关卡"""
         return nlwlevel_dict.get(level_id)
 
     @staticmethod
     def ids_query_level(level_id: Union[str, int]) -> Optional[IDSlevel]:
+        """从IDS表格中查询指定id的关卡"""
         return idslevel_dict.get(level_id)
 
     @staticmethod
     def lw_query_level(level_id: Union[str, int]) -> Optional[LWlevel]:
+        """从LW表格中查询指定id的关卡"""
         return lwlevel_dict.get(level_id)
 
     @staticmethod
     def hds_query_level(level_id: Union[str, int]) -> Optional[HDSlevel]:
+        """从HDS表格中查询指定id的关卡"""
         return hdslevel_dict.get(level_id)
 
     @staticmethod
+    def getlevelbyname(name: str) -> list[Level]:
+        """从所有表格中查询指定名称的关卡"""
+        levels = []
+        normalized = name.strip().lower()
+        for level in (*nlwlevels, *idslevels, *lwlevels, *hdslevels):
+            if not level or not getattr(level, "name", None):
+                continue
+            if level.name.strip().lower() == normalized:
+                levels.append(level)
+        return levels
+
+    @staticmethod
     def getlevelbyid(level_id: Union[str, int]) -> Optional[Level]:
+        """从所有表格中查询指定id的关卡，总是尝试获取最佳匹配"""
         level = Nlw.nlw_query_level(level_id)
         if level:
             logger.info(f"find the level as NLW {level.tier} Tier")

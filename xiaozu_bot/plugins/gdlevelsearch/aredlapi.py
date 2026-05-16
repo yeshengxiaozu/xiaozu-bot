@@ -3,30 +3,49 @@
 import json
 import os
 import time
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 
 import requests
 from nonebot import logger
 
+HTTP_OK = 200
 
+"""get /api/aredl/levels SCHEMA
+[{
+id*: uuid           # the code didn't use the internal id of aredl
+name*: string
+position*: integer
+publisher_id*: uuid # the code didn't use the internal id of aredl
+points*: integer
+legacy*: boolean
+level_id*: integer
+two_player*: bool   # Whether this is the 2P version of a level or not.
+tags*: [string or null]
+description: string or null
+song: integer or null
+edel_enjoyment: number or null
+is_edel_pending*: boolean
+gddl_tier: number or null
+nlw_tier: string or null
+}]"""
 class AREDLLevel:
     id: str
-    position: Optional[int] = None
     name: str
-    points: Optional[float] = None
+    position: int
+    points: int #100x of actual display point
     legacy: bool
     level_id: int
     two_player: bool
     tags: list[str]
-    description: Optional[str] = None
-    song: Optional[int] = None
-    edel_enjoyment: Optional[float] = None
-    is_edel_pending: Optional[bool] = None
-    gddl_tier: Optional[float] = None
-    nlw_tier: Optional[str] = None
-    verificationurl: Optional[str] = None
+    description: Optional[str]
+    song: Optional[int]
+    edel_enjoyment: Optional[float]
+    is_edel_pending: bool
+    gddl_tier: Optional[float]
+    nlw_tier: Optional[str]
 
-    def __init__(self, jsondict):
+    def __init__(self, jsondict: dict[str,Any]) -> None:
         self.id = jsondict["id"]
         self.position = jsondict["position"]
         self.name = jsondict["name"]
@@ -41,23 +60,21 @@ class AREDLLevel:
         self.is_edel_pending = jsondict["is_edel_pending"]
         self.gddl_tier = jsondict["gddl_tier"]
         self.nlw_tier = jsondict["nlw_tier"]
-        self.verificationurl = None
 
-    def __str__(self):
-        return f"ID: {self.id}\nPosition: {self.position}\nName: {self.name}\nPoints: {self.points}\nLegacy: {self.legacy}\nLevel ID: {self.level_id}\nTwo Player: {self.two_player}\nTags: {', '.join(self.tags or [])}\nDescription: {self.description}\nSong: {self.song}\nEdel Enjoyment: {self.edel_enjoyment}\nIs Edel Pending: {self.is_edel_pending}\nGDDL Tier: {self.gddl_tier}\nNLW Tier: {self.nlw_tier}\nVerification URL: {self.verificationurl}"
-
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
 
 aredllevels = []
 arepllevels = []
 
 
-def fetch_aredl_levels():
+def fetch_aredl_levels() -> list[AREDLLevel]:
     url = "https://api.aredl.net/v2/api/aredl/levels"
     headers = {
         "Content-Type": "application/json",
     }
     response = requests.get(url, headers=headers)
-    if response.status_code == 200:
+    if response.status_code == HTTP_OK:
         levels = response.json()
         aredllevels = [AREDLLevel(level) for level in levels]
         logger.info(f"successfully fetch {levels.__len__()} levels from {url}")
@@ -66,12 +83,12 @@ def fetch_aredl_levels():
     return []
 
 
-def get_aredl_levels():
+def get_aredl_levels() -> list[AREDLLevel]:
     work_folder = "xiaozu_bot/plugins/gdlevelsearch/data"
     aredlfilename = "aredl_levels.json"
-    aredlfilepath = os.path.join(work_folder, aredlfilename)
-    if os.path.exists(aredlfilepath):
-        with open(aredlfilepath) as f:
+    aredlfilepath = Path(work_folder) / aredlfilename
+    if Path.exists(aredlfilepath):
+        with Path.open(aredlfilepath) as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if timestamp and time.time() - timestamp < 24 * 3600:
@@ -103,20 +120,20 @@ def get_aredl_levels():
         }
         levels_data.append(level_data)
     if levels_data.__len__() > 0:
-        with open(aredlfilepath, "w") as f:
+        with Path.open(aredlfilepath, "w") as f:
             json.dump({"timestamp": time.time(), "levels": levels_data}, f, indent=4)
     else:
         logger.error(f"failed to save {aredllevels.__len__()} level datas")
     return aredllevels
 
 
-def fetch_arepl_levels():
+def fetch_arepl_levels() -> list[AREDLLevel]:
     url = "https://api.aredl.net/v2/api/arepl/levels"
     headers = {
         "Content-Type": "application/json",
     }
     response = requests.get(url, headers=headers)
-    if response.status_code == 200:
+    if response.status_code == HTTP_OK:
         levels = response.json()
         arepllevels = [AREDLLevel(level) for level in levels]
         logger.info(f"successfully fetch {levels.__len__()} levels from {url}")
@@ -125,12 +142,12 @@ def fetch_arepl_levels():
     return []
 
 
-def get_arepl_levels():
+def get_arepl_levels() -> list[AREDLLevel]:
     work_folder = "xiaozu_bot/plugins/gdlevelsearch/data"
     areplfilename = "arepl_levels.json"
-    areplfilepath = os.path.join(work_folder, areplfilename)
-    if os.path.exists(areplfilepath):
-        with open(areplfilepath) as f:
+    areplfilepath = Path(work_folder) / areplfilename
+    if Path.exists(areplfilepath):
+        with Path.open(areplfilepath) as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if timestamp and time.time() - timestamp < 24 * 3600:
@@ -164,7 +181,7 @@ def get_arepl_levels():
         }
         levels_data.append(level_data)
     if levels_data.__len__() > 0:
-        with open(areplfilepath, "w") as f:
+        with Path.open(areplfilepath, "w") as f:
             json.dump({"timestamp": time.time(), "levels": levels_data}, f, indent=4)
     else:
         logger.error(f"failed to save {arepllevels.__len__()} level datas")

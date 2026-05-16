@@ -7,7 +7,14 @@ apikey = "3244ce47ed4cf932ec348d68cdf72496de68ee48a2846044db906baa28a7cf7d"
 HTTP_OK = 200
 GDDL_PLAT_LENGTH = 6
 
-
+"""
+SongDTO{
+ID*	integer
+Name*	string
+Author*	string
+Size*	number
+}
+"""
 class SongInfo:
     ID: int
     Name: str
@@ -21,15 +28,31 @@ class SongInfo:
     def __str__(self) -> str:
         return f"ID: {self.ID}\nName: {self.Name}\nAuthor: {self.Author}"
 
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
 
+"""
+LevelMetaDTO{
+ID*	integer
+Name*	string
+Description*	string | null
+SongID*	integer Negative IDs are main songs.
+Length*	number Enum: [ 1, 2, 3, 4, 5, 6 ] # 6=plat
+IsTwoPlayer*	boolean
+Difficulty*	string Enum: [ Official, Easy, Medium, Hard, Insane, Extreme ]
+PublisherID*	integer # internal ID that we don't use
+UploadedAt*	string | null
+Song SongDTO
+}
+"""
 class LevelMeta:
     ID: int
     Name: str
     Description: Optional[str] = None
-    SongID: Optional[int] = None
-    Length: int
+    SongID: int
+    Length: int #[1, 2, 3, 4, 5, 6] for tiny, short, medium, long, XL, plat
     IsTwoPlayer: bool
-    Difficulty: str
+    Difficulty: str #[Official, Easy, Medium, Hard, Insane, Extreme]
     PublisherID: int
     UploadedAt: Optional[str] = None
     Song: SongInfo
@@ -47,15 +70,35 @@ class LevelMeta:
     def is_pemon(self) -> bool:
         return self.Length == GDDL_PLAT_LENGTH
 
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
 
+"""
+LevelDTO{
+ID*	integer
+Rating*	number | null
+Enjoyment*	number | null
+Deviation*	number | null
+RatingCount*	integer
+EnjoymentCount*	integer
+SubmissionCount*	integer
+TwoPlayerRating*	number | null
+TwoPlayerEnjoyment*	number | null
+TwoPlayerDeviation*	number | null
+DefaultRating*	integer | null      # A tier rating set by staff.
+Showcase*	string | null           # A YouTube video ID.
+Popularity*	number | null           # use it to compare levels.
+Meta	LevelMetaDTO
+}
+"""
 class GDDLLevel:
     ID: int
     Rating: Optional[float] = None
     Enjoyment: Optional[float] = None
     Deviation: Optional[float] = None
-    RatingCount: Optional[int] = None
-    EnjoymentCount: Optional[int] = None
-    SubmissionCount: Optional[int] = None
+    RatingCount: int
+    EnjoymentCount: int
+    SubmissionCount: int
     TwoPlayerRating: Optional[float] = None
     TwoPlayerEnjoyment: Optional[float] = None
     TwoPlayerDeviation: Optional[float] = None
@@ -85,10 +128,25 @@ class GDDLLevel:
     def is_pemon(self) -> bool:
         return self.Meta.is_pemon()
 
-
+"""
+[
+GetLevelTagsResponseDTO{
+TagID*	integer
+ReactCount*	integer
+HasVoted*	integer in [0,1]
+Tag*	TagDTO{
+        ID*	integer
+        Name*	string
+        Description*	string
+        Ordering*	integer
+        }
+}
+]
+"""
 class Gddl:
     @staticmethod
     def getleveltags(level_id: Union[str, Any]) -> list[dict[str, Any]]:
+        """调用gddl api获取某个关卡的tag"""
         url = f"https://gdladder.com/api/level/{level_id}/tags"
         headers = {
             "Content-Type": "application/json",
@@ -104,6 +162,7 @@ class Gddl:
 
     @staticmethod
     def getlevelsbyname(name: str) -> list[GDDLLevel]:
+        """调用gddl api获取符合某个搜索关键词的所有关卡"""
         url = "https://gdladder.com/api/level/search"
         headers = {
             "Content-Type": "application/json",
@@ -121,6 +180,7 @@ class Gddl:
 
     @staticmethod
     def getlevelbyid(level_id: Union[str, int]) -> Optional[GDDLLevel]:
+        """调用gddl api获取指定id的关卡的详细信息"""
         url = f"https://gdladder.com/api/level/{level_id}"
         headers = {
             "Content-Type": "application/json",

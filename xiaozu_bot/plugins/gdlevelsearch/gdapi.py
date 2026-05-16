@@ -1,13 +1,9 @@
 import base64
-import logging
 from typing import Any, Final, Optional
 from urllib.parse import unquote
 
 import requests
-
-# 配置日志，方便调试（若不需要可注释掉）
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from nonebot import logger
 
 DEMON_STARS = 10
 LENGTH_PLAT = 5
@@ -78,7 +74,6 @@ class GDLevel:
         18: ("stars", int),
         19: ("feature_score", int),
         25: ("is_auto", bool),
-        26: ("record_string", str),
         27: ("password", str),
         28: ("upload_date", str),
         29: ("update_date", str),
@@ -104,46 +99,43 @@ class GDLevel:
         57: ("verification_time", int),
     }
 
-    level_id: int = 0
-    level_name: str = ""
-    description: Optional[str] = None
+    level_id: int
+    level_name: str
+    description: str
     level_string: Optional[str] = None
-    version: Optional[int] = None
-    player_id: Optional[int] = None
-    difficulty_denominator: Optional[int] = None
-    difficulty_numerator: Optional[int] = None
-    downloads: Optional[int] = None
-    official_song: Optional[int] = None
-    game_version: Optional[int] = None
-    likes: Optional[int] = None
-    length: Optional[int] = None
-    is_demon: Optional[bool] = None
+    version: int
+    player_id: int
+    difficulty_denominator: int
+    difficulty_numerator: int
+    downloads: int
+    official_song: int
+    game_version: int
+    likes: int
+    length: int
+    is_demon: bool
     stars: int = 0
-    feature_score: Optional[int] = None
-    is_auto: Optional[bool] = None
-    record_string: Optional[str] = None
+    feature_score: int
+    is_auto: bool
     password: Optional[str] = None
     upload_date: Optional[str] = None
     update_date: Optional[str] = None
-    copied_id: Optional[int] = None
-    is_two_player: Optional[bool] = None
-    custom_song_id: Optional[int] = None
-    extra_string: Optional[str] = None
-    coins: Optional[int] = None
-    verified_coins: Optional[bool] = None
-    stars_requested: Optional[int] = None
+    copied_id: int
+    is_two_player: bool
+    custom_song_id: int
+    extra_string: str
+    coins: int
+    verified_coins: bool
+    stars_requested: int
     low_detail_mode: Optional[bool] = None
     daily_number: Optional[int] = None
-    epic: Optional[int] = None
-    demon_difficulty: Optional[int] = None
-    is_gauntlet: Optional[bool] = None
-    objects: Optional[int] = None
-    editor_time: Optional[int] = None
-    editor_time_copies: Optional[int] = None
-    settings_string: Optional[str] = None
-    song_ids: Optional[str] = None
-    sfx_ids: Optional[str] = None
-    unknown54: Optional[int] = None
+    epic: Optional[int] = None # The epic rating for the level. 0 = none, 1 = epic, 2 = legendary, 3 = mythic.
+    demon_difficulty: int
+    is_gauntlet: bool
+    objects: int
+    editor_time: int
+    editor_time_copies: int
+    song_ids: Optional[str] = None # Comma-Separated List
+    sfx_ids: Optional[str] = None # Comma-Separated List
     verification_time: Optional[int] = None
 
     creator_name: Optional[str] = None
@@ -171,8 +163,6 @@ class GDLevel:
             except ValueError:
                 i += 1
                 continue
-            if key == 4 and value_str == "{levelString}":  # noqa: PLR2004
-                value_str = "{levelString}"
             if key in cls.FIELD_MAP:
                 attr, typ = cls.FIELD_MAP[key]
                 processed_value: Any = value_str
@@ -274,17 +264,21 @@ class GDLevel:
             return f"Custom song (ID:{custom_id}) not loaded"
         return None
 
-    def is_pemon(self) -> bool:
+    def is_plat(self) -> bool:
         return int(self.length) == LENGTH_PLAT if self.length is not None else False
 
+    def is_pemon(self) -> bool:
+        return self.is_plat() and self.is_demon
+
     def is_demon_detail(self) -> bool:
-        return self.stars == DEMON_STARS and not self.is_pemon()
+        return self.is_demon and not self.is_plat()
 
     def difficulty_label(self) -> str:
+        """获取该关卡的难度标识"""
         stars = int(self.stars) if self.stars is not None else None
         if stars is None:
             return "Unknown"
-        sign = "🌙" if self.is_pemon() else "⭐"
+        sign = "🌙" if self.is_plat() else "⭐"
 
         if stars < DEMON_STARS:  # nondemon
             return [
@@ -306,6 +300,9 @@ class GDLevel:
 
     def __repr__(self) -> str:
         return f"<GDLevel {self.level_name!r} (ID:{self.level_id})>"
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
 
 
 def parse_song_object(song_str: str) -> Optional[dict[str, Any]]:
@@ -379,6 +376,7 @@ def search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
     gdw: int = 0,
     **kwargs: Any,
 ) -> list[GDLevel]:
+    """i dumped every param so it looks like this lol"""
     url = "http://www.boomlings.com/database/getGJLevels21.php"
     headers = {"User-Agent": ""}
 
@@ -528,11 +526,8 @@ def search_levels_by_name(  # noqa: PLR0913
         diff (str): 难度筛选，如 "easy", "normal" 等，详见文档。
         demon_filter (int): 恶魔难度筛选，0=hard, 3=easy, 4=medium, 5=insane, 6=extreme。
         length (str): 长度筛选，如 "tiny", "short", "medium", "long", "xl"。
-        featured (bool): 是否精选。
-        epic (bool): 是否史诗。
-        legendary (bool): 是否传说。
-        mythic (bool): 是否神话。
-        star (bool): 是否有星（评级）。
+        featured (bool), epic (bool), legendary (bool), mythic (bool): self-explain
+        star (bool): if it is rated
         **kwargs: 其他可选参数，会透传给 search_levels。
 
     返回：
@@ -555,16 +550,7 @@ def search_levels_by_name(  # noqa: PLR0913
 
 
 def get_level_by_id(level_id: int) -> Optional[GDLevel]:
-    """
-    通过关卡 ID 获取单个关卡对象。
-
-    参数：
-        level_id (int): 关卡 ID。
-
-    返回：
-        Optional[GDLevel]: 若找到返回关卡对象，否则返回 None。
-    """
-    # 使用 type=10 按 ID 列表查询，str 为逗号分隔的单 ID
+    """通过关卡 ID 获取单个关卡对象。"""
     results = search_levels(
         query=str(level_id),
     )
