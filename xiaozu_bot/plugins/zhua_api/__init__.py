@@ -255,6 +255,7 @@ async def handle_function(arg: Message = CommandArg()):
 
 @berry_manager.forbid_guess.handle()
 async def handle_function(event: MessageEvent, arg: Message = CommandArg()):
+    await berry_manager.forbid_guess.finish()
     args = str(arg).lower().split()
     id = int(args[0])
     hrs = int(args[1])
@@ -269,6 +270,7 @@ async def handle_function(event: MessageEvent, arg: Message = CommandArg()):
 
 @berry_manager.forbid_guess_recover.handle()
 async def handle_function(arg: Message = CommandArg()):
+    await berry_manager.forbid_guess_recover.finish()
     args = str(arg).lower().split()
     id = int(args[0])
     berry_manager.recover(id)

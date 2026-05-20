@@ -187,6 +187,7 @@ async def send_result(bot: Bot, event: Event, level_info: GDLevel) -> None:
 
 
 gdsearch = on_command("gdsearch")
+gdsearchhelp = on_command("gdsearchhelp")
 
 # 搜索缓存与超时
 search_cache = {}
@@ -296,5 +297,15 @@ async def handle_choice(bot: Bot, event: Event) -> None:
     if level:
         await send_result(bot, event, level)
     else:
-        await gdsearchselect.finish("发生未知错误。相关id: " + str(results[0].id))
+        await gdsearchselect.finish("发生未知错误。相关id: " + str(result.id))
     await gdsearchselect.finish()
+
+@gdsearchhelp.handle()
+async def handle_gdsearchhelp():
+    HELP_STR = """使用*gdsearch 关卡名或id 以搜索关卡
+数据来源包括GDDL NLW等chart AREDL
+以及Plat difficulty chart等plat chart
+可以使用*references (gddl/nlw/plat)查询对应的参考线
+"""
+    #那几个references的实现我扔给xiaozubot_help模块了
+    await gdsearchhelp.finish(HELP_STR)

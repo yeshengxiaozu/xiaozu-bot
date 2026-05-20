@@ -145,7 +145,7 @@ Tag*	TagDTO{
 """
 class Gddl:
     @staticmethod
-    def getleveltags(level_id: Union[str, Any]) -> list[dict[str, Any]]:
+    def getleveltags(level_id: Union[str, int]) -> list[dict[str, Any]]:
         """调用gddl api获取某个关卡的tag"""
         url = f"https://gdladder.com/api/level/{level_id}/tags"
         headers = {
@@ -158,6 +158,7 @@ class Gddl:
             return [
                 {"Name": tag["Tag"]["Name"], "Count": tag["ReactCount"]} for tag in data
             ]
+        logger.error(f"Error fetching level tags by ID: {level_id}")
         return []
 
     @staticmethod
@@ -190,7 +191,7 @@ class Gddl:
             response = requests.get(url, headers=headers)
             if response.status_code == HTTP_OK:
                 data = response.json()
-                tags = Gddl.getleveltags(id)
+                tags = Gddl.getleveltags(level_id)
                 return GDDLLevel(data, tags)
         except requests.RequestException as e:
             logger.error(f"Error fetching level by ID: {e}")

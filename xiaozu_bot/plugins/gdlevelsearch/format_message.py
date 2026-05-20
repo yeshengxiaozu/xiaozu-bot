@@ -4,6 +4,11 @@ from .gddlapi import Gddl
 from .nlwapi import Nlw
 from .platapi import Platapi
 
+from pathlib import Path
+import json
+
+with Path.open(Path(__file__).parent / "data" / "randomthings.json") as f:
+    random_yappin = json.load(f)
 
 def _format_demon_message(level_info: GDLevel) -> str:  # noqa: C901
     """对demon关构造文本部分的信息字符串"""
@@ -62,7 +67,7 @@ def _format_demon_message(level_info: GDLevel) -> str:  # noqa: C901
     if nlw_info:
         skillset = f"({nlw_info.skillset})" if nlw_info.skillset else ""
         msgstr += (
-            f"\n{nlw_info.source} Tier: {nlw_info.tier}{skillset}"
+            f"\n{nlw_info.source} Tier: {nlw_info.tier} {skillset}"
         )
 
     if aredl_info and aredl_info.edel_enjoyment:
@@ -91,7 +96,7 @@ def _format_pemon_message(level_info: GDLevel) -> str:  # noqa: C901, PLR0912
 
     lines = [_firstline]
 
-    check_info = (f": {nlw_info.checkpoints}" if nlw_info and nlw_info.checkpoints else "")
+    check_info = (f"Checkpoints: {nlw_info.checkpoints}" if nlw_info and nlw_info.checkpoints else "")
     lines.append(f"ID: {level_info.level_id} {check_info}")
 
     if plat_info and plat_info.tier:
@@ -129,7 +134,7 @@ def _format_pemon_message(level_info: GDLevel) -> str:  # noqa: C901, PLR0912
 
     if nlw_info:
         skillset = f"({nlw_info.skillset})" if nlw_info.skillset else ""
-        lines.append(f"\n{nlw_info.source} Tier: {nlw_info.tier}{skillset}")
+        lines.append(f"\n{nlw_info.source} Tier: {nlw_info.tier} {skillset}")
 
     if plat_info and plat_info.derived_levels:
         for child in Platapi.getderivedlevels(plat_info):
@@ -187,6 +192,8 @@ def _format_demon_image_text(level_info: GDLevel) -> str:
         )
     if aredl_info and aredl_info.description:
         parts.append(f"AREDL Description: {aredl_info.description}")
+    if str(level_id) in random_yappin:
+        parts.append(f"Random Yaps: {random_yappin[str(level_id)]}")
     return "<p>".join(parts)
 
 
@@ -201,4 +208,6 @@ def _format_pemon_image_text(level_info: GDLevel) -> str:
         parts.append(f"{nlw_info.source} Description: {nlw_info.description}")
     if aredl_info and aredl_info.description:
         parts.append(f"AREDL Description: {aredl_info.description}")
+    if str(level_id) in random_yappin:
+        parts.append(f"Random Yaps: {random_yappin[str(level_id)]}")
     return "<p>".join(parts)
