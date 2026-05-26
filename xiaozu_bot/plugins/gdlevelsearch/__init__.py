@@ -1,19 +1,21 @@
 import asyncio
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Optional
 
 import requests
 from nonebot import logger
+from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
 
 from .aredlapi import Aredl  # noqa: F401
+from .draw import create_image_from_gdlevel
 from .gdapi import GDLevel, get_level_by_id
 from .gddlapi import Gddl
-from .imageinfo import send_ttp
+from .imageinfo import send_ttp  # noqa: F401
 from .nlwapi import Nlw
 from .platapi import Platapi
 
 # i have no idea is this amount of exposal is bad but looked it worked
-
 
 # fallback function since I should already get it using gdapi if this get called we f*cked up
 def get_creator(level_id: int) -> Optional[str]:
@@ -165,25 +167,43 @@ def getlevelinfo(level_id: int) -> Optional[GDLevel]:
     return gdlevel
 
 from nonebot import on_command, on_message
-from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageEvent
+from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageEvent  # noqa: F811
 from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
-from .format_message import _format_demon_image_text, _format_demon_message, _format_non_demon_message, _format_pemon_image_text, _format_pemon_message
+#from .format_message import _format_demon_image_text, _format_demon_message, _format_non_demon_message, _format_pemon_image_text, _format_pemon_message
 
 
 async def send_result(bot: Bot, event: Event, level_info: GDLevel) -> None:
-    if level_info.is_pemon():
-        msgstr = _format_pemon_message(level_info)
-        await bot.send(event=event, message=msgstr)
-        await send_ttp(bot, event, _format_pemon_image_text(level_info))
+    image = await create_image_from_gdlevel(level_info)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    await bot.send(event, MessageSegment.image(buffer))
+    """
+    if level_info.is_pemon():  # noqa: SIM114 since its still a testing thing
+        image = await create_image_from_gdlevel(level_info)
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        await bot.send(event, MessageSegment.image(buffer))
+        #msgstr = _format_pemon_message(level_info)
+        #await bot.send(event=event, message=msgstr)
+        #await send_ttp(bot, event, _format_pemon_image_text(level_info))
     elif level_info.is_demon_detail():
-        msgstr = _format_demon_message(level_info)
-        await bot.send(event=event, message=msgstr)
-        await send_ttp(bot, event, _format_demon_image_text(level_info))
+        image = await create_image_from_gdlevel(level_info)
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        await bot.send(event, MessageSegment.image(buffer))
+        #msgstr = _format_demon_message(level_info)
+        #await bot.send(event=event, message=msgstr)
+        #await send_ttp(bot, event, _format_demon_image_text(level_info))
     else:
+        image = await create_image_from_gdlevel(level_info)
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        await bot.send(event, MessageSegment.image(buffer))
         msgstr = _format_non_demon_message(level_info)
         await bot.send(event=event, message=msgstr)
+    """
 
 
 gdsearch = on_command("gdsearch")
@@ -301,11 +321,11 @@ async def handle_choice(bot: Bot, event: Event) -> None:
     await gdsearchselect.finish()
 
 @gdsearchhelp.handle()
-async def handle_gdsearchhelp():
+async def handle_gdsearchhelp() -> None:
     HELP_STR = """使用*gdsearch 关卡名或id 以搜索关卡
 数据来源包括GDDL NLW等chart AREDL
 以及Plat difficulty chart等plat chart
 可以使用*references (gddl/nlw/plat)查询对应的参考线
-"""
+"""  # noqa: N806
     #那几个references的实现我扔给xiaozubot_help模块了
     await gdsearchhelp.finish(HELP_STR)

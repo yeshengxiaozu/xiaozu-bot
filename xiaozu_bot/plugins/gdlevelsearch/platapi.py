@@ -131,6 +131,7 @@ class PlatData:
         for entry in self.entries:
             if entry.name and entry.name not in self.by_name:
                 self.by_name[entry.name] = entry
+                self.by_name[entry.name.strip().lower()] = entry
 
         return self.entries
 
@@ -162,7 +163,7 @@ class PlatData:
         return self.by_id.get(str(level_id).strip())
 
     def getlevelbyname(self, name: str) -> Optional[PlatInfo]:
-        return self.by_name.get(name.strip())
+        return self.by_name.get(name.strip().lower())
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
