@@ -1,11 +1,11 @@
+import json
+from pathlib import Path
+
 from .aredlapi import Aredl
 from .gdapi import GDLevel
 from .gddlapi import Gddl
 from .nlwapi import Nlw
 from .platapi import Platapi
-
-from pathlib import Path
-import json
 
 with Path.open(Path(__file__).parent / "data" / "randomthings.json") as f:
     random_yappin = json.load(f)
@@ -76,7 +76,7 @@ def _format_demon_message(level_info: GDLevel) -> str:  # noqa: C901
     return msgstr
 
 
-def _format_pemon_message(level_info: GDLevel) -> str:  # noqa: C901, PLR0912
+def _format_pemon_message(level_info: GDLevel) -> str:  # noqa: C901, PLR0912, PLR0915
     """对pemon关构造文本部分的信息字符串"""
     level_id = level_info.level_id
     plat_info = Platapi.getlevelbyid(level_info.level_id)

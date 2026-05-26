@@ -1,20 +1,17 @@
-import asyncio
 import io
 import os
 from pathlib import Path
 from typing import Optional
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 import httpx
-
 from nonebot import logger
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from .aredlapi import Aredl
 from .gdapi import GDLevel
 from .gddlapi import Gddl
-from .aredlapi import Aredl
 from .nlwapi import Nlw
 from .platapi import Platapi
-from .format_message import _format_demon_image_text, _format_pemon_image_text, _format_non_demon_message
 
 # Tier 颜色表
 TIER_COLOR_MAP = {
@@ -123,12 +120,12 @@ CARD_BG_COLOR = (28, 28, 28, 220)
 RIGHT_BG_SPACING = 20
 
 # ---------- 配置 ----------
-os.environ['NO_PROXY'] = 'history.geometrydash.eu,geometrydash.eu'
+os.environ["NO_PROXY"] = "history.geometrydash.eu,geometrydash.eu"
 
 # ---------------------------------------------------------------------
-def draw_outlined_text(draw: ImageDraw.ImageDraw, xy, text: str, font: ImageFont.FreeTypeFont,
+def draw_outlined_text(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font: ImageFont.FreeTypeFont,  # noqa: PLR0913
                        fill: str = "white", outline: str = "black", outline_width: int = 4,
-                       shadow: Optional[tuple] = None):
+                       shadow: Optional[tuple] = None) -> None:
     x, y = xy
     if shadow:
         sx, sy, scolor, soff = shadow
@@ -148,7 +145,7 @@ def rounded_image(im: Image.Image, radius: int) -> Image.Image:
     return im
 
 
-def create_vertical_gradient(size, top_color, bottom_color):
+def create_vertical_gradient(size: tuple[int,int], top_color: tuple[int,int,int], bottom_color: tuple[int,int,int]) -> Image.Image:
     w, h = size
     grad = Image.new("RGB", (w, h))
     draw_grad = ImageDraw.Draw(grad)
@@ -164,10 +161,10 @@ def create_vertical_gradient(size, top_color, bottom_color):
 
 
 def wrap_text_by_width(text: str, max_width: int, font: ImageFont.FreeTypeFont) -> list:
-    paragraphs = text.split('\n')
+    paragraphs = text.split("\n")
     result = []
     for para in paragraphs:
-        words = para.split(' ')
+        words = para.split(" ")
         current_line = ""
         for word in words:
             test_line = f"{current_line} {word}".strip() if current_line else word
@@ -194,7 +191,7 @@ def wrap_text_by_width(text: str, max_width: int, font: ImageFont.FreeTypeFont) 
     return result
 
 
-async def create_level_image(
+async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     level_line: str,
     creator_line: str,
     id_line: str,
@@ -222,7 +219,7 @@ async def create_level_image(
     left_bg_path: Path = RES_DIR/"left_bg.png",
     right_bg_path: Path = RES_DIR/"right_bg.png",
 ) -> Image.Image:
-    W, H = CANVAS_W, CANVAS_H
+    W, H = CANVAS_W, CANVAS_H  # noqa: N806
 
     # 被背景图覆盖，从而无意义
     base = create_vertical_gradient((W, H), (0,0,0), (0,0,0)).convert("RGBA")
@@ -232,23 +229,16 @@ async def create_level_image(
         if left_bg.size != (W, H):
             left_bg = left_bg.resize((W, H), Image.Resampling.LANCZOS)
         base.paste(left_bg, (0, 0), left_bg)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error("无法加载左侧背景图: %s", e)
 
     img = base.copy()
     draw = ImageDraw.Draw(img)
 
     # 字体
-    try:
-        font_title = ImageFont.truetype(pusab_font_path, FONT_PUSAB_TITLE)
-        font_sub = ImageFont.truetype(pusab_font_path, FONT_PUSAB_SUB)
-    except Exception:
-        font_title = ImageFont.load_default()
-        font_sub = ImageFont.load_default()
-    try:
-        font_small = ImageFont.truetype(sans_font_path, FONT_SANS_SMALL)
-    except Exception:
-        font_small = ImageFont.load_default()
+    font_title = ImageFont.truetype(pusab_font_path, FONT_PUSAB_TITLE)
+    font_sub = ImageFont.truetype(pusab_font_path, FONT_PUSAB_SUB)
+    font_small = ImageFont.truetype(sans_font_path, FONT_SANS_SMALL)
 
     # 主面板区域坐标
     panel = (PANEL_LEFT, PANEL_TOP, PANEL_MAIN_WIDTH - PANEL_RIGHT_OFFSET, H - PANEL_BOTTOM_OFFSET)
@@ -334,7 +324,7 @@ async def create_level_image(
         target_w = max(1, int(orig_w * DIFF_SCALE))
         target_h = max(1, int(orig_h * DIFF_SCALE))
         diff_target_size = (target_w, target_h)
-    except Exception:
+    except Exception:  # noqa: BLE001
         diff_target_size = (max(1, int(320 * DIFF_SCALE)), max(1, int(280 * DIFF_SCALE)))
         diff_icon_img = None
 
@@ -347,14 +337,14 @@ async def create_level_image(
             fx_img = Image.open(featured_fx_path).convert("RGBA")
             fx_img = fx_img.resize(diff_target_size, Image.Resampling.LANCZOS)
             img.paste(fx_img, (diff_x, diff_y), fx_img)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     if diff_icon_img is not None:
         try:
             diff_icon_img = diff_icon_img.resize(diff_target_size, Image.Resampling.LANCZOS)
             img.paste(diff_icon_img, (diff_x, diff_y), diff_icon_img)
-        except Exception:
+        except Exception:  # noqa: BLE001
             diff_icon_img = None
 
     if diff_icon_img is None:
@@ -377,21 +367,21 @@ async def create_level_image(
             headers = {"User-Agent": "Mozilla/5.0", "Accept": "image/webp,image/*;q=0.8"}
             async with httpx.AsyncClient(follow_redirects=True) as client:
                 resp = await client.get(thumb_url, headers=headers, timeout=HTTP_TIMEOUT)
-            if resp.status_code == 200 and resp.content:
+            if resp.status_code == 200 and resp.content:  # noqa: PLR2004
                 try:
                     thumb_img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
                     thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
                     logger.info("Thumbnail loaded via httpx")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     if thumb_img is None:
         try:
             thumb_img = Image.open("resources/noThumb.png").convert("RGBA")
             thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
-        except Exception:
+        except Exception:  # noqa: BLE001
             thumb_img = Image.new("RGBA", (thumb_w, thumb_h), (220, 220, 220, 255))
 
     thumb_round = rounded_image(thumb_img, THUMB_RADIUS)
@@ -405,7 +395,7 @@ async def create_level_image(
     img.paste(thumb_round, (thumb_x, thumb_y), thumb_round)
 
     # ---------- 右侧详情栏（去掉白色背景，保留背景图和文字，仍用侧边栏边框截断） ----------
-    SIDEBAR_X = PANEL_MAIN_WIDTH + SIDEBAR_X_OFFSET
+    SIDEBAR_X = PANEL_MAIN_WIDTH + SIDEBAR_X_OFFSET  # noqa: N806
     sb_w = W - SIDEBAR_X - SIDEBAR_MARGIN
     sb_rect = (SIDEBAR_X, PANEL_TOP, SIDEBAR_X + sb_w, H - PANEL_BOTTOM_OFFSET)
 
@@ -418,7 +408,7 @@ async def create_level_image(
 
     y_text = sb_rect[1] + 10
     last_y = y_text
-    for line in wrapped_lines:
+    for _line in wrapped_lines:
         if y_text > max_y:
             break
         last_y = y_text + SIDEBAR_LINE_HEIGHT
@@ -446,7 +436,7 @@ async def create_level_image(
                 img.paste(padded, (SIDEBAR_X, bg_y_top), padded)
             else:
                 img.paste(cropped, (SIDEBAR_X, bg_y_top), cropped)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error("无法加载右侧背景图: %s", e)
 
     # 不再绘制白色半透明背景，直接绘制文字
@@ -467,25 +457,21 @@ async def create_level_image(
     # ---------- 右下角卡片 ----------
     if skill_icons is None:
         skill_icons = []
-    icon_paths = [tier_icon_path] + skill_icons
+    icon_paths = [tier_icon_path, *skill_icons]
     icons = []
-    for ipath in icon_paths:
-        try:
+    try:
+        for ipath in icon_paths:
             icon = Image.open(ipath).convert("RGBA")
             w, h = icon.size
             new_h = ICON_DEFAULT_H
             new_w = max(1, int(w * new_h / h))
             icon = icon.resize((new_w, new_h), Image.Resampling.LANCZOS)
             icons.append(icon)
-        except Exception:
-            icons.append(None)
+    except FileNotFoundError:
+        pass
 
-    try:
-        title_font = ImageFont.truetype(pusab_font_path, TITLE_FONT_SIZE)
-        card_line_font = ImageFont.truetype(pusab_font_path, CARD_LINE_FONT_SIZE)
-    except Exception:
-        title_font = font_sub
-        card_line_font = font_small
+    title_font = ImageFont.truetype(pusab_font_path, TITLE_FONT_SIZE)
+    card_line_font = ImageFont.truetype(pusab_font_path, CARD_LINE_FONT_SIZE)
 
     title_w = draw.textbbox((0, 0), title_text, font=title_font)[2]
     icon_spacing = ICON_SPACING
@@ -541,7 +527,7 @@ async def create_level_image(
                 tx += icon.width + icon_spacing
 
     current_y = block_y + CARD_TOP_PADDING + title_h + CARD_BETWEEN_TITLE_AND_LINES
-    line1_color = TIER_COLOR_MAP[line1] if line1 in TIER_COLOR_MAP else (230, 230, 230)
+    line1_color = TIER_COLOR_MAP.get(line1, (230, 230, 230))
     draw.text(
         (block_x + 16, current_y),
         line1,
@@ -553,7 +539,7 @@ async def create_level_image(
 
     return img.convert("RGB")
 
-async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
+async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C901, PLR0912, PLR0915
     """根据传入的 `GDLevel` 自动查询 GDDL/AREDL/NLW/Plat 数据并生成图片。
 
     如果某来源不存在对应信息，则对应绘图字段留空。
@@ -561,26 +547,10 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
     level_id = gdlevel.level_id
 
     # 查询外部数据源
-    gddl_info = None
-    aredl_info = None
-    nlw_info = None
-    plat_info = None
-    try:
-        gddl_info = Gddl.getlevelbyid(level_id)
-    except Exception:
-        gddl_info = None
-    try:
-        aredl_info = Aredl.getlevelbyid(level_id)
-    except Exception:
-        aredl_info = None
-    try:
-        nlw_info = Nlw.getlevelbyid(level_id)
-    except Exception:
-        nlw_info = None
-    try:
-        plat_info = Platapi.getlevelbyid(level_id)
-    except Exception:
-        plat_info = None
+    gddl_info = Gddl.getlevelbyid(level_id)
+    aredl_info = Aredl.getlevelbyid(level_id)
+    nlw_info = Nlw.getlevelbyid(level_id)
+    plat_info = Platapi.getlevelbyid(level_id)
 
     # level_line / creator_line
     level_line = getattr(gdlevel, "level_name", "") or ""
@@ -649,7 +619,7 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
             stars = int(getattr(gdlevel, "stars", 0) or 0)
             stars = max(0, min(9, stars))
             diff_icon_path =  RES_DIR/f"diffIcon/diffIcon_{stars}.png"
-    except Exception:
+    except Exception:  # noqa: BLE001
         diff_icon_path = RES_DIR/"diffIcon/diffIcon_0.png"
 
     # tier icon: use rounded gddl rating if present
@@ -661,16 +631,13 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
 
     # skill icons from gddl tags
     skill_icons = []
-    try:
-        if gddl_info and getattr(gddl_info, "Tags", None):
-            for tag in (gddl_info.Tags or [])[:3]:
-                name = tag.get("Name") if isinstance(tag, dict) else None
-                if not name:
-                    continue
-                fname = name.replace(" ", "_").replace("-", "_").lower()
-                skill_icons.append(RES_DIR/f"skillsets/skillset_{fname}.png")
-    except Exception:
-        skill_icons = []
+    if gddl_info and getattr(gddl_info, "Tags", None):
+        for tag in (gddl_info.Tags or [])[:3]:
+            name = tag.get("Name") if isinstance(tag, dict) else None
+            if not name:
+                continue
+            fname = name.replace(" ", "_").replace("-", "_").lower()
+            skill_icons.append(RES_DIR/f"skillsets/skillset_{fname}.png")
 
     if plat_info:
         title_text = "P.Diff"
@@ -706,7 +673,7 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
 
     # featured fx -x try from aredl tags or leave empty
     featured_level = gdlevel.epic + 1 if gdlevel.epic else 1 if gdlevel.feature_score else 0
-    featured_fx = RES_DIR/f"diffIcon/featured_{featured_level}.png" if featured_level else ""
+    featured_fx = RES_DIR/f"diffIcon/featured_{featured_level}.png" if featured_level else Path()
 
     # thumbnail id - use level id
     thumbnail_id = str(level_id) if level_id is not None else ""

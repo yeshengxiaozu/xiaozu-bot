@@ -172,7 +172,7 @@ from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
 #from .format_message import _format_demon_image_text, _format_demon_message, _format_non_demon_message, _format_pemon_image_text, _format_pemon_message
-
+#since we have image output, we dont need a million format thing
 
 async def send_result(bot: Bot, event: Event, level_info: GDLevel) -> None:
     image = await create_image_from_gdlevel(level_info)
