@@ -153,33 +153,11 @@ class GDLevel:
     def from_server_response(cls, response: str) -> "GDLevel":
         """解析 key:value:key:value 字符串"""
         instance = cls()
-        parts = response.split(":")
-        i = 0
-        while i < len(parts) - 1:
-            key_str = parts[i]
-            value_str = parts[i + 1]
-            try:
-                key = int(key_str)
-            except ValueError:
-                i += 1
+        pairs = parse_server_key_value_pairs(response)
+        for key, (attr, typ) in cls.FIELD_MAP.items():
+            if key not in pairs:
                 continue
-            if key in cls.FIELD_MAP:
-                attr, typ = cls.FIELD_MAP[key]
-                processed_value: Any = value_str
-                if typ is int:
-                    try:
-                        processed_value = int(value_str) if value_str != "" else 0
-                    except ValueError:
-                        processed_value = value_str
-                elif typ is bool:
-                    processed_value = value_str == "1"
-                elif typ == "base64":
-                    try:
-                        processed_value = base64.b64decode(value_str).decode("utf-8")
-                    except Exception:  # noqa: BLE001
-                        processed_value = value_str
-                setattr(instance, attr, processed_value)
-            i += 2
+            setattr(instance, attr, _parse_server_value(pairs[key], typ))
         return instance
 
     @classmethod
@@ -300,6 +278,179 @@ class GDLevel:
 
     def __repr__(self) -> str:
         return f"<GDLevel {self.level_name!r} (ID:{self.level_id})>"
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
+def parse_server_key_value_pairs(response: str) -> dict[int, str]:
+    """Parse a RobTop-style key:value key:value response into a dict."""
+    parts = response.split(":")
+    result: dict[int, str] = {}
+    i = 0
+    while i < len(parts) - 1:
+        key_str = parts[i]
+        value_str = parts[i + 1]
+        try:
+            key = int(key_str)
+        except ValueError:
+            i += 1
+            continue
+        result[key] = value_str
+        i += 2
+    return result
+
+
+def _parse_server_value(value: str, typ: Any) -> Any:
+    if typ is int:
+        try:
+            return int(value) if value != "" else 0
+        except ValueError:
+            return value
+    if typ is bool:
+        return value == "1"
+    if typ == "base64":
+        value = value.replace("-", "+").replace("_", "/")
+        if len(value) % 4 != 0:
+            value += "=" * (4 - (len(value) % 4))
+        try:
+            return base64.b64decode(value).decode("utf-8")
+        except Exception as e:  # noqa: BLE001
+            logger.error("base64解码错误：%s for %s", e, value)
+            return value
+    if typ == "comma_int_list":
+        if not value:
+            return []
+        return [int(item) for item in value.split(",") if item != ""]
+    if typ is str:
+        return unquote(value) if "%" in value else value
+    return value
+
+
+class GDUser:
+    """Geometry Dash 用户数据类，解析服务器 key:value 响应。"""
+
+    FIELD_MAP: Final = {
+        1: ("user_name", str),
+        2: ("user_id", int),
+        3: ("stars", int),
+        4: ("demons_count", int),
+        6: ("ranking", int),
+        7: ("account_highlight", int),
+        8: ("creator_points", int),
+        9: ("icon_id", int),
+        10: ("color", int),
+        11: ("color2", int),
+        13: ("secret_coins", int),
+        14: ("icon_type", int),
+        15: ("special", int),
+        16: ("account_id", int),
+        17: ("user_coins", int),
+        18: ("message_state", int),
+        19: ("friends_state", int),
+        20: ("youtube", str),
+        21: ("acc_icon", int),
+        22: ("acc_ship", int),
+        23: ("acc_ball", int),
+        24: ("acc_bird", int),
+        25: ("acc_dart", int),
+        26: ("acc_robot", int),
+        27: ("acc_streak", int),
+        28: ("acc_glow", int),
+        29: ("is_registered", bool),
+        30: ("global_rank", int),
+        31: ("friend_state", int),
+        38: ("messages", int),
+        39: ("friend_requests", int),
+        40: ("new_friends", int),
+        41: ("new_friend_request", bool),
+        42: ("age", str),
+        43: ("acc_spider", int),
+        44: ("twitter", str),
+        45: ("twitch", str),
+        46: ("diamonds", int),
+        48: ("acc_explosion", int),
+        49: ("modlevel", int),
+        50: ("comment_history_state", int),
+        51: ("color3", int),
+        52: ("moons", int),
+        53: ("acc_swing", int),
+        54: ("acc_jetpack", int),
+        55: ("demons_breakdown", "comma_int_list"),
+        56: ("classic_levels", "comma_int_list"),
+        57: ("platformer_levels", "comma_int_list"),
+    }
+
+    user_name: str
+    user_id: int
+    stars: int
+    demons_count: int
+    ranking: Optional[int] = None
+    account_highlight: Optional[int] = None
+    creator_points: int
+    icon_id: Optional[int] = None
+    color: int
+    color2: int
+    secret_coins: Optional[int] = None
+    icon_type: int
+    special: Optional[int] = None
+    account_id: int
+    user_coins: int
+    message_state: Optional[int] = None
+    friends_state: Optional[int] = None
+    youtube: Optional[str] = None
+    acc_icon: int
+    acc_ship: int
+    acc_ball: int
+    acc_bird: int
+    acc_dart: int
+    acc_robot: int
+    acc_streak: Optional[int] = None
+    acc_glow: int
+    is_registered: Optional[bool] = None
+    global_rank: Optional[int] = None
+    friend_state: Optional[int] = None
+    messages: Optional[int] = None
+    friend_requests: Optional[int] = None
+    new_friends: Optional[int] = None
+    new_friend_request: Optional[bool] = None
+    age: Optional[str] = None
+    acc_spider: int
+    twitter: Optional[str] = None
+    twitch: Optional[str] = None
+    diamonds: int
+    acc_explosion: Optional[int] = None
+    modlevel: Optional[int] = None
+    comment_history_state: Optional[int] = None
+    color3: Optional[int] = None
+    moons: int
+    acc_swing: int
+    acc_jetpack: int
+    demons_breakdown: Optional[list[int]] = None
+    classic_levels: Optional[list[int]] = None
+    platformer_levels: Optional[list[int]] = None
+
+    def __init__(self) -> None:
+        for attr, _ in self.FIELD_MAP.values():
+            setattr(self, attr, None)
+
+    @classmethod
+    def from_server_response(cls, response: str) -> "GDUser":
+        """Parse a single user server response string into a GDUser."""
+        instance = cls()
+        pairs = parse_server_key_value_pairs(response)
+        for key, (attr, typ) in cls.FIELD_MAP.items():
+            if key not in pairs:
+                continue
+            setattr(instance, attr, _parse_server_value(pairs[key], typ))
+        return instance
+
+    @classmethod
+    def from_string(cls, response: str) -> "GDUser":
+        return cls.from_server_response(response)
+
+    def __repr__(self) -> str:
+        return f"<GDUser {self.user_name!r} (ID:{self.user_id})>"
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -499,6 +650,40 @@ def search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
     return levels
 
+def get_user_info(
+    user_id: int
+) -> Optional[GDUser]:
+    url = "http://www.boomlings.com/database/getGJUserInfo20.php"
+    headers = {"User-Agent": ""}
+
+    data = {
+        "secret": "Wmfd2893gb7",
+        "targetAccountID": str(user_id)
+    }
+    resp = requests.post(url, data=data, headers=headers)
+    text = resp.text.strip()
+    logger.info(f"get_user_info({user_id}): {text}")
+    if text == "-1":
+        return None
+    return GDUser.from_server_response(text.split("#")[0])
+
+def search_user(
+    name: str
+) -> Optional[GDUser]:
+    url = "http://www.boomlings.com/database/getGJUsers20.php"
+    headers = {"User-Agent": ""}
+
+    data = {
+        "secret": "Wmfd2893gb7",
+        "str": name
+    }
+    resp = requests.post(url, data=data, headers=headers)
+    text = resp.text.strip()
+    logger.info(f"search_user({name}): {text}")
+    if text == "-1":
+        return None
+    return GDUser.from_server_response(text.split("#")[0])
+
 
 from typing import Optional
 
@@ -548,12 +733,26 @@ def search_levels_by_name(  # noqa: PLR0913
         **kwargs,
     )
 
+OFFICIAL_LEVELS = {
+    1:GDLevel.from_server_response("1:1:2:Clubstep:3:VGhpcyBpcyB0aGUgZmlyc3Qgb2ZmaWNpYWwgZGVtb24gYW5kIG15IGZpcnN0IGRlbW9uIGFuZCBJIGhhdmUgdG8gY29uc3RydWN0IGEgZmFrZSBsZXZlbCBkYXRhIGZvciB0aGlzIHByb2dyYW0gdG8gcmVhZCB0byBwcmV2ZW50IGV2ZXJ5dGhpbmcgdG8gZ28gd3Jvbmc=:12:13:15:3:17:1:18:10:43:1:"),
+    2:GDLevel.from_server_response("1:2:2:Theory of everything 2:3:VGhpcyBpcyB0aGUgc2Vjb25kIGFuZCBtb3N0IGZvcmdldGFibGUgb2ZmaWNpYWwgZGVtb24gYW5kIEkgaGF2ZSB0byBjb25zdHJ1Y3QgYSBmYWtlIGxldmVsIGRhdGEgZm9yIHRoaXMgcHJvZ3JhbSB0byByZWFkIHRvIHByZXZlbnQgZXZlcnl0aGluZyB0byBnbyB3cm9uZw==:12:17:15:3:17:1:18:10:43:1:"),  # noqa: E501
+    3:GDLevel.from_server_response("1:3:2:Deadlocked:3:VGhpcyBpcyB0aGUgdGhpcmQgYW5kIGZpbmFsIG9mZmljaWFsIGRlbW9uIGFuZCBJIGhhdmUgdG8gY29uc3RydWN0IGEgZmFrZSBsZXZlbCBkYXRhIGZvciB0aGlzIHByb2dyYW0gdG8gcmVhZCB0byBwcmV2ZW50IGV2ZXJ5dGhpbmcgdG8gZ28gd3Jvbmc=:12:19:15:3:17:1:18:10:43:1:"),
+}
 
 def get_level_by_id(level_id: int) -> Optional[GDLevel]:
     """通过关卡 ID 获取单个关卡对象。"""
+    if level_id in OFFICIAL_LEVELS:
+        return OFFICIAL_LEVELS[level_id]
     results = search_levels(
         query=str(level_id),
     )
     if results:
         return results[0]
+    return None
+
+def get_user_by_name(user_name: str) -> Optional[GDUser]:
+    """通过用户名获取单个用户对象。"""
+    search_result = search_user(user_name)
+    if search_result:
+        return get_user_info(search_result.account_id)
     return None

@@ -4,16 +4,22 @@ from io import BytesIO
 from typing import Optional
 
 import requests
-from nonebot import logger
+from nonebot import logger, require
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
+from nonebot.permission import SUPERUSER
 
 from .aredlapi import Aredl  # noqa: F401
 from .draw import create_image_from_gdlevel
-from .gdapi import GDLevel, get_level_by_id
+from .gdapi import GDLevel, get_level_by_id, get_user_by_name
 from .gddlapi import Gddl
 from .imageinfo import send_ttp  # noqa: F401
 from .nlwapi import Nlw
 from .platapi import Platapi
+
+require("nonebot_plugin_apscheduler")
+
+# 关键：只 import updater，让 scheduler 注册生效
+#from . import updater  # noqa: F401
 
 # i have no idea is this amount of exposal is bad but looked it worked
 
@@ -208,6 +214,8 @@ async def send_result(bot: Bot, event: Event, level_info: GDLevel) -> None:
 
 gdsearch = on_command("gdsearch")
 gdsearchhelp = on_command("gdsearchhelp")
+gdrandom = on_command("gd随机推关")
+gduser = on_command("gduser")
 
 # 搜索缓存与超时
 search_cache = {}
@@ -244,7 +252,7 @@ async def handle_gdsearch(bot: Bot, event: Event, arg: Message = CommandArg()) -
         del timeout_tasks[user_id]
 
     # ID 搜索
-    if len(name) > 2 and name.isdigit():  # noqa: PLR2004 yes its a magic number but it help user
+    if len(name) > 4 and name.isdigit():  # noqa: PLR2004 yes its a magic number but it help user
         level = getlevelinfo(int(name))
         if level:
             await send_result(bot, event, level)
@@ -320,6 +328,40 @@ async def handle_choice(bot: Bot, event: Event) -> None:
         await gdsearchselect.finish("发生未知错误。相关id: " + str(result.id))
     await gdsearchselect.finish()
 
+@gdrandom.handle()
+async def handle_gdrandom(bot: Bot, event: Event, arg: Message = CommandArg()) -> None:
+    args = arg.extract_plain_text().strip().split()
+    if len(args) < 1:
+        await gdrandom.finish("请输入至少一个数字以指定tier范围！（懒得写enj筛选喵）")
+    low = int(args[0])
+    high = int(args[1]) if len(args) > 1 else -1
+
+    result = Gddl.getrandomlevelbytier(low,high)
+    if not result:
+        await gdsearch.finish("没有找到符合条件的demon关卡")
+
+    level = getlevelinfo(result.ID)
+    if level:
+        await send_result(bot, event, level)
+    else:
+        await gdsearch.finish("发生未知错误。相关id: " + str(result.ID))
+    await gdsearch.finish()
+
+@gduser.handle()
+async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> None:  # noqa: ARG001
+    name = arg.extract_plain_text().strip()
+    if not name:
+        await gduser.finish("请输入想要搜索的用户名")
+    user = get_user_by_name(name)
+    if not user:
+        await gduser.finish("没有找到对应的用户")
+    user_basic_info = f"{user.user_name}\n{user.stars}⭐ {user.moons}🌙 {user.demons_count}👿 {str(user.creator_points) + '🔧' if user.creator_points else ''}"
+    user_classic_nondemon = f"\nClassic: {user.classic_levels[0]}🤖 {user.classic_levels[1]}💙 {user.classic_levels[2]}💚 {user.classic_levels[3]}💛 {user.classic_levels[4]}🧡 {user.classic_levels[5]}💜;\n{user.classic_levels[6]} Daily; {user.classic_levels[7]} Gauntlet" if user.classic_levels else ""  # noqa: E501
+    user_plat_nondemon = f"\nPlatformer: {user.platformer_levels[0]}🤖 {user.platformer_levels[1]}💙 {user.platformer_levels[2]}💚 {user.platformer_levels[3]}💛 {user.platformer_levels[4]}🧡 {user.platformer_levels[5]}💜" if user.platformer_levels else ""  # noqa: E501
+    user_demon = f"\nClassic Demons: {user.demons_breakdown[0]} / {user.demons_breakdown[1]} / {user.demons_breakdown[2]} / {user.demons_breakdown[3]} / {user.demons_breakdown[4]};\n{user.demons_breakdown[10]} Weekly; {user.demons_breakdown[11]} Gauntlet\nPlatformer Demons: {user.demons_breakdown[5]} / {user.demons_breakdown[6]} / {user.demons_breakdown[7]} / {user.demons_breakdown[8]} / {user.demons_breakdown[9]}" if user.demons_breakdown else ""  # noqa: E501
+    user_info = user_basic_info + user_classic_nondemon + user_plat_nondemon + user_demon
+    await gduser.finish(user_info)
+
 @gdsearchhelp.handle()
 async def handle_gdsearchhelp() -> None:
     HELP_STR = """使用*gdsearch 关卡名或id 以搜索关卡
@@ -329,3 +371,14 @@ async def handle_gdsearchhelp() -> None:
 """  # noqa: N806
     #那几个references的实现我扔给xiaozubot_help模块了
     await gdsearchhelp.finish(HELP_STR)
+
+update_cmd = on_command("gdsearch_update", permission=SUPERUSER, priority=1, block=True)
+
+from .updater.runner import run_all
+
+
+@update_cmd.handle()
+async def _handle(event: MessageEvent):  # noqa: ARG001
+    await update_cmd.send("🚀 开始执行手动更新...")
+    result = run_all()
+    await update_cmd.finish(f"✅ 更新完成\n{result}")

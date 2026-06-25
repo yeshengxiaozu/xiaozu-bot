@@ -266,30 +266,30 @@ class Nlw:
         """从所有表格中查询指定id的关卡，总是尝试获取最佳匹配"""
         level = Nlw.nlw_query_level(level_id)
         if level:
-            logger.info(f"find the level as NLW {level.tier} Tier")
+            logger.trace(f"find the level as NLW {level.tier} Tier")
             return level
         level = Nlw.lw_query_level(level_id)
         if level:
-            logger.info(f"find the level as LW {level.tier} Tier")
+            logger.trace(f"find the level as LW {level.tier} Tier")
             return level
         leveli = Nlw.ids_query_level(level_id)
         levelh = Nlw.hds_query_level(level_id)
         level = None
         if leveli and levelh:
             if leveli.tier != "Legacy":
-                logger.info(f"find the level as IDS {leveli.tier} Tier")
+                logger.trace(f"find the level as IDS {leveli.tier} Tier")
                 level = leveli
             elif levelh.description and levelh.tier != "Legacy":
-                logger.info(f"find the level as HDS {levelh.tier} Tier")
+                logger.trace(f"find the level as HDS {levelh.tier} Tier")
                 level = levelh
             else:
-                logger.info(f"find the level as IDS {leveli.tier} Tier")
+                logger.trace(f"find the level as IDS {leveli.tier} Tier")
                 level = leveli
 
         elif leveli:
-            logger.info(f"find the level as IDS {leveli.tier} Tier")
+            logger.trace(f"find the level as IDS {leveli.tier} Tier")
             level = leveli
         elif levelh:
-            logger.info(f"find the level as HDS {levelh.tier} Tier")
+            logger.trace(f"find the level as HDS {levelh.tier} Tier")
             level = levelh
         return level

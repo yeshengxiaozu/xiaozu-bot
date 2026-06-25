@@ -93,14 +93,22 @@ Relentless: Erebus, Sonic Wave, Yatagarasu
 Terrifying: Sink, Wasureta
 Catastrophic: kowareta, Plasma Pulse Finale
 Inexorable: Bloodlust
-Excruciating: Cognition, Crimson Planet"""
+Excruciating: Cognition, Crimson Planet""",
+"""Low End: Beginner - Medium
+Low-Mid Range: Medium - Hard
+Mid Range: Hard - Insane
+Mid-High Range: Insane - Relentless
+High End: Relentless - Excruciating
+Unknown: either below 3 options or all over the place
+New Rates: Levels that were rated (or re-rated) recently
+Potential Extremes: May or may not actually be extreme demons."""
 ]
 
 REF_LW = [
-"""Nightmare (TSII) > Unreal (Acheron) > Menacing (Slaughterhouse)
-    > Demonic (Firework) > Apocalyptic (Edge of Destiny)
-    > Monstrous (Tartarus) > Merciless (Zodiac) > Excruciating (Cold Sweat)
-PS: 截至Cold Sweat掉榜前，LW一共剩下6个Excruciating还没掉"""
+"""Unfathomable (TSII) > Nightmare (Tidal Wave) > Unreal (Acheron)
+    > Menacing (Slaughterhouse) > Demonic (Firework)
+    > Apocalyptic (Edge of Destiny) > Monstrous (Tartarus)
+    > Merciless (Zodiac) > Excruciating (Cold Sweat)"""
 ]
 
 REF_IDS = [
@@ -126,6 +134,25 @@ Insane: Mastermind, Psychosis, Spectrum Switch
 Extreme: Diffuse, I Cant Fix You, Anya II"""
 ]
 
+REF_PDIFF = [
+"""All below are BASELINEs for the represented tier, meaning the levels in that tier should be HARDER the baseline
+1 - BEGINNER: Moongrinder
+2 - EASY: Jet Lag
+3 - MODERATE: Aethos
+4 - INTERMEDIATE: Switchscapes
+5 - TOUGH: I wanna be the guy
+6 - CHALLENGING: Tower of Infinity
+7 - DIFFICULT: radio tower""",
+"""All below are BASELINEs for the represented tier, meaning the levels in that tier should be HARDER the baseline
+8 - FORMIDABLE: The Abyss
+9 - CRUEL: Free Solo
+10 - INSANE: Kill The Panas 2
+11 - DEADLY: Null
+12 - EXTREME: CONVOLUTION
+13 - TERRIFYING: Diamonds For Dashers
+14 - BRUTAL: Nothing yet..."""
+]
+
 def pagehint(page: int, pages: int) -> str:
     return f"\n当前处于第{page}页，共{pages}页"
 
@@ -137,7 +164,7 @@ async def handle_references(arg: Message = CommandArg()) -> None:  # noqa: C901
         return
     name = args[0].lower().strip()
     page = int(args[1]) if len(args) > 1 and args[1].isdigit() else 1
-    if name not in ["nlw", "gddl", "nlw", "ids", "hds", "lw", "aredl"]:
+    if name not in ["nlw", "gddl", "nlw", "ids", "hds", "lw", "aredl", "plat"]:
         await references.finish("use *references nlw/plat/gddl/hds/ids <page>")
         return
     if name == "aredl":
@@ -158,4 +185,9 @@ async def handle_references(arg: Message = CommandArg()) -> None:  # noqa: C901
         await references.finish(REF_IDS[0])
     elif name == "hds":
         await references.finish(REF_HDS[0])
+    elif name == "plat":
+        if page > len(REF_PDIFF):
+            await references.finish(f"你输入的页码数超过了总页数（共{len(REF_PDIFF)}页），请重试")
+        else:
+            await references.finish(REF_PDIFF[page-1] + pagehint(page,len(REF_PDIFF)))
 

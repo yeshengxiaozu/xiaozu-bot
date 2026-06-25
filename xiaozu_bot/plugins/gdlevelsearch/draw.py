@@ -11,7 +11,7 @@ from .aredlapi import Aredl
 from .gdapi import GDLevel
 from .gddlapi import Gddl
 from .nlwapi import Nlw
-from .platapi import Platapi
+from .platapi import Platapi,PlatInfo
 
 # Tier 颜色表
 TIER_COLOR_MAP = {
@@ -30,7 +30,7 @@ TIER_COLOR_MAP = {
     # for LW (ok i know Excruciating is mostly NLW now but)
     "Excruciating": "#ffe599", "Merciless": "#a7e58d", "Monstrous": "#5bad96",
     "Apocalyptic": "#528cb1","Demonic": "#6d6ab0", "Menacing": "#9452a2",
-    "Unreal": "#913869", "Nightmare": "#832828",
+    "Unreal": "#913869", "Nightmare": "#832828", "Unfathomable":"#C76E00",
     # for Platinfo
     "1 - BEGINNER": "#7fb8ff", "2 - EASY": "#7fcbff", "3 - MODERATE": "#7fe8ff",
     "4 - INTERMEDIATE": "#7ffff9","5 - TOUGH": "#82ffc9", "6 - CHALLENGING": "#a9ff82",
@@ -40,6 +40,9 @@ TIER_COLOR_MAP = {
 }
 DEFAULT_TIER_COLOR = "#ffffff"
 
+def select_tags(level:PlatInfo) -> list[str]:
+    return level.tags
+
 # ----------------- 常量 -----------------
 PLUGIN_DIR = Path(__file__).resolve().parent
 RES_DIR = PLUGIN_DIR / "resources"
@@ -48,12 +51,11 @@ CANVAS_W = 1280
 CANVAS_H = 720
 
 PANEL_MAIN_WIDTH = 940
-PANEL_LEFT = 24
-PANEL_TOP = 24
+PANEL_MARGIN = 24
 PANEL_RIGHT_OFFSET = 8
 PANEL_BOTTOM_OFFSET = 24
 PANEL_PAD = 28
-PANEL_RADIUS = 18
+PANEL_RADIUS = 24
 
 SHADOW_OFFSET = 8
 SHADOW_ALPHA = 120
@@ -79,14 +81,13 @@ THUMB_W = 480
 THUMB_H = 270
 THUMB_RADIUS = 12
 THUMB_SHADOW_OFFSET = 6
-THUMB_SHADOW_ALPHA = 120
+THUMB_SHADOW_ALPHA = 100
 THUMB_SHADOW_BLUR = 6
 
 HTTP_TIMEOUT = 10
 
 SIDEBAR_X_OFFSET = 20
-SIDEBAR_MARGIN = 20
-SIDEBAR_RADIUS = 12
+## 已统一圆角半径，删除SIDEBAR_RADIUS，全部用PANEL_RADIUS
 SIDEBAR_ALPHA = 230
 SIDEBAR_TEXT_LEFT = 18
 SIDEBAR_TEXT_RIGHT_MARGIN = 8
@@ -95,8 +96,9 @@ SIDEBAR_LINE_HEIGHT = 22
 SIDEBAR_TOP_PAD = 20
 SIDEBAR_BOTTOM_PAD = 20
 
-ICON_DEFAULT_H = 36
-ICON_SPACING = 12
+ICON_NEGATIVE_MARGIN = 3
+ICON_DEFAULT_H = 40
+ICON_SPACING = 6
 TITLE_FONT_SIZE = 36
 CARD_LINE_FONT_SIZE = 30
 
@@ -190,6 +192,11 @@ def wrap_text_by_width(text: str, max_width: int, font: ImageFont.FreeTypeFont) 
             result.append(current_line)
     return result
 
+import json
+
+nong_index = {}
+with Path.open(PLUGIN_DIR/"data"/"nong_index.json") as f:
+    nong_index = json.load(f)
 
 async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     level_line: str,
@@ -220,18 +227,44 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     right_bg_path: Path = RES_DIR/"right_bg.png",
 ) -> Image.Image:
     W, H = CANVAS_W, CANVAS_H  # noqa: N806
+    # 1. 先绘制底色渐变（粉白配色，底部更白，顶部更粉）
+    base = create_vertical_gradient((W, H), (255, 180, 220), (255, 240, 250)).convert("RGBA")
 
-    # 被背景图覆盖，从而无意义
-    base = create_vertical_gradient((W, H), (0,0,0), (0,0,0)).convert("RGBA")
+    # 2. 生成主栏和侧边栏的蒙版
+    panel_rect = (PANEL_MARGIN, PANEL_MARGIN, PANEL_MAIN_WIDTH - PANEL_RIGHT_OFFSET, H - PANEL_BOTTOM_OFFSET)
+    sidebar_x = PANEL_MAIN_WIDTH + SIDEBAR_X_OFFSET
+    sidebar_rect = (sidebar_x, PANEL_MARGIN, W - PANEL_MARGIN, H - PANEL_BOTTOM_OFFSET)
 
+    # 主栏蒙版
+    panel_mask = Image.new("L", (W, H), 0)
+    panel_draw = ImageDraw.Draw(panel_mask)
+    panel_draw.rounded_rectangle(panel_rect, radius=PANEL_RADIUS, fill=255)
+
+    # 侧边栏蒙版
+    sidebar_mask = Image.new("L", (W, H), 0)
+    sidebar_draw = ImageDraw.Draw(sidebar_mask)
+    sidebar_draw.rounded_rectangle(sidebar_rect, radius=PANEL_RADIUS, fill=255)
+
+    # 3. 加载左背景图并用蒙版裁剪
+    left_bg_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     try:
         left_bg = Image.open(left_bg_path).convert("RGBA")
         if left_bg.size != (W, H):
             left_bg = left_bg.resize((W, H), Image.Resampling.LANCZOS)
-        base.paste(left_bg, (0, 0), left_bg)
+        left_bg_layer.paste(left_bg, (0, 0), left_bg)
     except Exception as e:  # noqa: BLE001
         logger.error("无法加载左侧背景图: %s", e)
+    left_bg_masked = Image.composite(left_bg_layer, Image.new("RGBA", (W, H), (0,0,0,0)), panel_mask)
 
+    # 右侧背景直接用上下白色渐变
+    right_bg_layer = create_vertical_gradient((W, H), (255,255,255), (255,255,255)).convert("RGBA")
+    right_bg_masked = Image.composite(right_bg_layer, Image.new("RGBA", (W, H), (0,0,0,0)), sidebar_mask)
+
+    # 4. 合成到底色上
+    base = Image.alpha_composite(base, left_bg_masked)
+    base = Image.alpha_composite(base, right_bg_masked)
+
+    # 5. 继续后续内容绘制
     img = base.copy()
     draw = ImageDraw.Draw(img)
 
@@ -241,7 +274,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     font_small = ImageFont.truetype(sans_font_path, FONT_SANS_SMALL)
 
     # 主面板区域坐标
-    panel = (PANEL_LEFT, PANEL_TOP, PANEL_MAIN_WIDTH - PANEL_RIGHT_OFFSET, H - PANEL_BOTTOM_OFFSET)
+    panel = (PANEL_MARGIN, PANEL_MARGIN, PANEL_MAIN_WIDTH - PANEL_RIGHT_OFFSET, H - PANEL_BOTTOM_OFFSET)
     panel_pad = PANEL_PAD
     x = panel[0] + panel_pad
     y = panel[1] + panel_pad
@@ -379,7 +412,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
     if thumb_img is None:
         try:
-            thumb_img = Image.open("resources/noThumb.png").convert("RGBA")
+            thumb_img = Image.open(RES_DIR/"noThumb.png").convert("RGBA")
             thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
         except Exception:  # noqa: BLE001
             thumb_img = Image.new("RGBA", (thumb_w, thumb_h), (220, 220, 220, 255))
@@ -396,8 +429,8 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
     # ---------- 右侧详情栏（去掉白色背景，保留背景图和文字，仍用侧边栏边框截断） ----------
     SIDEBAR_X = PANEL_MAIN_WIDTH + SIDEBAR_X_OFFSET  # noqa: N806
-    sb_w = W - SIDEBAR_X - SIDEBAR_MARGIN
-    sb_rect = (SIDEBAR_X, PANEL_TOP, SIDEBAR_X + sb_w, H - PANEL_BOTTOM_OFFSET)
+    sb_w = W - SIDEBAR_X - PANEL_MARGIN
+    sb_rect = (SIDEBAR_X, PANEL_MARGIN, SIDEBAR_X + sb_w, H - PANEL_BOTTOM_OFFSET)
 
     # 计算文字高度
     text_left = sb_rect[0] + SIDEBAR_TEXT_LEFT
@@ -417,7 +450,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     white_rect_height = text_height
 
     spacing = RIGHT_BG_SPACING
-    bg_y_top = PANEL_TOP + white_rect_height + spacing
+    bg_y_top = PANEL_MARGIN + white_rect_height + spacing
     bg_height = H - PANEL_BOTTOM_OFFSET - bg_y_top
 
     # 保存当前画面用于后续蒙版
@@ -451,14 +484,14 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     # 用侧边栏圆角蒙版裁剪整个侧边栏区域
     sidebar_mask = Image.new("L", (W, H), 0)
     mdraw = ImageDraw.Draw(sidebar_mask)
-    mdraw.rounded_rectangle(sb_rect, radius=SIDEBAR_RADIUS, fill=255)
+    mdraw.rounded_rectangle(sb_rect, radius=PANEL_RADIUS, fill=255)
     img = Image.composite(img, img_before_sidebar, sidebar_mask)
 
     # ---------- 右下角卡片 ----------
     if skill_icons is None:
         skill_icons = []
     icon_paths = [tier_icon_path, *skill_icons]
-    icons = []
+    icons: list[Image.Image] = []
     try:
         for ipath in icon_paths:
             icon = Image.open(ipath).convert("RGBA")
@@ -517,7 +550,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     tx = block_x + 16
     ty = block_y + CARD_TOP_PADDING
     draw.text((tx, ty), title_text, fill=(255, 255, 255), font=title_font)
-    center_y = ty + title_h / 2
+    center_y = ty + title_h / 2 - ICON_NEGATIVE_MARGIN
     tx += title_w + 12
     if icons:
         for icon in icons:
@@ -560,7 +593,8 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
     creator_line = f"By {creator}" if creator else ""
 
     # id_line
-    id_line = f"Level ID: {level_id}" if level_id is not None else ""
+    length_text = f"({nlw_info.length})" if nlw_info and nlw_info.length else ""
+    id_line = f"Level ID: {level_id} {length_text}" if level_id is not None else ""
 
     # rank_line: 集成 AREDL / GDDL 等排行信息
     rank_parts = []
@@ -604,9 +638,14 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
     skillset_line = f"Skillset: {nlw_info.skillset}" if nlw_info and getattr(nlw_info, "skillset", None) else ""
 
     # song info
-    song_name = getattr(gdlevel, "song_name", "") or ""
-    song_artist = getattr(gdlevel, "song_author", "") or ""
-    song_id = getattr(gdlevel, "song_id", "") or ""
+    if str(gdlevel.level_id) in nong_index:
+        song_name = nong_index[str(gdlevel.level_id)]["name"]
+        song_artist = nong_index[str(gdlevel.level_id)]["artist"]
+        song_id = "NONG"
+    else:
+        song_name = getattr(gdlevel, "song_name", "") or ""
+        song_artist = getattr(gdlevel, "song_author", "") or ""
+        song_id = getattr(gdlevel, "song_id", "") or ""
 
     # diff icon mapping
     diff_icon_path = RES_DIR/"diffIcon/diffIcon_0.png"
@@ -626,8 +665,8 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
     tier_icon_path = RES_DIR/"tiers/tier_0.png"
     if gdlevel.is_plat():
         tier_icon_path = RES_DIR/"moon.png"
-    elif gddl_info and gddl_info.Rating is not None:
-        tier_icon_path =  RES_DIR/f"tiers/tier_{round(gddl_info.Rating)}.png"
+    elif gddl_info and (gddl_info.Rating or gddl_info.DefaultRating) is not None:
+        tier_icon_path =  RES_DIR/f"tiers/tier_{int(gddl_info.Rating+0.5) if gddl_info.Rating else gddl_info.DefaultRating}.png"
 
     # skill icons from gddl tags
     skill_icons = []
@@ -646,14 +685,14 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
     elif gddl_info:
         title_text = "GDDL"
         rating = round(gddl_info.Rating, 2) if gddl_info and gddl_info.Rating else "N/A"
-        if gddl_info.TwoPlayerRating:
+        if gdlevel.is_two_player and gddl_info.TwoPlayerRating:
             rating_count = f"/{round(gddl_info.TwoPlayerRating, 2)}(2p)"
         else:
             rating_count = f"({gddl_info.RatingCount})" if gddl_info and gddl_info.RatingCount else ""
         line1 = f"Tier: {rating}{rating_count}"
 
         enj = round(gddl_info.Enjoyment, 2) if gddl_info and gddl_info.Enjoyment else "N/A"
-        if gddl_info.TwoPlayerEnjoyment:
+        if gdlevel.is_two_player and gddl_info.TwoPlayerEnjoyment:
             enj_count = f"/{round(gddl_info.TwoPlayerEnjoyment, 2)}(2p)"
         else:
             enj_count = f"({gddl_info.EnjoymentCount})" if gddl_info and gddl_info.EnjoymentCount else ""
@@ -666,6 +705,8 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
     #detail text
     detail_text = ""
     detail_text += f"Description: {gdlevel.description}"
+    if plat_info and plat_info.tags:
+        detail_text += f"\n\nDifficulty Chart Tags: {', '.join(plat_info.tags)}"
     if nlw_info and nlw_info.description:
         detail_text += f"\n\n{nlw_info.source} Description: {nlw_info.description}"
     if aredl_info and aredl_info.description:
@@ -676,7 +717,7 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
     featured_fx = RES_DIR/f"diffIcon/featured_{featured_level}.png" if featured_level else Path()
 
     # thumbnail id - use level id
-    thumbnail_id = str(level_id) if level_id is not None else ""
+    thumbnail_id = ["0", "14", "18", "20"][level_id] if level_id <= 3 else str(level_id) if level_id is not None else ""  # noqa: PLR2004
 
     return await create_level_image(
         level_line=level_line,

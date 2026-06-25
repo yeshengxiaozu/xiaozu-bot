@@ -91,7 +91,7 @@ async def handle_function(
     text = arg.extract_plain_text().strip()
     if len(text) == 0:
         await say.finish("你得在say后面加点东西……")
-    if len(text) > 500:
+    if len(text) > 500 and event.user_id != 3251605531:
         await bot.call_api(
             "set_msg_emoji_like", message_id=event.message_id, emoji_id="424"
         )

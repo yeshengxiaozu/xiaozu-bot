@@ -1,7 +1,6 @@
 # https://api.aredl.net/v2/docs
 # get /api/aredl/levels/{level_id}
 import json
-import os
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -206,7 +205,7 @@ class Aredl:
     @staticmethod
     def getlevelbyid(level_id: int) -> Optional[AREDLLevel]:
         if level_id in aredl_dict:
-            logger.info(
+            logger.trace(
                 f"Level ID {level_id} found in aredl_dict as #{aredl_dict[level_id].position}"
             )
             return aredl_dict[level_id]

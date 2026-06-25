@@ -197,3 +197,29 @@ class Gddl:
             logger.error(f"Error fetching level by ID: {e}")
             return None
         return None
+
+    @staticmethod
+    def getrandomlevelbytier(low: int, high: int = -1) -> Optional[GDDLLevel]:
+        """调用gddl相关api随机获取一个符合条件的关卡"""
+        if high == -1:
+            high = low
+        high_exact = min(high + 0.5, 39.0)
+        low_exact = max(low - 0.5, 1.0)
+        url = "https://gdladder.com/api/level/search"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {apikey}",
+        }
+        data = {"minRating": low_exact, "maxRating": high_exact, "sort": "random"}
+        try:
+            response = requests.get(url, headers=headers, params=data)
+            if response.status_code == HTTP_OK:
+                data = response.json()
+                logger.debug(f"找到了{len(data['levels'])}个关卡：{','.join(level['Meta']['Name'] for level in data['levels'])}")
+                if len(data["levels"]) > 0:
+                    return GDDLLevel(data["levels"][0])
+                return None
+            logger.warning(f"Error fetching levels: {response.status_code}")
+        except requests.RequestException as e:
+            logger.error(f"Error fetching levels: {e}")
+        return None
