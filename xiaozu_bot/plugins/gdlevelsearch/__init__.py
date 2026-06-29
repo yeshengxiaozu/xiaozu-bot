@@ -19,7 +19,7 @@ from .platapi import Platapi
 require("nonebot_plugin_apscheduler")
 
 # 关键：只 import updater，让 scheduler 注册生效
-#from . import updater  # noqa: F401
+#from . import updater  # noqa: F401, RUF100
 
 # i have no idea is this amount of exposal is bad but looked it worked
 

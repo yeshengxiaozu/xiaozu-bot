@@ -20,15 +20,16 @@ TIER_COLOR_MAP = {
     "Medium": "#00ff37", "Hard": "#ffff3f", "Very Hard": "#ff992b",
     "Insane": "#ff031c", "Extreme": "#ff0cfb", "Remorseless": "#9d0afa",
     "Relentless": "#b287e8", "Terrifying": "#f19eea", "Catastrophic": "#ea6661",
-    "Inexorable": "#ffc183", "Super Fucking Terrifying": "#000000",
+    "Inexorable": "#ffc183", "Excruciating": "#ffe599", #Merciless?
+    "Super Fucking Terrifying": "#000000",
     "Low End": "#00c0ed", "Low-Mid Range": "#00ff87", "Mid Range": "#ffcc34",
     "Mid-High Range": "#ff0580", "High End": "#a75df2",
     "Unknown": "#ffffff", "New Rates": "#ffffff", "Potential Extremes": "#ebebeb",
     # for IDS and HDS
     "Demote": "#3a86e4",
     "Legacy": "#808080",
-    # for LW (ok i know Excruciating is mostly NLW now but)
-    "Excruciating": "#ffe599", "Merciless": "#a7e58d", "Monstrous": "#5bad96",
+    # for LW
+    "Merciless": "#a7e58d", "Monstrous": "#5bad96",
     "Apocalyptic": "#528cb1","Demonic": "#6d6ab0", "Menacing": "#9452a2",
     "Unreal": "#913869", "Nightmare": "#832828", "Unfathomable":"#C76E00",
     # for Platinfo

@@ -85,15 +85,16 @@ Beginner: Acu, Cataclysm, HyperSonic, troll level
 Easy: Crowd Control, Napalm, Retention, reverence
 Medium: Maybe Possibly Thing, Niflheim,
 Hard: aftermath, Prismatic Haze
-Very Hard: Blade of Justice, Bloodbath
-Insane: Athanatos, Worse Trip""",
-"""Extreme: Bausha Vortex, Black Blizzard
+Very Hard: Blade of Justice, Bloodbath""",
+"""Insane: Athanatos, Worse Trip,
+Extreme: Bausha Vortex, Black Blizzard
 Remorseless: Artificial Ascent, Digital Descent
 Relentless: Erebus, Sonic Wave, Yatagarasu
-Terrifying: Sink, Wasureta
-Catastrophic: kowareta, Plasma Pulse Finale
+Terrifying: Sink, Wasureta""",
+"""Catastrophic: kowareta, Plasma Pulse Finale
 Inexorable: Bloodlust
-Excruciating: Cognition, Crimson Planet""",
+Excruciating: Cognition, Crimson Planet
+Merciless: Will be created when Zodiac falls off because the game is impossible""",
 """Low End: Beginner - Medium
 Low-Mid Range: Medium - Hard
 Mid Range: Hard - Insane
@@ -108,7 +109,7 @@ REF_LW = [
 """Unfathomable (TSII) > Nightmare (Tidal Wave) > Unreal (Acheron)
     > Menacing (Slaughterhouse) > Demonic (Firework)
     > Apocalyptic (Edge of Destiny) > Monstrous (Tartarus)
-    > Merciless (Zodiac) > Excruciating (Cold Sweat)"""
+    > Merciless (Zodiac)"""
 ]
 
 REF_IDS = [
