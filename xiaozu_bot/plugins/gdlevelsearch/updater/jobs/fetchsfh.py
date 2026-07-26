@@ -1,5 +1,5 @@
 import json
-import urllib.request
+import requests
 from pathlib import Path
 
 from nonebot import logger
@@ -50,18 +50,21 @@ def build_level_to_song_mapping(data):
 def main():
     # 1. 从 URL 读取数据
     url = "https://raw.githubusercontent.com/FlafyDev/auto-nong-indexes/v2/sfh-index.min.json"
-    logger.info(f"[SFH] 正在从 {url} 读取数据...")
-    with urllib.request.urlopen(url) as response:
-        raw_data = response.read().decode("utf-8")
-        data = json.loads(raw_data)
-
+    headers = {
+        "Content-Type": "application/json",
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+    else:
+        return
     # 2. 构建映射
     logger.info("[SFH] 正在构建 level ID -> 歌曲信息 映射...")
     mapping = build_level_to_song_mapping(data)
     logger.info(f"[SFH] 共映射了 {len(mapping)} 个 level ID")
 
     # 3. 保存到本地 JSON 文件
-    output_file = DATA_DIR / "level_to_song_mapping.json"
+    output_file = DATA_DIR / "nong_index.json"
     with output_file.open("w", encoding="utf-8") as f:
         json.dump(mapping, f, indent=4, ensure_ascii=False)
     logger.info(f"[SFH] 映射已保存到 {output_file}")

@@ -11,7 +11,7 @@ from .aredlapi import Aredl
 from .gdapi import GDLevel
 from .gddlapi import Gddl
 from .nlwapi import Nlw
-from .platapi import Platapi,PlatInfo
+from .platapi import Platapi, PlatInfo
 
 # Tier 颜色表
 TIER_COLOR_MAP = {
@@ -594,7 +594,8 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
     creator_line = f"By {creator}" if creator else ""
 
     # id_line
-    length_text = f"({nlw_info.length})" if nlw_info and nlw_info.length else ""
+    length_text = f"({nlw_info.length})" if nlw_info and nlw_info.length \
+        else f"({['Tiny','Short','Medium','Long','XL',''][gdlevel.length]})" if gdlevel.length != 5 else ""
     id_line = f"Level ID: {level_id} {length_text}" if level_id is not None else ""
 
     # rank_line: 集成 AREDL / GDDL 等排行信息

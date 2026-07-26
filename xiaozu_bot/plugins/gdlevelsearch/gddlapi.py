@@ -146,9 +146,10 @@ Tag*	TagDTO{
 class Gddl:
     @staticmethod
     def getleveltags(level_id: Union[str, int]) -> list[dict[str, Any]]:
-        """调用gddl api获取某个关卡的tag"""
+        """??????gddl api?????????????????????tag"""
         url = f"https://gdladder.com/api/level/{level_id}/tags"
         headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
@@ -163,9 +164,10 @@ class Gddl:
 
     @staticmethod
     def getlevelsbyname(name: str) -> list[GDDLLevel]:
-        """调用gddl api获取符合某个搜索关键词的所有关卡"""
+        """??????gddl api????????????????????????????????????????????????"""
         url = "https://gdladder.com/api/level/search"
         headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
@@ -181,9 +183,10 @@ class Gddl:
 
     @staticmethod
     def getlevelbyid(level_id: Union[str, int]) -> Optional[GDDLLevel]:
-        """调用gddl api获取指定id的关卡的详细信息"""
+        """??????gddl api????????????id????????????????????????"""
         url = f"https://gdladder.com/api/level/{level_id}"
         headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
@@ -200,13 +203,14 @@ class Gddl:
 
     @staticmethod
     def getrandomlevelbytier(low: int, high: int = -1) -> Optional[GDDLLevel]:
-        """调用gddl相关api随机获取一个符合条件的关卡"""
+        """??????gddl??????api???????????????????????????????????????"""
         if high == -1:
             high = low
         high_exact = min(high + 0.5, 39.0)
         low_exact = max(low - 0.5, 1.0)
         url = "https://gdladder.com/api/level/search"
         headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
@@ -215,7 +219,7 @@ class Gddl:
             response = requests.get(url, headers=headers, params=data)
             if response.status_code == HTTP_OK:
                 data = response.json()
-                logger.debug(f"找到了{len(data['levels'])}个关卡：{','.join(level['Meta']['Name'] for level in data['levels'])}")
+                logger.debug(f"?????????{len(data['levels'])}????????????{','.join(level['Meta']['Name'] for level in data['levels'])}")
                 if len(data["levels"]) > 0:
                     return GDDLLevel(data["levels"][0])
                 return None
