@@ -10,12 +10,25 @@ dependencies = [
     "nonebot-plugin-apscheduler>=0.5.0",
     "nonebot-plugin-localstore>=0.7.4",
     "nonebot-plugin-htmlkit>=0.1.0rc5",
+    # 以下是插件实际 import 但之前漏写的依赖
+    "redis>=5.0.0",              # game / jrrp / roulette / zhua_api
+    "requests>=2.31.0",          # gdlevelsearch 各 api 与 updater
+    "emoji>=2.0.0",              # ai
+    "certifi>=2024.2.2",         # updater 的 ssl context
+    "urllib3>=2.0.0",            # updater/jobs/googlesheetapi
+    "google-api-python-client>=2.100.0",  # updater 抓 Google Sheets
+    "pillow>=10.0.0",            # gdlevelsearch/draw.py
 ]
 
 [project.optional-dependencies]
 dev = [
     "pyright[nodejs]",
     "ruff"
+]
+# mlx_audio 只能装在 Apple Silicon 上，放进必选依赖会让别的平台整个装不上。
+# say 插件是在 handler 里才 import 它的，所以不装也不影响其他插件加载。
+tts = [
+    "mlx-audio",
 ]
 
 [project.dependency-groups]
@@ -40,7 +53,7 @@ nonebot-plugin-localstore = ["nonebot_plugin_localstore"]
 nonebot-plugin-htmlkit = ["nonebot_plugin_htmlkit"]
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.format]
 line-ending = "lf"
@@ -108,6 +121,6 @@ keep-runtime-typing = true
 
 [tool.pyright]
 # For Pylance/Pyright configurations, see https://microsoft.github.io/pyright/#/configuration.
-pythonVersion = "3.9"
+pythonVersion = "3.10"
 pythonPlatform = "All"
 typeCheckingMode = "standard"

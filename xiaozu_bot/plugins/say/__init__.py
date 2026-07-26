@@ -44,15 +44,16 @@ config = get_plugin_config(Config)
 say = on_command("say")
 say_instructed = on_command("say_i")
 
-from mlx_audio.tts.generate import generate_audio
-from mlx_audio.tts.utils import load_model
-
+# mlx_audio 只在 Apple Silicon 上装得了，所以延迟到真正要用的时候再 import。
+# 这样在没装它的机器上，say 插件本身还是能正常加载，只是 say 指令用不了。
 _MODEL = None  # 线程安全，因为 mlx 模型在推理时是只读的
 
 
 def get_model():
     global _MODEL
     if _MODEL is None:
+        from mlx_audio.tts.utils import load_model
+
         _MODEL = load_model("mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16")
     return _MODEL
 
@@ -60,6 +61,8 @@ def get_model():
 def sync_generate_audio(text: str, instruct: str | None, output_dir: str) -> str:
     """同步执行的 TTS 生成，返回音频文件路径"""
     import os
+
+    from mlx_audio.tts.generate import generate_audio
 
     # 注意：这里假设 generate_audio 会写入文件并返回文件路径
     # 请根据实际 API 调整
