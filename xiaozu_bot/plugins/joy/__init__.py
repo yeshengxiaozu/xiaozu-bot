@@ -205,7 +205,11 @@ async def handle_function(
     )
 
 
-@news.handle
+# 这里原来写的是 @news.handle（少了括号）。Matcher.handle 的签名是
+# handle(parameterless=None)，不加括号等于把函数当 parameterless 传进去，
+# 拿回来的是 _decorator 本身，append_handler 从来没被调用过 ——
+# 结果就是 *news 能匹配上（把消息 block 掉），但一个字都不回。
+@news.handle()
 async def handle_function():
     await news.finish("""更新公告：移除了蓝莓系统因为我不想转移数据了；
 翻修了help删除对应的内容

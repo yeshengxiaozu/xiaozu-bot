@@ -125,20 +125,25 @@ async def handle_zhua(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> N
 @show.handle()
 async def handle_show(arg: Message = CommandArg()) -> None:
     folder_path = Path("xiaozu_bot/plugins/zhua/data/")
-    args = str(arg).lower().split()
-    keys = [i.split(".")[0] for i in list(descriptions.keys())]
-    if args[0] not in keys:
-        await show.send("请输入一个正确的名称！")
-        await show.finish()
-    for name, description in descriptions.items():
-        if name == args[0]:
-            image_path = folder_path / name
+    args = str(arg).split()
+    if not args:
+        await show.finish("请输入一个名称！")
+
+    # descriptions 的键是带扩展名的文件名（"mc卒.png"），但用户输入的是不带扩展名的名字。
+    # 原来校验用的是去扩展名的名字、发图那圈却拿带扩展名的键去比，永远相等不了，
+    # 输对名字反而一声不吭。另外原来还把输入 lower() 了，UwU卒 这种带大写的永远匹配不上。
+    query = args[0].strip().lower()
+    for file_name, description in descriptions.items():
+        stem = file_name.rsplit(".", 1)[0]
+        if stem.lower() == query:
             await show.send(
-                MessageSegment.image(image_path)
-                + MessageSegment.text(f"\n{name}\n{description}"),
+                MessageSegment.image(folder_path / file_name)
+                + MessageSegment.text(f"\n{stem}\n{description}"),
                 at_sender=True,
             )
             await show.finish()
+
+    await show.finish("请输入一个正确的名称！")
 
 
 @zhua_test.handle()

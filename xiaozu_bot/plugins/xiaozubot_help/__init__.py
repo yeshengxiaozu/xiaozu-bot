@@ -1,8 +1,11 @@
+import unicodedata
+
 from nonebot import get_plugin_config, on_command
-from nonebot.plugin import PluginMetadata
 from nonebot.adapters.onebot.v11 import Message
 from nonebot.params import CommandArg
+from nonebot.plugin import PluginMetadata
 
+from .commands import CATEGORIES, COMMANDS, Cmd
 from .config import Config
 
 __plugin_meta__ = PluginMetadata(
@@ -17,141 +20,118 @@ config = get_plugin_config(Config)
 xiaozubothelp = on_command("help")
 references = on_command("references")
 
-# 命令按用途分组。加新命令的时候记得回来补一句，别再让 help 落后于实际功能。
-# key 是用户输入的分类名，值是 (标题, 正文)
-HELP_SECTIONS: dict[str, tuple[str, str]] = {
-    "gd": (
-        "GD 关卡查询",
-        """*gdsearch 关卡名或id
-  查本地收录的榜单（GDDL / NLW / IDS / LW / HDS / plat chart），
-  结果出一张图。收录的基本都是 demon，普通图搜不到就用下面那个。
-  搜到多个同名的会列出来，输入序号选。
 
-*gdfullsearch 关键词 [-a] [-d [难度]] [-u 难度]
-  直接问 GD 服务器要数据，服务器上有的关卡都能搜到。
-  默认只搜 rated；-a 连没评级的一起搜。
-  -d 只搜 demon，后面可跟 1-5 或 easy/medium/hard/insane/extreme
-  -u 只搜非 demon，0-5 或 auto/easy/normal/hard/harder/insane（0 是 auto）
-  结果分页：输入序号选中 / n 下一页 / p 上一页 / 结束 取消
+def _alias_map() -> dict[str, str]:
+    """别名 -> 正式命令名"""
+    out: dict[str, str] = {}
+    for name, cmd in COMMANDS.items():
+        for alias in cmd.aliases:
+            out[alias.lower()] = name
+    return out
 
-*gdratings 关卡名或id [-s 排序] [-asc] [-v]
-  看这关在 GDDL 上每个人提交的 tier 和 enjoyment。
-  -s 可选 tier / enj / date / progress / attempts / rr
-  -asc 正序（默认倒序），-v 只看通关的人
-  同样支持 n / p 翻页
 
-*gduser 用户名        查 GD 玩家的星星、月亮、demon 数等
-*gd随机推关 低 [高]    在指定 GDDL tier 区间里随机推一关
-*references 表名 [页] 各难度表的参考线，表名：gddl / nlw / lw / ids / hds / plat
-*gdsearchhelp         gd 相关命令的简要说明""",
-    ),
-    "guess": (
-        "猜图",
-        """*guess_start        出一道猜图题
-*guess_start_hard   同上，但截图更小
-*guess_start_ultra  同上，再小一号
-*guess 答案         回答当前题目
-*guess_giveup       放弃当前题目，公布答案
-*guess_count        看全服累计猜了多少次、对了多少
+ALIASES = _alias_map()
 
-小小卒给你的消息按了按钮 = 答错了
-按问号 = 现在没有题（一般是已经被人答掉了）""",
-    ),
-    "fun": (
-        "娱乐杂项",
-        """*jrrp            今日人品，一天一次
-*zhua            随机抓一只小卒
-*show 名称       指定名字看某只小卒
-*random 选项...  在你给的选项里随机挑一个
-*map             随机给一张地图
-*jwz 内容 [时长]  我能在患有健忘症的情况下患有健忘症吗？
-*today 词1 词2 词3  今天是著名(词1)大神(词2)(词3)的日子……
-*game 编号       猜数字之类的小游戏建议，编号 1~4
-*ultra           不要再！
-*nsdd            你说的对，但是……
-*insult          让小小卒骂你一句
-*news（*公告 / *新闻）  更新公告
-戳一戳小小卒也会有反应""",
-    ),
-    "ai": (
-        "AI 与语音",
-        """*ai 内容       和小小卒聊天（本地模型，别期待太高）
-*say 内容      让小小卒把这句话读出来
-*say_i 要求 内容  同上，但可以额外描述语气/风格
-
-语音功能依赖本地 TTS，不一定一直开着。""",
-    ),
-    "demon": (
-        "恶魔轮盘（仅限特定群）",
-        """*betgame       加入一局
-*setmode 编号  设置模式：0 普通 / 1 身份 / 2 膀胱
-*开枪（*射击）  轮到你的时候开枪
-*恶魔道具      查看自己的道具
-*使用 道具（*使用道具）  用一个道具
-*查看局势      看当前场上情况
-*恶魔投降      认输
-.恶魔帮助（。恶魔帮助）  规则详细说明，注意是点开头不是星号
-
-这套只在几个指定的群里能用。""",
-    ),
-}
-
-ADMIN_SECTION = """*gdsearch_update  手动跑一遍 gd 数据更新，跑完自动重载缓存
-*guess_cheat      看当前题目答案
-*guess_rc         清掉出题冷却
-以上都只有超级用户能用。
-
-（蓝莓/轮盘那套已经下线了，相关命令不再列出）"""
-
-SECTION_ALIASES = {
+# 分类也能直接查，比如 *help gd，中文写法一并认
+CATEGORY_ALIASES: dict[str, str] = {
     "gd": "gd", "关卡": "gd", "搜索": "gd", "search": "gd",
     "guess": "guess", "猜图": "guess", "猜": "guess",
     "fun": "fun", "娱乐": "fun", "杂项": "fun",
-    "ai": "ai", "say": "ai", "语音": "ai",
-    "demon": "demon", "恶魔": "demon", "game": "demon",
+    "ai": "ai", "语音": "ai",
+    "demon": "demon", "恶魔": "demon",
     "admin": "admin", "管理": "admin",
 }
 
 
+def _by_category(cat: str) -> list[tuple[str, Cmd]]:
+    return [(n, c) for n, c in COMMANDS.items() if c.category == cat]
+
+
+def _width(text: str) -> int:
+    """按显示宽度算，中日韩字符占两格"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
+
+
+def _pad(text: str, width: int) -> str:
+    """按显示宽度右侧补空格，不能用 ljust —— 它是按字符数算的，中文会歪"""
+    return text + " " * max(0, width - _width(text))
+
+
+def _command_lines(cmds: list[tuple[str, Cmd]], indent: str = "") -> list[str]:
+    labels = [(c.prefix + n, c) for n, c in cmds]
+    width = max(_width(label) for label, _ in labels)
+    return [f"{indent}{_pad(label, width)}  {c.summary}" for label, c in labels]
+
+
 def _overview() -> str:
     lines = [
-        "欢迎使用小小卒！所有命令以 * 开头",
+        "小小卒的命令基本都以 * 开头",
+        "看某条命令具体怎么用：*help 命令名，比如 *help gdfullsearch",
+        "按分类看：*help " + " / ".join(CATEGORIES),
         "用户群 1035708051，功能建议可以在里面提",
-        "",
-        "*help 分类 看某一类的详细用法：",
     ]
-    lines += [f"  *help {key:<7} {title}" for key, (title, _) in HELP_SECTIONS.items()]
-    lines += [
-        "  *help admin   管理命令（超级用户）",
-        "",
-        "最常用的几个：",
-        "  *gdsearch 关卡名     查关卡（本地榜单，基本都是 demon）",
-        "  *gdfullsearch 关键词  查关卡（直连 GD 服务器，什么都能搜）",
-        "  *gdratings 关卡名    看 GDDL 上大家给的 tier / enjoyment",
-        "  *guess_start         来一道猜图",
-        "  *jrrp                今日人品",
-    ]
+    for cat, title in CATEGORIES.items():
+        cmds = _by_category(cat)
+        if not cmds:
+            continue
+        lines.append("")
+        lines.append(f"【{title}】")
+        lines += _command_lines(cmds, indent="  ")
+    return "\n".join(lines)
+
+
+def _render(name: str, cmd: Cmd) -> str:
+    parts = [f"【{cmd.prefix}{name}】{cmd.summary}", "", cmd.usage, "", cmd.detail]
+    if cmd.aliases:
+        # 有的别名自带前缀（比如 。恶魔帮助），别再补一个
+        parts += [
+            "",
+            "别名：" + "、".join(
+                a if a[:1] in "*.。" else cmd.prefix + a for a in cmd.aliases
+            ),
+        ]
+    if cmd.examples:
+        parts += ["", "例子："] + [f"  {e}" for e in cmd.examples]
+    if cmd.constraints:
+        parts += ["", "限制：" + cmd.constraints]
+    return "\n".join(parts)
+
+
+def _render_category(cat: str) -> str:
+    cmds = _by_category(cat)
+    lines = [f"【{CATEGORIES[cat]}】", ""]
+    lines += _command_lines(cmds)
+    lines += ["", "看单条的详细用法：*help 命令名"]
     return "\n".join(lines)
 
 
 @xiaozubothelp.handle()
 async def handle_help(arg: Message = CommandArg()) -> None:
-    name = arg.extract_plain_text().strip().lower()
-    if not name:
+    query = arg.extract_plain_text().strip().lstrip("*.。").lower()
+
+    if not query:
         await xiaozubothelp.finish(_overview())
 
-    key = SECTION_ALIASES.get(name)
-    if key == "admin":
-        await xiaozubothelp.finish("【管理命令】\n" + ADMIN_SECTION)
-    if key is None:
-        await xiaozubothelp.finish(
-            f"没有「{name}」这个分类。可以用的分类："
-            + " / ".join(HELP_SECTIONS.keys())
-            + " / admin"
-        )
+    # 先当命令名查，再当别名，最后才当分类 ——
+    # game 既是命令又像分类名，命令优先
+    name = query if query in COMMANDS else ALIASES.get(query)
+    if name:
+        await xiaozubothelp.finish(_render(name, COMMANDS[name]))
 
-    title, body = HELP_SECTIONS[key]
-    await xiaozubothelp.finish(f"【{title}】\n{body}")
+    cat = CATEGORY_ALIASES.get(query)
+    if cat and _by_category(cat):
+        await xiaozubothelp.finish(_render_category(cat))
+
+    guesses = [n for n in COMMANDS if query in n or n in query][:5]
+    tip = ("\n你是不是想找：" + "、".join("*" + g for g in guesses)) if guesses else ""
+    await xiaozubothelp.finish(
+        f"没有「{query}」这个命令或分类，*help 看全部。{tip}"
+    )
+
+
+def pagehint(page: int, pages: int) -> str:
+    return f"\n当前处于第{page}页，共{pages}页"
+
 
 REF_GDDL = [
 """Tier 1: The Nightmare, THE LIGHTNING ROAD, Shiver, STARPUNK, iS
@@ -269,9 +249,6 @@ REF_PDIFF = [
 13 - TERRIFYING: Diamonds For Dashers
 14 - BRUTAL: Nothing yet..."""
 ]
-
-def pagehint(page: int, pages: int) -> str:
-    return f"\n当前处于第{page}页，共{pages}页"
 
 @references.handle()
 async def handle_references(arg: Message = CommandArg()) -> None:  # noqa: C901
