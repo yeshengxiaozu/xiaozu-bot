@@ -1,22 +1,16 @@
 import asyncio
-import base64
 import os
-from pathlib import Path
 from typing import Union
 
-from nonebot import get_plugin_config, on_command, require
+from nonebot import get_plugin_config, on_command
 from nonebot.adapters.onebot.v11 import (
     Bot,
-    Event,
     GroupMessageEvent,
     Message,
-    MessageSegment,
     PrivateMessageEvent,
 )
 from nonebot.params import CommandArg
-from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
-from nonebot.rule import Rule
 
 from .config import Config
 

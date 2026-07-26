@@ -1,13 +1,12 @@
 import json
-import requests
 from pathlib import Path
 
 from nonebot import logger
 
 try:
-    from ..paths import DATA_DIR, staged, staged_or_published
+    from ..paths import staged, staged_or_published
 except ImportError:
-    from updater.paths import DATA_DIR, staged, staged_or_published
+    from updater.paths import staged, staged_or_published
 
 from .metadata import enrich_levels_with_ids
 

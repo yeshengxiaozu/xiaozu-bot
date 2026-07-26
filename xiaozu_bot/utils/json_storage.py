@@ -1,9 +1,25 @@
 import fnmatch
 import json
+import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
+
+from nonebot import logger
+
+
+def plugin_storage(plugin_file: Union[str, Path], name: str = "storage.json") -> Path:
+    """算出某个插件的存储文件路径，相对插件自己的位置。
+
+    调用方传 __file__ 就行：
+        r = JsonRedis(plugin_storage(__file__))
+
+    以前各处写的是 "xiaozu_bot/plugins/xxx/data/storage.json" 这种相对
+    当前工作目录的路径，必须从仓库根目录启动 bot，换个地方启动就会在
+    错误的位置新建一个空存储 —— 数据看着就像丢了。
+    """
+    return Path(plugin_file).resolve().parent / "data" / name
 
 
 class JsonRedis:
@@ -23,7 +39,7 @@ class JsonRedis:
     新写调用的时候留意一下别拿 int 去和字符串比。
     """
 
-    def __init__(self, file_path: str, auto_save: bool = True) -> None:  # noqa: FBT001, FBT002
+    def __init__(self, file_path: Union[str, Path], auto_save: bool = True) -> None:  # noqa: FBT001, FBT002
         self.file_path = Path(file_path)
         self.auto_save = auto_save
         self.lock = threading.Lock()
@@ -31,20 +47,49 @@ class JsonRedis:
         self._load()
 
     def _load(self) -> None:
-        """从文件加载数据"""
-        if self.file_path.exists() and self.file_path.stat().st_size > 0:
-            with Path.open(self.file_path, "r", encoding="utf-8") as f:
-                self.data = json.load(f)
-        else:
+        """从文件加载数据。
+
+        文件坏了不抛异常 —— 这个类是在插件 import 期构造的，
+        一个坏的 storage.json 会让整个插件加载不了。
+        坏文件会被改名留档，然后从空的开始。
+        """
+        if not (self.file_path.exists() and self.file_path.stat().st_size > 0):
             self.data = {}
             if self.auto_save:
                 self._save()
+            return
+
+        try:
+            with self.file_path.open("r", encoding="utf-8") as f:
+                self.data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            logger.exception(f"[JsonRedis] 存储文件读不了：{self.file_path}")
+            broken = self.file_path.with_suffix(self.file_path.suffix + ".broken")
+            try:
+                os.replace(self.file_path, broken)
+                logger.warning(f"[JsonRedis] 已把坏文件挪到 {broken}，从空的开始")
+            except OSError:
+                logger.exception("[JsonRedis] 连坏文件都挪不走")
+            self.data = {}
 
     def _save(self) -> None:
-        """保存数据到文件"""
+        """保存数据到文件。
+
+        先写同目录下的临时文件再 os.replace 换过去 —— 同一个文件系统上
+        replace 是原子的。以前是直接覆盖写，写到一半进程被 kill
+        就留下一个半截的 json，下次启动直接读不了。
+        """
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        with Path.open(self.file_path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=4)
+        tmp = self.file_path.with_suffix(self.file_path.suffix + ".tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.file_path)
+        except OSError:
+            logger.exception(f"[JsonRedis] 写入失败：{self.file_path}")
+            tmp.unlink(missing_ok=True)
 
     def _clean_expired(self) -> bool:
         """清除所有过期的键，返回是否有删除操作"""

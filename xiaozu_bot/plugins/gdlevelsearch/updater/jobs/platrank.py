@@ -1,12 +1,11 @@
 from .googlesheetapi import SheetAPI,persistently
-from typing import Optional, Dict, List, Any
+from typing import Dict, List, Any
 import json,time
-from pathlib import Path
 
 try:
-    from ..paths import DATA_DIR, staged
+    from ..paths import staged
 except ImportError:
-    from updater.paths import DATA_DIR, staged
+    from updater.paths import staged
 
 from .constants import PLAT_RANK_ID
 

@@ -1,10 +1,9 @@
 import random
 from typing import Union
 
-from nonebot import get_plugin_config, on_command, on_endswith, on_type, require
+from nonebot import get_plugin_config, on_command, on_type
 from nonebot.adapters.onebot.v11 import (
     Bot,
-    Event,
     GroupMessageEvent,
     Message,
     PokeNotifyEvent,
@@ -40,7 +39,8 @@ config = get_plugin_config(Config)
 
 ultra = on_command("ultra", rule=rule_notban)
 nsdd = on_command("nsdd", rule=rule_notban)
-insult = on_command("insult", rule=rule_notban)
+# insult 之前只注册没写 handler，block=True 会把 *insult 吞掉还不回话。
+# 想做的话补个 handler 再放开注册。
 jwz = on_command("jwz", rule=rule_notban)
 game = on_command("game")
 today = on_command("today")

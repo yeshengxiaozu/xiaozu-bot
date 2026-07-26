@@ -311,7 +311,7 @@ class Gddl:
         }
         data = {"name": name}
         try:
-            response = requests.get(url, headers=headers, params=data)
+            response = requests.get(url, headers=headers, params=data, timeout=GDDL_TIMEOUT)
             if response.status_code == HTTP_OK:
                 data = response.json()
                 return [GDDLLevel(level_data) for level_data in data["levels"]]

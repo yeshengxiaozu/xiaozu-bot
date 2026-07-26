@@ -15,7 +15,7 @@ from typing import Optional
 
 from nonebot import logger
 
-from xiaozu_bot.utils.json_storage import JsonRedis
+from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
 from .gddlapi import GDDLLevel, Gddl
 
@@ -33,7 +33,7 @@ FILTERS = {
 }
 
 # 和别的插件一样放自己的 data 目录，这个目录的 *.json 已经在 .gitignore 里了
-r = JsonRedis("xiaozu_bot/plugins/gdlevelsearch/data/storage.json")
+r = JsonRedis(plugin_storage(__file__))
 
 KEY_PREFIX = "dailydemon_"
 # 存两天，跨天之后旧的自动过期，不用手动清

@@ -1,27 +1,26 @@
-import datetime
 import json
 import time
 
 import requests
-from nonebot import get_plugin_config, on_command, on_fullmatch
-from nonebot.adapters import Event
+from nonebot import get_plugin_config, on_command
 from nonebot.adapters.onebot.v11 import (
     GroupMessageEvent,
     Message,
     MessageEvent,
-    PrivateMessageEvent,
 )
 from nonebot.params import CommandArg
-from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 
-from xiaozu_bot.utils.json_storage import JsonRedis
+from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
 from .config import Config
 from .messages import *
 
-r = JsonRedis("xiaozu_bot/plugins/zhua_api/data/storage.json")
+r = JsonRedis(plugin_storage(__file__))
+
+# 本地转发桥接的超时。不设的话桥接挂了这边会一直吊着。
+BRIDGE_TIMEOUT = 10
 
 __plugin_meta__ = PluginMetadata(
     name="zhua_api",
@@ -34,7 +33,7 @@ config = get_plugin_config(Config)
 buy = on_command("buy")
 sell = on_command("sell")
 check = on_command("ck")
-ckzhua = on_fullmatch({".ck", "。ck"})
+# .ck / 。ck 同样只注册没写 handler，蓝莓那套下线之后也没意义了。
 
 
 class berry_manager:
@@ -79,14 +78,14 @@ class berry_manager:
 
     async def check(id: int, amount: int):
         requests.post(
-            "http://localhost:3000/send_group_msg", json=json_check(id, amount)
+            "http://localhost:3000/send_group_msg", json=json_check(id, amount), timeout=BRIDGE_TIMEOUT
         )
 
     check_finish = on_command("berry_check_finish", rule=rule_bot)
 
     async def change(id: int, amount: int):
         requests.post(
-            "http://localhost:3000/send_group_msg", json=json_change(id, amount)
+            "http://localhost:3000/send_group_msg", json=json_change(id, amount), timeout=BRIDGE_TIMEOUT
         )
 
     change_finish = on_command("berry_change_finish", rule=rule_bot)
@@ -102,14 +101,14 @@ class msg_api:
         return json.loads(
             requests.post(
                 "http://localhost:3000/send_group_msg",
-                json=json_group(self.group_id, text),
+                json=json_group(self.group_id, text), timeout=BRIDGE_TIMEOUT
             ).text
         )["data"]
 
     async def send_private(self, id: int, text: str) -> dict:
         return json.loads(
             requests.post(
-                "http://localhost:3000/send_private_msg", json=json_private(id, text)
+                "http://localhost:3000/send_private_msg", json=json_private(id, text), timeout=BRIDGE_TIMEOUT
             ).text
         )["data"]
 
@@ -117,7 +116,7 @@ class msg_api:
         return json.loads(
             requests.post(
                 "http://localhost:3000/send_group_msg",
-                json=json_group_at(self.group_id, id, text),
+                json=json_group_at(self.group_id, id, text), timeout=BRIDGE_TIMEOUT
             ).text
         )["data"]
 
@@ -125,7 +124,7 @@ class msg_api:
         return json.loads(
             requests.post(
                 "http://localhost:3000/set_msg_emoji_like",
-                json=json_emoji_like(id, eid),
+                json=json_emoji_like(id, eid), timeout=BRIDGE_TIMEOUT
             ).text
         )["data"]
 

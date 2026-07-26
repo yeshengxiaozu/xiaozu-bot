@@ -1,16 +1,13 @@
-import os,json
+import json
 import time
 from nonebot import logger
-from pathlib import Path
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 from .googlesheetapi import persistently,SheetAPI
 from typing import Dict, List, Any
 
 try:
-    from ..paths import DATA_DIR, staged
+    from ..paths import staged
 except ImportError:
-    from updater.paths import DATA_DIR, staged
+    from updater.paths import staged
 
 from .constants import (
     NLW_ID,

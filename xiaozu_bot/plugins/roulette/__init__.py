@@ -7,7 +7,7 @@ from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 
-from xiaozu_bot.utils.json_storage import JsonRedis
+from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
 from .config import Config
 from .const import *
@@ -17,7 +17,7 @@ manager = require("zhua_api").berry_manager
 msg = require("zhua_api").msg_api()
 
 random.seed()
-r = JsonRedis("xiaozu_bot/plugins/roulette/data/storage.json")
+r = JsonRedis(plugin_storage(__file__))
 # 这行是在 import 期间跑的，键不存在就 int(None) 直接把整个插件的加载搞崩，
 # 所以必须给个默认值（换成空的 json 存储之后第一次启动就是这种情况）
 data.pool = int(r.get("roulette_pool") or 0)
@@ -48,53 +48,6 @@ async def handle_function(event: GroupMessageEvent):
     await roulette.finish(
         "你来到了那个轮盘原本所在的位置，只看到一块写着打烊的招牌。这个轮盘不会再转动了。"
     )
-    return
-    id = event.user_id
-    if manager.isforbid(id):
-        await msg.emoji_like(event.message_id, "128074")
-        await roulette.finish()
-    if manager.getCoins(id) < 10:
-        await msg.send_at_emoji(
-            id,
-            "You don't have enough blueberries. 10 needed.\nUse *buy to convert strawberries.",
-            "144",
-        )
-        await roulette.finish()
-    if r.get(f"roulette_status_{id}") == "pending":
-        await roulette.finish("You have a pending roll. Please wait.", at_sender=True)
-    if r.get(f"roulette_status_{id}") == "waiting":
-        await msg.emoji_like(event.message_id, "424")
-        await roulette.finish()
-    r.set(f"roulette_status_{id}", "pending")
-    r.set("roulette_total", int(r.get("roulette_total") or 0) + 1)
-    manager.setCoins(id, manager.getCoins(id) - 10)
-    manager.setCoins(event.self_id, manager.getCoins(event.self_id) + 1)
-    data.pool += 10
-    r.set("roulette_pool", str(data.pool))
-    map_result = random.choice(const.sjmap)
-    prize_available = map_result in prize.keys()
-    if prize_available:
-        if type(prize[map_result]) == str:
-            prizewined = int(prize[map_result])
-        else:
-            prizewined = int(data.pool * prize[map_result])
-        manager.setCoins(id, manager.getCoins(id) + prizewined)
-        data.pool -= prizewined
-        data.pool = max(data.pool, 202)
-        r.set("roulette_pool", str(data.pool))
-        r.set(f"roulette_status_{id}", "waiting", ex=5)
-        await msg.send_at_emoji(
-            id,
-            f"Your result is: {map_result}.\nCongradulated for winning {prizewined} blueberries!\n{data.pool} blueberries left in the pool.",
-            "144",
-        )
-        await roulette.finish()
-    else:
-        r.set(f"roulette_status_{id}", "waiting", ex=5)
-        await roulette.finish(
-            f"Your result is: {map_result}.\n{data.pool} blueberries left in the pool.",
-            at_sender=True,
-        )
 
 
 @get_pool.handle()
@@ -102,14 +55,11 @@ async def handle_function():
     await get_pool.finish(
         "你来到了蓝莓奖池旁。里面空空如也，周围的护栏呈现出风化的痕迹。看来没有人会再关心里面有多少蓝莓了。"
     )
-    await get_pool.finish("Pool: " + str(data.pool))
 
 
 @set_pool.handle()
 async def handle_function(args: Message = CommandArg()):
     await set_pool.finish("……你记得你做了什么。")
-    data.pool = int(str(args))
-    await set_pool.finish("Pool: " + str(data.pool))
 
 
 @get_map.handle()
@@ -124,28 +74,6 @@ async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg())
     await donate.finish(
         "你来到了蓝莓奖池旁。里面空空如也，周围的护栏呈现出风化的痕迹。你扔了一个或者一些不存在的蓝莓进去。那不重要。"
     )
-    return
-    args = str(arg).lower().split()
-    id = event.user_id
-    if len(args) == 1 and args[0] == "all":
-        if manager.getCoins(id) == 0:
-            await donate.finish(
-                "你想干什么，展示你空空如也的蓝莓钱包吗？", at_sender=True
-            )
-        else:
-            num = manager.getCoins(id)
-    elif len(args) != 1 or not args[0].isdecimal() or int(args[0]) <= 0:
-        await msg.emoji_like(event.message_id, "424")
-        await donate.finish()
-    elif int(args[0]) > manager.getCoins(id):
-        await donate.finish("你没有这么多蓝莓！", at_sender=True)
-    else:
-        num = int(args[0])
-    data.pool += num
-    r.set("roulette_pool", str(data.pool))
-    manager.setCoins(id, manager.getCoins(id) - num)
-    await msg.send_at_emoji(id, f"你往池子里捐赠{num}蓝莓！\nPool: {data.pool}", "144")
-    await donate.finish()
 
 
 @roulette_count.handle()

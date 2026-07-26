@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
-from urllib.parse import urlencode
 
 import requests
 from nonebot import logger
@@ -96,7 +95,9 @@ def fetch_level_data(name: str, creator: str, loose: bool = False) -> dict | Non
         resp = http.get(GD_HISTORY_API, params=params, timeout=10, verify=DEFAULT_VERIFY)
         resp.raise_for_status()
         data = resp.json()
-    except requests.exceptions.Timeout:
+    except requests.exceptions.Timeout as e:
+        # 原来这里没写 as e，日志却引用了 e —— 真超时的时候会在 except 里
+        # 再抛一个 NameError，把超时伪装成别的错
         logger.error(f"Request timed out for '{name}' by '{creator}': {e}")
         return None
     except requests.exceptions.HTTPError as e:

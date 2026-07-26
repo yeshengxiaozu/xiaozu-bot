@@ -2,13 +2,12 @@ from .googlesheetapi import SheetAPI, persistently
 from typing import Dict, List, Any
 import json
 import time
-from pathlib import Path
 from .constants import PLAT_DATA_ID, PLAT_DATA_SHEET_NAME
 
 try:
-    from ..paths import DATA_DIR, staged
+    from ..paths import staged
 except ImportError:
-    from updater.paths import DATA_DIR, staged
+    from updater.paths import staged
 
 
 @persistently

@@ -1,11 +1,11 @@
 import datetime
 import random
 
-from nonebot import get_plugin_config, on_command, require
+from nonebot import get_plugin_config, on_command
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
 from nonebot.plugin import PluginMetadata
 
-from xiaozu_bot.utils.json_storage import JsonRedis
+from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
 from .config import Config
 
@@ -17,7 +17,7 @@ __plugin_meta__ = PluginMetadata(
 )
 
 random.seed()
-r = JsonRedis("xiaozu_bot/plugins/jrrp/data/storage.json")
+r = JsonRedis(plugin_storage(__file__))
 
 config = get_plugin_config(Config)
 

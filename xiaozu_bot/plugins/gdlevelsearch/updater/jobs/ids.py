@@ -1,20 +1,16 @@
 
-import os,json
+import json
 import time
-from pathlib import Path
-from functools import wraps
-from typing import Optional, Dict, List, Any
+from typing import Dict, List, Any
 
 from nonebot import logger
 from .googlesheetapi import persistently,SheetAPI
 
 try:
-    from ..paths import DATA_DIR, staged
+    from ..paths import staged
 except ImportError:
-    from updater.paths import DATA_DIR, staged
+    from updater.paths import staged
 
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 from .constants import (
     IDS_ID,
     IDS_LEVELS_NAME,

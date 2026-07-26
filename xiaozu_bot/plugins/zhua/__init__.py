@@ -13,7 +13,7 @@ from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 
-from xiaozu_bot.utils.json_storage import JsonRedis
+from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
 from .config import Config
 
@@ -24,7 +24,10 @@ __plugin_meta__ = PluginMetadata(
     config=Config,
 )
 
-r = JsonRedis("xiaozu_bot/plugins/zhua/data/storage.json")
+r = JsonRedis(plugin_storage(__file__))
+
+# 图库目录。以前写的是相对当前工作目录，换个地方启动就找不到图。
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 descriptions = {
     "mc卒.png" : "小卒穿越进了mc，这是她的样子",
@@ -108,7 +111,7 @@ async def handle_zhua(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> N
     if r.get(f"zhua_cd_{user_id}") == "waiting":
         t = r.ttl(f"zhua_cd_{user_id}")
         await zhua.finish(f"别抓啦，{t}秒后再来吧", at_sender=True)
-    folder_path = Path("xiaozu_bot/plugins/zhua/data/")
+    folder_path = DATA_DIR
     file_name = random.choice(list(descriptions.keys()))
     name = file_name.split(".")[0]
     image_path = folder_path / file_name
@@ -124,7 +127,7 @@ async def handle_zhua(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> N
 
 @show.handle()
 async def handle_show(arg: Message = CommandArg()) -> None:
-    folder_path = Path("xiaozu_bot/plugins/zhua/data/")
+    folder_path = DATA_DIR
     args = str(arg).split()
     if not args:
         await show.finish("请输入一个名称！")
@@ -149,7 +152,7 @@ async def handle_show(arg: Message = CommandArg()) -> None:
 @zhua_test.handle()
 async def handle_zhua_test() -> None:
     file_names = []
-    folder_path = Path("xiaozu_bot/plugins/zhua/data/")
+    folder_path = DATA_DIR
     file_names = [f.name for f in folder_path.iterdir() if f.is_file()]  # noqa: ASYNC240
     await zhua_test.send(str([f'["{i}"] = ""' for i in file_names]))
     await zhua_test.finish()

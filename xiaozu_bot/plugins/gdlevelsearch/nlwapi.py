@@ -3,7 +3,6 @@ import time
 from pathlib import Path
 from typing import Any, Optional, Union
 
-import requests
 from nonebot import logger
 
 HTTP_OK = 200

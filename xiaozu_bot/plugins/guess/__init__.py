@@ -11,13 +11,15 @@ from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from PIL import Image, ImageDraw
 
-from xiaozu_bot.utils.json_storage import JsonRedis
+from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
 from .config import Config
 from .data import maps
 
-DATA_DIR = Path("xiaozu_bot/plugins/guess/data")
-PICTURES_DIR = Path("xiaozu_bot/plugins/guess/pictures")
+# 相对本文件，不是相对当前工作目录 —— 换个地方启动 bot 也能找到题库
+_PLUGIN_DIR = Path(__file__).resolve().parent
+DATA_DIR = _PLUGIN_DIR / "data"
+PICTURES_DIR = _PLUGIN_DIR / "pictures"
 COOLDOWN_PREFIX = "guess_cooldown_"
 ANSWER_KEY = "guess_answer"
 ANSWER_POSITION_KEY = "guess_answer_position"
@@ -28,7 +30,7 @@ NOTHING_ANSWER = "NOTHING"
 NOISE_THRESHOLD = 300
 MAX_CROP_RETRIES = 20
 
-r = JsonRedis("xiaozu_bot/plugins/guess/data/storage.json")
+r = JsonRedis(plugin_storage(__file__))
 
 __plugin_meta__ = PluginMetadata(
     name="guess",
@@ -53,16 +55,27 @@ crop_width_hard = 128
 crop_height_hard = 128
 crop_width_ultra = 64
 crop_height_ultra = 64
-aliases: dict[str, list[str]] = {}
-
-for map_info in maps:
-    aliases[map_info["answer"]] = map_info["alias"]
 def formalize(str: str) -> str:  # noqa: A002
     str = str.lower()  # noqa: A001
     for s in [" ",".",",","-","'","!","，","！","…","。",":","：","+","_","""
 """] :
         str = str.replace(s,"")  # noqa: A001
     return str
+
+
+aliases: dict[str, list[str]] = {}
+# 答案 -> 所有能算对的写法（都归一化过）
+accepted: dict[str, set[str]] = {}
+
+for map_info in maps:
+    aliases[map_info["answer"]] = map_info["alias"]
+    # 别名表以前是原样存的，而输入是归一化之后再去比的，
+    # 所以别名里只要带大写或空格就永远匹配不上（比如 VVVVVV）。
+    # 这里两边都归一化。顺带把完整答案名也收进去，写全名也能算对。
+    accepted[map_info["answer"]] = {
+        formalize(map_info["answer"]),
+        *(formalize(a) for a in map_info["alias"]),
+    }
 
 def getid(event: Union[GroupMessageEvent,PrivateMessageEvent]) -> str:
     if isinstance(event,PrivateMessageEvent) or False:
@@ -120,6 +133,34 @@ async def can_start(bot: Bot, matcher: Matcher, event: Union[GroupMessageEvent, 
         await matcher.finish("请先输入*guess_giveup结束目前的题目！", at_sender=True)
 
 
+def _crop_and_save(
+    image_path: Path, crop_width: int, crop_height: int, out_path: Path
+) -> tuple[int, int, int, int]:
+    """随机裁一块出来存成文件，返回裁剪坐标。
+
+    会跳过纯色/没信息的区域，最多试 MAX_CROP_RETRIES 次；
+    实在都很糊就用最后一次的结果。
+    这函数是同步的，调用方负责丢线程池。
+    """
+    image = Image.open(image_path)
+    width, height = image.size
+
+    box = (0, 0, crop_width, crop_height)
+    for _ in range(MAX_CROP_RETRIES):
+        left = random.randint(0, max(0, width - crop_width))
+        top = random.randint(0, max(0, height - crop_height))
+        box = (left, top, left + crop_width, top + crop_height)
+        cropped = image.crop(box)
+        if not isnonsense(cropped):
+            break
+    else:
+        cropped = image.crop(box)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cropped.save(out_path)
+    return box
+
+
 async def guessstart(
     crop_size: tuple[int, int], matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]
 ) -> None:
@@ -138,27 +179,13 @@ async def guessstart(
     image_path = folder_path / file_name
     answer = map_info["answer"]
 
-    image = Image.open(image_path)
-    width, height = image.size
-
-    left = random.randint(0, width - crop_width)
-    top = random.randint(0, height - crop_height)
-    right = left + crop_width
-    bottom = top + crop_height
-    cropped_image = image.crop((left, top, right, bottom))
-
-    for _ in range(MAX_CROP_RETRIES):
-        left = random.randint(0, width - crop_width)
-        top = random.randint(0, height - crop_height)
-        right = left + crop_width
-        bottom = top + crop_height
-        cropped_image = image.crop((left, top, right, bottom))
-        if not isnonsense(cropped_image):
-            break
-
-    PICTURES_DIR.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+    # 裁图 + 去噪判定是纯 CPU 活：get_variance 是 Python 循环，
+    # 一张 256x256 就是六万多像素，最多还要重试 20 次。
+    # 放在事件循环里跑会让整个 bot 卡住，丢线程池。
     cropped_path = PICTURES_DIR / f"{session_id}.png"
-    cropped_image.save(cropped_path)
+    left, top, right, bottom = await asyncio.to_thread(
+        _crop_and_save, image_path, crop_width, crop_height, cropped_path
+    )
 
     r.set(f"{COOLDOWN_PREFIX}{session_id}", answer, ex=45)
     r.hset(ANSWER_KEY, session_id, answer)
@@ -249,7 +276,7 @@ async def handle_guess(bot: Bot, event: Union[GroupMessageEvent, PrivateMessageE
         )
         await guess.finish()
 
-    if guess_input in aliases.get(answer, []):
+    if guess_input in accepted.get(answer, set()):
         guess_input = answer
 
     r.set(TOTAL_TRIES_KEY, int(r.get(TOTAL_TRIES_KEY) or 0) + 1)

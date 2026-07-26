@@ -1,15 +1,14 @@
 import json
 import time
-from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 
 from nonebot import logger
 
 try:
-    from ..paths import DATA_DIR, staged, staged_or_published
+    from ..paths import staged, staged_or_published
 except ImportError:
-    from updater.paths import DATA_DIR, staged, staged_or_published
+    from updater.paths import staged, staged_or_published
 
 ID_FIX = {
     #标记错误的id手动修复

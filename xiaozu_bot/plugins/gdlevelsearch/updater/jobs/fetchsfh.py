@@ -1,13 +1,12 @@
 import json
 import requests
-from pathlib import Path
 
 from nonebot import logger
 
 try:
-    from ..paths import DATA_DIR, staged
+    from ..paths import staged
 except ImportError:
-    from updater.paths import DATA_DIR, staged
+    from updater.paths import staged
 
 def build_level_to_song_mapping(data):
     """
@@ -53,7 +52,7 @@ def main():
     headers = {
         "Content-Type": "application/json",
     }
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=30)
     if response.status_code == 200:
         data = response.json()
     else:

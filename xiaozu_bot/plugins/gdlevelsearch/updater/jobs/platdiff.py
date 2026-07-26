@@ -1,15 +1,14 @@
 import json
-from pathlib import Path
-import time, os
+import time
 from typing import Any, Dict, List, Optional
 
 from .googlesheetapi import SheetAPI, persistently
 from .constants import PLAT_DIFF_ID, PLAT_DIFF_NAME
 
 try:
-    from ..paths import DATA_DIR, staged, staged_or_published
+    from ..paths import staged, staged_or_published
 except ImportError:
-    from updater.paths import DATA_DIR, staged, staged_or_published
+    from updater.paths import staged, staged_or_published
 
 class PlatDiff:
     def __init__(

@@ -14,23 +14,20 @@ from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
 require("nonebot_plugin_apscheduler")
-import datetime
-import json
 
 # 加载数学算法相关
 import random
 
 # 加载读取系统时间相关
 import time
-from pathlib import Path
 
 from nonebot_plugin_apscheduler import scheduler
 
-from xiaozu_bot.utils.json_storage import JsonRedis
+from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
 from .config import *
 
-r = JsonRedis("xiaozu_bot/plugins/game/data/storage.json")
+r = JsonRedis(plugin_storage(__file__))
 
 
 def whitelist(event: GroupMessageEvent):
