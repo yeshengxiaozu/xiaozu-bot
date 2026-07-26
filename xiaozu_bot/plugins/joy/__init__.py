@@ -118,7 +118,8 @@ async def handle_function(bot: Bot, event: GroupMessageEvent):
 async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg()):
     args = str(arg).lower().split()
     if len(args) < 1:
-        await game.send(
+        # 原来这里是 send 而不是 finish，少了个 return，接着往下读 args[0] 直接 IndexError
+        await game.finish(
             "请在使用小小卒的时候带上想要让小小卒帮忙的游戏编号(1~4)哦~免责声明：仅供参考"
         )
     if args[0] == "1":

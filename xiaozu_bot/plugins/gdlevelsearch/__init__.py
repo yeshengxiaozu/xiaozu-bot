@@ -10,6 +10,7 @@ from nonebot.permission import SUPERUSER
 
 from . import aredlapi, nlwapi, platapi
 from .aredlapi import Aredl  # noqa: F401
+from .dailydemon import describe_conditions, get_daily_demon
 from .draw import create_image_from_gdlevel
 from .fullsearch import SESSION_TIMEOUT, ArgError, FullSearchSession
 from .fullsearch import start_session as start_fullsearch_session
@@ -513,22 +514,76 @@ async def handle_ratings_choice(bot: Bot, event: MessageEvent) -> None:
 
 @gdrandom.handle()
 async def handle_gdrandom(bot: Bot, event: Event, arg: Message = CommandArg()) -> None:
+    """*gd随机推关 tier低 [tier高] [enj低] [enj高]"""
     args = arg.extract_plain_text().strip().split()
     if len(args) < 1:
-        await gdrandom.finish("请输入至少一个数字以指定tier范围！（懒得写enj筛选喵）")
-    low = int(args[0])
-    high = int(args[1]) if len(args) > 1 else -1
+        await gdrandom.finish(
+            "用法：*gd随机推关 tier低 [tier高] [enj低] [enj高]\n"
+            "tier 是 1-39，enj 是 0-10，后面三个都可以不写\n"
+            "例：*gd随机推关 15 20 7 —— 15-20 tier、enjoyment 7 以上"
+        )
 
-    result = Gddl.getrandomlevelbytier(low,high)
+    def _num(text: str, name: str, low: float, high: float) -> float:
+        try:
+            value = float(text)
+        except ValueError:
+            raise ValueError(f"{name} 要是个数字，你写的是「{text}」") from None
+        if not low <= value <= high:
+            raise ValueError(f"{name} 要在 {low:g}-{high:g} 之间，你写的是 {value:g}")
+        return value
+
+    try:
+        tier_low = int(_num(args[0], "tier", 1, 39))
+        tier_high = int(_num(args[1], "tier", 1, 39)) if len(args) > 1 else -1
+        enj_min = _num(args[2], "enjoyment", 0, 10) if len(args) > 2 else None  # noqa: PLR2004
+        enj_max = _num(args[3], "enjoyment", 0, 10) if len(args) > 3 else None  # noqa: PLR2004
+    except ValueError as e:
+        await gdrandom.finish(str(e))
+
+    if tier_high != -1 and tier_high < tier_low:
+        tier_low, tier_high = tier_high, tier_low
+    if enj_min is not None and enj_max is not None and enj_max < enj_min:
+        enj_min, enj_max = enj_max, enj_min
+
+    result = await asyncio.to_thread(
+        Gddl.getrandomlevelbytier, tier_low, tier_high, enj_min, enj_max
+    )
     if not result:
-        await gdsearch.finish("没有找到符合条件的demon关卡")
+        await gdrandom.finish("没有找到符合条件的关卡，把条件放宽点试试")
 
     level = getlevelinfo(result.ID)
     if level:
         await send_result(bot, event, level)
     else:
-        await gdsearch.finish("发生未知错误。相关id: " + str(result.ID))
-    await gdsearch.finish()
+        await gdrandom.finish("发生未知错误。相关id: " + str(result.ID))
+    await gdrandom.finish()
+
+
+# ----------------------------------------------------------------- dailydemon
+# 每天一关，条件写死在 dailydemon.py 里，按日期定死所以一天之内不会变。
+
+dailydemon = on_command("dailydemon")
+
+
+@dailydemon.handle()
+async def handle_dailydemon(bot: Bot, event: Event) -> None:
+    level_info, total, err = await asyncio.to_thread(get_daily_demon)
+    if level_info is None:
+        await dailydemon.finish(err)
+
+    level = getlevelinfo(level_info.ID)
+    if not level:
+        await dailydemon.finish(
+            f"今日关卡是 {level_info.Meta.Name}（ID {level_info.ID}），"
+            "但是拿详细信息的时候出错了"
+        )
+
+    await bot.send(
+        event,
+        f"今日关卡（{describe_conditions()}，候选 {total} 关）：",
+    )
+    await send_result(bot, event, level)
+    await dailydemon.finish()
 
 @gduser.handle()
 async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> None:  # noqa: ARG001

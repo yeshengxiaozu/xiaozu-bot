@@ -1372,7 +1372,15 @@ async def check_handle(event: GroupMessageEvent):
 
 
 # 恶魔投降指令：随时投降
-demon_surrender = on_command("恶魔投降", permission=GROUP, priority=1, block=True)
+# 这条原来唯独漏了 rule=whitelist_rule，别的群也能触发；而且下面直接
+# datas.demon_data[group_id] 取值，没开过局的群里连 key 都没有，直接 KeyError。
+demon_surrender = on_command(
+    "恶魔投降",
+    permission=GROUP,
+    priority=1,
+    block=True,
+    rule=whitelist_rule,
+)
 
 
 @demon_surrender.handle()
@@ -1381,10 +1389,11 @@ async def demon_surrender_handle(event: Event):
     player_id = str(event.user_id)  # 获取发出投降指令的玩家ID
 
     # 判断玩家是否在游戏中
-    if datas.demon_data[group_id]["start"] == False:
+    game_data = datas.demon_data.get(group_id)
+    if not game_data or not game_data["start"]:
         await demon_surrender.finish("当前没有进行中的游戏！", at_sender=True)
     # 获取当前游戏的玩家信息
-    players = datas.demon_data[group_id]["pl"]  # 当前游戏中的两位玩家ID
+    players = game_data["pl"]  # 当前游戏中的两位玩家ID
     if player_id not in players:
         await demon_surrender.finish("你当前不在游戏中，无法投降！", at_sender=True)
 

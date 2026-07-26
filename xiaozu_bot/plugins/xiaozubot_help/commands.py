@@ -100,15 +100,33 @@ COMMANDS: dict[str, Cmd] = {
         examples=("*gduser Riot",),
     ),
     "gd随机推关": Cmd(
-        usage="*gd随机推关 低 [高]",
-        summary="按 tier 区间随机推一关",
+        usage="*gd随机推关 tier低 [tier高] [enj低] [enj高]",
+        summary="按 tier / enjoyment 随机推一关",
         category="gd",
         detail=(
-            "在指定的 GDDL tier 区间里随机挑一关推给你。\n"
-            "只给一个数字就是只推那个 tier，给两个就是区间。\n"
-            "（enjoyment 筛选没做）"
+            "在指定条件里随机挑一关推给你。\n"
+            "第 1 个是 tier 下限（1-39），必填；只给这一个就是只推那个 tier。\n"
+            "第 2 个是 tier 上限，给了就按区间来。\n"
+            "第 3、4 个是 enjoyment 的下限和上限（0-10），不写就不筛。\n"
+            "写反了（上限比下限小）会自动帮你调过来。"
         ),
-        examples=("*gd随机推关 20", "*gd随机推关 15 20"),
+        examples=(
+            "*gd随机推关 20",
+            "*gd随机推关 15 20",
+            "*gd随机推关 15 20 7",
+        ),
+    ),
+    "dailydemon": Cmd(
+        usage="*dailydemon",
+        summary="今日关卡，每天换一关",
+        category="gd",
+        detail=(
+            "每天从 GDDL 挑一关推给大家，条件是\n"
+            "tier 1-9、enjoyment 7 分以上、提交数 10 条以上，\n"
+            "也就是不太难又确实好玩、还有足够多人评过的那种。\n"
+            "同一天不管谁发、发几次都是同一关，第二天零点自动换。"
+        ),
+        examples=("*dailydemon",),
     ),
     "references": Cmd(
         usage="*references 表名 [页码]",

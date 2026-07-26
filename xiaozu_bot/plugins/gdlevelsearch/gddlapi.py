@@ -334,28 +334,81 @@ class Gddl:
         return None
 
     @staticmethod
-    def getrandomlevelbytier(low: int, high: int = -1) -> Optional[GDDLLevel]:
-        """??????gddl??????api???????????????????????????????????????"""
-        if high == -1:
-            high = low
-        high_exact = min(high + 0.5, 39.0)
-        low_exact = max(low - 0.5, 1.0)
+    def searchlevels(
+        page: int = 0,
+        limit: int = 1,
+        sort: str = "ID",
+        **filters: Any,
+    ) -> Optional[dict[str, Any]]:
+        """按条件搜 GDDL，返回原始响应（带 total / limit / page / levels）。
+
+        filters 直接透传给接口，常用的有 minRating / maxRating（1-39）、
+        minEnjoyment / maxEnjoyment（0-10）、minSubmissionCount。
+        请求失败返回 None。
+        """
         url = "https://gdladder.com/api/level/search"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
-        data = {"minRating": low_exact, "maxRating": high_exact, "sort": "random"}
+        params: dict[str, Any] = {"page": max(0, page), "limit": limit, "sort": sort}
+        params.update({k: v for k, v in filters.items() if v is not None})
         try:
-            response = requests.get(url, headers=headers, params=data)
-            if response.status_code == HTTP_OK:
-                data = response.json()
-                logger.debug(f"?????????{len(data['levels'])}????????????{','.join(level['Meta']['Name'] for level in data['levels'])}")
-                if len(data["levels"]) > 0:
-                    return GDDLLevel(data["levels"][0])
-                return None
-            logger.warning(f"Error fetching levels: {response.status_code}")
+            response = requests.get(url, headers=headers, params=params, timeout=15)
         except requests.RequestException as e:
-            logger.error(f"Error fetching levels: {e}")
-        return None
+            logger.error(f"[gddl] 搜索失败: {e}")
+            return None
+        if response.status_code != HTTP_OK:
+            logger.warning(f"[gddl] 搜索接口返回 {response.status_code}，参数 {params}")
+            return None
+        return response.json()
+
+    @staticmethod
+    def getlevelbyindex(index: int, **filters: Any) -> Optional[GDDLLevel]:
+        """按 ID 升序取符合条件的第 index 个关卡（从 0 开始）。
+
+        用 sort=ID 而不是 sort=random，这样同样的 index 每次拿到的都是同一关，
+        *dailydemon 就是靠这个做到一天之内结果不变的。
+        """
+        payload = Gddl.searchlevels(page=index, limit=1, sort="ID", **filters)
+        if not payload or not payload.get("levels"):
+            return None
+        return GDDLLevel(payload["levels"][0])
+
+    @staticmethod
+    def getrandomlevelbytier(
+        low: int,
+        high: int = -1,
+        enjoyment_min: Optional[float] = None,
+        enjoyment_max: Optional[float] = None,
+    ) -> Optional[GDDLLevel]:
+        """在指定 tier 区间里随机取一关，可以再按 enjoyment 卡一道。
+
+        tier 用 ±0.5 展开成区间，这样传 20 能把 19.5-20.5 的都算进去。
+        enjoyment 是 0-10，不传就不筛。
+        """
+        if high == -1:
+            high = low
+        high_exact = min(high + 0.5, 39.0)
+        low_exact = max(low - 0.5, 1.0)
+
+        payload = Gddl.searchlevels(
+            page=0,
+            limit=1,
+            sort="random",
+            minRating=low_exact,
+            maxRating=high_exact,
+            minEnjoyment=enjoyment_min,
+            maxEnjoyment=enjoyment_max,
+        )
+        if not payload:
+            return None
+        levels = payload.get("levels") or []
+        logger.debug(
+            f"[gddl] 随机推关命中 {payload.get('total')} 条，本次取 "
+            + ",".join(lv["Meta"]["Name"] for lv in levels)
+        )
+        if not levels:
+            return None
+        return GDDLLevel(levels[0])
