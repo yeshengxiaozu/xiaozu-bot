@@ -279,17 +279,42 @@ class TestAddSearchResult:
         assert results[7].creator == "A"
         assert results[7].tier == "t1"
 
-    def test_difficulty_is_never_merged(self) -> None:
-        """⚠️ 合并分支里只补 creator / tier，difficulty 漏了
+    def test_second_hit_fills_in_a_missing_difficulty(self) -> None:
+        """合并分支要和 creator / tier 一样把空着的 difficulty 补上
 
-        于是先命中 NLW（不带 difficulty）再命中 GDDL（带）的关卡，
-        difficulty 永远是 None，*gdsearch 的列表里就得回头再打一次 gdapi。
+        不补的话，先命中不带 difficulty 的源、后命中带的源的关卡会一直是 None，
+        *gdsearch 的列表里就得回头再打一次 gdapi。
         """
         results: dict[int, SearchResult] = {}
         gdlevelsearch._add_search_result(results, 7, "Name", None, None, None)
         gdlevelsearch._add_search_result(results, 7, "Name", None, None, "Extreme Demon")
 
-        assert results[7].difficulty is None
+        assert results[7].difficulty == "Extreme Demon"
+
+    def test_first_difficulty_wins(self) -> None:
+        """已经有值就不许后来的源覆盖，和 creator / tier 一个规矩"""
+        results: dict[int, SearchResult] = {}
+        gdlevelsearch._add_search_result(results, 7, "Name", None, None, "Extreme Demon")
+        gdlevelsearch._add_search_result(results, 7, "Name", None, None, "Easy Demon")
+
+        assert results[7].difficulty == "Extreme Demon"
+
+    def test_second_hit_without_difficulty_does_not_blank_it(self) -> None:
+        """补的条件是 `and difficulty`，后来的 None 不该把已有值抹掉"""
+        results: dict[int, SearchResult] = {}
+        gdlevelsearch._add_search_result(results, 7, "Name", None, None, "Extreme Demon")
+        gdlevelsearch._add_search_result(results, 7, "Name", "Cr", None, None)
+
+        assert results[7].difficulty == "Extreme Demon"
+        assert results[7].creator == "Cr"
+
+    def test_empty_string_difficulty_counts_as_missing(self) -> None:
+        """判的是 `not item.difficulty`，空串和 None 一样会被后来的值补上"""
+        results: dict[int, SearchResult] = {}
+        gdlevelsearch._add_search_result(results, 7, "Name", None, None, "")
+        gdlevelsearch._add_search_result(results, 7, "Name", None, None, "Hard Demon")
+
+        assert results[7].difficulty == "Hard Demon"
 
     def test_empty_string_creator_counts_as_missing(self) -> None:
         """判的是 `not item.creator`，空串会被后来的值补上"""
@@ -459,20 +484,18 @@ class TestSearchByName:
         )
         assert [r.id for r in gdlevelsearch.search_by_name("N")] == [1, 2, 3]
 
-    def test_nlw_log_line_can_never_say_unknown_tier(
+    def test_nlw_log_line_says_unknown_tier_when_there_is_no_tier(
         self, sources: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        r"""⚠️ BUG：运算符优先级写错，`or "Unknown"` 那一支是死代码
+        r"""tier 缺失时日志要落到 "Unknown Tier"，不能印字面量 "None"
 
-        源码是
+        原来写的是
 
             logger.info(f"Find a result in {level.source}: " +
                         str(level.tier) or "Unknown" + " Tier")
 
-        `+` 比 `or` 紧，实际是 `(f"..." + str(tier)) or ("Unknown" + " Tier")`。
-        左边永远非空，所以 tier 是 None 的时候日志里印的是字面量 "None"，
-        而且连 " Tier" 这个后缀都跟着没了。作者想写的应该是
-        `f"Find a result in {level.source}: {level.tier or 'Unknown'} Tier"`。
+        `+` 比 `or` 紧，实际是 `(f"..." + str(tier)) or ("Unknown" + " Tier")`，
+        左边永远非空，or 那一支根本走不到。
         """
         rec = RecordingLogger()
         monkeypatch.setattr(gdlevelsearch, "logger", rec)
@@ -480,8 +503,32 @@ class TestSearchByName:
 
         gdlevelsearch.search_by_name("X")
 
-        assert "Find a result in IDS: None" in rec.infos
-        assert not any("Unknown Tier" in line for line in rec.infos)
+        assert "Find a result in IDS: Unknown Tier" in rec.infos
+        assert not any("None" in line for line in rec.infos)
+
+    def test_nlw_log_line_keeps_the_tier_when_there_is_one(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """有 tier 就照印，后缀 " Tier" 这下也真的跟上了"""
+        rec = RecordingLogger()
+        monkeypatch.setattr(gdlevelsearch, "logger", rec)
+        sources(nlw=[nlw_level("42", "X", tier="7", source="NLW")])
+
+        gdlevelsearch.search_by_name("X")
+
+        assert "Find a result in NLW: 7 Tier" in rec.infos
+
+    def test_nlw_log_line_treats_an_empty_tier_as_unknown(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """空串也算没有 tier —— `or` 判的是 falsy"""
+        rec = RecordingLogger()
+        monkeypatch.setattr(gdlevelsearch, "logger", rec)
+        sources(nlw=[nlw_level("42", "X", tier="", source="LW")])
+
+        gdlevelsearch.search_by_name("X")
+
+        assert "Find a result in LW: Unknown Tier" in rec.infos
 
 
 # ==========================================================================

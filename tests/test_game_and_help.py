@@ -2169,26 +2169,46 @@ class TestReferences:
     @pytest.mark.parametrize(("name", "pages"), [("gddl", 8), ("nlw", 4), ("plat", 2)])
     async def test_页码超出范围(self, fake_bot, group_event, name, pages):
         text = await _refs(fake_bot, group_event, f"{name} {pages + 1}")
-        assert f"你输入的页码数超过了总页数（共{pages}页" in text
+        assert f"你输入的页码数超出范围（共{pages}页" in text
+
+    @pytest.mark.parametrize(("name", "pages"), [("gddl", 8), ("nlw", 4), ("plat", 2)])
+    async def test_最后一页仍然有效(self, fake_bot, group_event, name, pages):
+        """上界是 `page > len`，最后一页必须还能翻到（差一位的另一边）"""
+        table = {"gddl": helpmod.REF_GDDL, "nlw": helpmod.REF_NLW,
+                 "plat": helpmod.REF_PDIFF}[name]
+        text = await _refs(fake_bot, group_event, f"{name} {pages}")
+        assert text == table[-1] + helpmod.pagehint(pages, pages)
+
+    @pytest.mark.parametrize(("name", "pages"), [("gddl", 8), ("nlw", 4), ("plat", 2)])
+    async def test_页码0被拒绝(self, fake_bot, group_event, name, pages):
+        """"0".isdigit() 是 True，以前 page=0 会走到 REF_XXX[-1] 翻出最后一页，
+        提示语还写着「第0页」。现在和超上界一样报错。"""
+        text = await _refs(fake_bot, group_event, f"{name} 0")
+        assert f"你输入的页码数超出范围（共{pages}页" in text
+        assert "当前处于第0页" not in text
+
+    @pytest.mark.parametrize(("name", "pages"), [("gddl", 8), ("nlw", 4), ("plat", 2)])
+    async def test_第一页有效(self, fake_bot, group_event, name, pages):
+        table = {"gddl": helpmod.REF_GDDL, "nlw": helpmod.REF_NLW,
+                 "plat": helpmod.REF_PDIFF}[name]
+        text = await _refs(fake_bot, group_event, f"{name} 1")
+        assert text == table[0] + helpmod.pagehint(1, pages)
+
+    async def test_多个0也被拒绝(self, fake_bot, group_event):
+        """"00".isdigit() 同样是 True"""
+        assert "你输入的页码数超出范围（共8页" in await _refs(fake_bot, group_event, "gddl 00")
 
     async def test_不给页码默认第一页(self, fake_bot, group_event):
         assert await _refs(fake_bot, group_event, "gddl") == helpmod.REF_GDDL[
             0
         ] + helpmod.pagehint(1, 8)
 
-    @pytest.mark.parametrize("bad", ["-1", "abc", "1.5"])
+    @pytest.mark.parametrize("bad", ["-1", "-8", "abc", "1.5"])
     async def test_页码不是数字就当第一页(self, fake_bot, group_event, bad):
+        """负号和小数点都过不了 isdigit()，跟乱输一样退回第一页（不是报错）"""
         assert await _refs(fake_bot, group_event, f"gddl {bad}") == helpmod.REF_GDDL[
             0
         ] + helpmod.pagehint(1, 8)
-
-    async def test_页码0会翻到最后一页_疑似bug(self, fake_bot, group_event):
-        """"0".isdigit() 是 True，page=0 通过了 `page > len` 的检查，
-        然后 REF_GDDL[0-1] 取到的是最后一页，提示语还写着「第0页」。
-        看着不对：应该和超范围一样给错误提示。"""
-        text = await _refs(fake_bot, group_event, "gddl 0")
-        assert text == helpmod.REF_GDDL[-1] + helpmod.pagehint(0, 8)
-        assert "当前处于第0页，共8页" in text
 
     @pytest.mark.parametrize(
         ("name", "table_attr"),

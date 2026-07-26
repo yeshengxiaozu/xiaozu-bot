@@ -1467,16 +1467,79 @@ class TestFormatLevelLine:
 
         assert fullsearch.format_level_line(10, level).startswith("10. X ")
 
-    def test_ten_star_level_without_demon_difficulty_duplicates_the_prefix(self) -> None:
-        """⚠️ 看起来是 bug：stars>=10 但没有 demon_difficulty 时，
-        difficulty_label() 已经返回了 "10⭐demon"，format_level_line 又补一次前缀，
-        结果是 "10⭐10⭐demon"。这里记录现状，见返回值里的说明。
+    def test_ten_star_level_without_demon_difficulty_keeps_one_prefix(self) -> None:
+        """stars>=10 但没有 demon_difficulty 时 difficulty_label() 兜底返回 "10⭐demon"，
+        自己就带了星数，format_level_line 不能再补一次（以前是 "10⭐10⭐demon"）。
         """
         level = _gd_level(
             level_id=1, level_name="X", stars=10, length=3, demon_difficulty=None
         )
 
-        assert fullsearch.format_level_line(1, level) == "1. X 10⭐10⭐demon (ID: 1)"
+        assert fullsearch.format_level_line(1, level) == "1. X 10⭐demon (ID: 1)"
+
+    def test_plat_without_demon_difficulty_keeps_one_prefix(self) -> None:
+        """plat 也一样不重复。兜底串是 gdapi 硬编码的 "10⭐demon"（星号不是月亮），
+        那是 difficulty_label() 自己的小瑕疵，这里只保证不再翻倍。
+        """
+        level = _gd_level(
+            level_id=1, level_name="X", stars=10, length=5, demon_difficulty=None
+        )
+
+        assert fullsearch.format_level_line(1, level) == "1. X 10⭐demon (ID: 1)"
+
+    def test_stars_above_ten_without_demon_difficulty_keeps_one_prefix(self) -> None:
+        """星数大于 10 时也不能补前缀，否则会出现 "11⭐10⭐demon" 这种自相矛盾的串"""
+        level = _gd_level(
+            level_id=1, level_name="X", stars=11, length=3, demon_difficulty=None
+        )
+
+        assert fullsearch.format_level_line(1, level) == "1. X 10⭐demon (ID: 1)"
+
+    @pytest.mark.parametrize(
+        ("stars", "expected"),
+        [
+            (0, "Unrated"),
+            (1, "1⭐auto"),
+            (2, "2⭐easy"),
+            (3, "3⭐normal"),
+            (4, "4⭐hard"),
+            (5, "5⭐hard"),
+            (6, "6⭐harder"),
+            (7, "7⭐harder"),
+            (8, "8⭐insane"),
+            (9, "9⭐insane"),
+        ],
+    )
+    def test_below_ten_stars_never_gets_an_extra_prefix(self, stars: int, expected: str) -> None:
+        """difficulty_label() 在 10 星以下已经把星数写进去了，这里一个字都不该加"""
+        level = _gd_level(level_id=1, level_name="X", stars=stars, length=3)
+
+        assert fullsearch.format_level_line(1, level) == f"1. X {expected} (ID: 1)"
+
+    @pytest.mark.parametrize(
+        ("demon_difficulty", "expected"),
+        [
+            (0, "10⭐Hard Demon"),
+            (3, "10⭐Easy Demon"),
+            (4, "10⭐Medium Demon"),
+            (5, "10⭐Insane Demon"),
+            (6, "10⭐Extreme Demon"),
+        ],
+    )
+    def test_demon_labels_all_get_exactly_one_prefix(
+        self, demon_difficulty: int, expected: str
+    ) -> None:
+        """有 demon_difficulty 的那一支返回纯文字（"Extreme Demon"），星数得这里补"""
+        level = _gd_level(
+            level_id=1,
+            level_name="X",
+            stars=10,
+            length=3,
+            is_demon=True,
+            demon_difficulty=demon_difficulty,
+        )
+
+        assert fullsearch.format_level_line(1, level) == f"1. X {expected} (ID: 1)"
 
     def test_line_built_from_a_real_server_response(self) -> None:
         """用真的服务器 key:value 串解析出来的关卡也排得对"""

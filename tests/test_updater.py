@@ -2322,6 +2322,22 @@ class TestEnrichLevelsWithIds:
 # ==========================================================================
 # jobs/getmetadata.py
 # ==========================================================================
+@pytest.fixture
+def gm_data_dir(
+    data_dirs: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> SimpleNamespace:
+    """在 data_dirs 之上，把 getmetadata.DATA_DIR 也指到 tmp_path。
+
+    getmetadata 是 `from ..paths import DATA_DIR` 直接把**值**拿过来的，
+    import 期就绑死了 —— 和 staged / staged_or_published 那种"运行时读
+    paths 模块全局"的函数不一样，data_dirs 里改 paths.DATA_DIR 到不了它这。
+    不单独指过来的话，enrich 的 cache_dir 会是仓库里真的 data/，
+    测试会往仓库写 metadata.json。（jobs/platapi.py 也是同样的写法。）
+    """
+    monkeypatch.setattr(getmetadata, "DATA_DIR", data_dirs.data)
+    return data_dirs
+
+
 class TestGetMetadata:
     def test_load_json_file_读得回来(self, tmp_path: Path) -> None:
         p = _write_json(tmp_path / "a.json", {"levels": [1, 2]})
@@ -2343,21 +2359,98 @@ class TestGetMetadata:
         assert "中文关卡" in raw  # ensure_ascii=False
         assert json.loads(raw) == {"name": "中文关卡"}
 
-    def test_main_因为_DATA_DIR_没_import_直接_NameError(
-        self, data_dirs: SimpleNamespace
-    ) -> None:
-        """⚠️ 生产 bug 存档（严重）：getmetadata 只 import 了 staged /
+    def test_DATA_DIR_确实从_paths_import_进来了(self) -> None:
+        """回归守卫：以前只 import 了 staged / staged_or_published，
 
-        staged_or_published，却在 main() 里用了 DATA_DIR，第一行 logger.info
-        就 NameError。而 getmetadata 是 runner STAGES 第二层的 job，
-        `stop_on_error=True` 下它一挂 -> results['failed'] 非空 ->
-        run_all_async 抛 RuntimeError -> **publish() 永远不会被调到**，
-        也就是说整条流水线目前一次都发布不出去。
-
-        这里锁的是当前实际行为；bug 修好之后这个用例应当改成断言正常返回。
+        main() 里却用 DATA_DIR，第一行 logger.info 就 NameError。而
+        getmetadata 是 runner STAGES 第二层的 job，`stop_on_error=True` 下
+        它一挂 -> results['failed'] 非空 -> run_all_async 抛 RuntimeError
+        -> publish() 根本轮不到，整条流水线一次都发布不出去。
         """
-        with pytest.raises(NameError, match="DATA_DIR"):
-            getmetadata.main()
+        assert getmetadata.DATA_DIR == paths.DATA_DIR
+
+    def test_main_补完_metadata_写回_staging(
+        self, gm_data_dir: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """四个数据源都补上 id，并且写回的是 staging 而不是 data/。"""
+        seen: list[tuple[int, Path]] = []
+
+        def fake_enrich(levels: list[dict], cache_dir: Path, **kw: Any) -> None:
+            seen.append((len(levels), Path(cache_dir)))
+            for i, lv in enumerate(levels):
+                lv["id"] = 1000 + i
+
+        monkeypatch.setattr(getmetadata, "enrich_levels_with_ids", fake_enrich)
+
+        sources = ["nlw_levels.json", "ids_levels.json", "lw_levels.json", "hds_levels.json"]
+        for name in sources:
+            _write_json(
+                gm_data_dir.staging / name,
+                {"levels": [{"name": name, "creator": "Someone"}]},
+            )
+
+        getmetadata.main()
+
+        # 每个数据源各补一次，cache_dir 一律是 DATA_DIR（metadata.json 跨次复用，不发布）
+        assert seen == [(1, gm_data_dir.data)] * 4
+        for name in sources:
+            assert _read_json(gm_data_dir.staging / name)["levels"][0]["id"] == 1000
+            # 绝不能直接写进 data/ —— 那是 runner publish() 的活
+            assert not (gm_data_dir.data / name).exists()
+
+    def test_main_读不到_staging_就退回上一次发布的(
+        self, gm_data_dir: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """staging 里没有的那份，从 data/ 读，补完之后写到 staging。"""
+        monkeypatch.setattr(
+            getmetadata,
+            "enrich_levels_with_ids",
+            lambda levels, cache_dir, **kw: [lv.__setitem__("id", 7) for lv in levels],
+        )
+        _write_json(
+            gm_data_dir.data / "ids_levels.json",
+            {"levels": [{"name": "Acheron", "creator": "Someone"}]},
+        )
+
+        getmetadata.main()
+
+        assert _read_json(gm_data_dir.staging / "ids_levels.json")["levels"][0]["id"] == 7
+        # 上一次发布的那份原地没动
+        assert "id" not in _read_json(gm_data_dir.data / "ids_levels.json")["levels"][0]
+
+    def test_main_一个数据源都没读到就直接返回(
+        self, gm_data_dir: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        called: list[int] = []
+        monkeypatch.setattr(
+            getmetadata,
+            "enrich_levels_with_ids",
+            lambda *a, **kw: called.append(1),
+        )
+
+        getmetadata.main()  # 不该抛
+
+        assert called == []
+        assert list(gm_data_dir.staging.iterdir()) == []
+
+    def test_test_函数也能跑起来(
+        self, gm_data_dir: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """同文件里的 test() 用的是同一批名字，以前也一样 NameError。"""
+        seen: list[Path] = []
+        monkeypatch.setattr(
+            getmetadata,
+            "enrich_levels_with_ids",
+            lambda levels, cache_dir, **kw: seen.append(Path(cache_dir)),
+        )
+        _write_json(
+            gm_data_dir.staging / "ids_levels.json",
+            {"levels": [{"name": "Acheron", "creator": "Someone"}]},
+        )
+
+        getmetadata.test()
+
+        assert seen == [gm_data_dir.data]
 
 
 # ==========================================================================
@@ -2551,34 +2644,71 @@ class TestDailyUpdateJob:
 
 
 class TestSetupUpdaterSslPatch:
-    """⚠️ BUG：setup_updater() 把 ssl._create_default_https_context 改成了实例而不是工厂
+    """setup_updater() 往 ssl._create_default_https_context 上挂 certifi 的 CA。
 
-    updater/__init__.py:18 写的是
-
-        ssl._create_default_https_context = ssl.create_default_context(cafile=certifi.where())
-
-    右边是**调用结果**（一个 SSLContext 实例），但标准库把这个名字当**工厂函数**用：
-    http.client.HTTPSConnection.__init__ 里是 `context = ssl._create_default_https_context()`。
-    于是这个模块一被 import（bot 启动时 gdlevelsearch/__init__.py 就会 import 它），
-    整个进程里任何不显式传 context 的 HTTPS 连接都会炸 TypeError。
+    标准库把这个名字当**工厂函数**用：http.client.HTTPSConnection.__init__ 里是
+    `context = ssl._create_default_https_context()`。所以只能挂可调用对象。
+    以前这里挂的是 `ssl.create_default_context(cafile=...)` 的**返回值**（一个
+    SSLContext 实例），于是这个模块一被 import（bot 启动时 gdlevelsearch/__init__.py
+    就会 import 它），整个进程里任何不显式传 context 的 HTTPS 连接都炸 TypeError。
 
     requests/urllib3 自己建 context，所以没受影响 —— 这也是它一直没被发现的原因。
     真正会踩到的是 urllib.request.urlopen("https://...")、httplib2
     （google-api-python-client 用的就是它）这类走标准库默认 context 的调用方。
-
-    作者的本意应该是 `lambda: ssl.create_default_context(cafile=certifi.where())`
-    或者 functools.partial。这里按「当前真实行为」钉住，改好之后这个用例要跟着改。
     """
 
-    def test_被换成了_SSLContext_实例而不是可调用工厂(self) -> None:
+    def test_挂上去的是工厂而不是_SSLContext_实例(self) -> None:
         import ssl
 
         # import updater_pkg 时 setup_updater() 已经跑过了
-        assert isinstance(ssl._create_default_https_context, ssl.SSLContext)
-        assert not callable(ssl._create_default_https_context)
+        assert callable(ssl._create_default_https_context)
+        assert not isinstance(ssl._create_default_https_context, ssl.SSLContext)
+        assert isinstance(ssl._create_default_https_context(), ssl.SSLContext)
 
-    def test_导致标准库建_HTTPS_连接直接_TypeError(self) -> None:
+    def test_每次调用给一个新的_context(self) -> None:
+        """标准库拿到 context 之后会就地改它（set_alpn_protocols /
+
+        post_handshake_auth），共用同一个实例的话连接之间会互相串。
+        """
+        import ssl
+
+        assert (
+            ssl._create_default_https_context()
+            is not ssl._create_default_https_context()
+        )
+
+    def test_建出来的_context_用的是_certifi_的_CA_且开着校验(self) -> None:
+        import ssl
+
+        ctx = ssl._create_default_https_context()
+
+        assert ctx.verify_mode == ssl.CERT_REQUIRED
+        assert ctx.check_hostname is True
+        # certifi 那份 CA bundle 确实装进去了
+        assert ctx.cert_store_stats()["x509_ca"] > 0
+
+    def test_标准库建_HTTPS_连接不再_TypeError(self) -> None:
         import http.client
+        import ssl
 
-        with pytest.raises(TypeError, match="not callable"):
-            http.client.HTTPSConnection("example.invalid", 443)
+        # 只构造不连接：conftest 的守卫封的是 connect，构造本身不出网
+        conn = http.client.HTTPSConnection("example.invalid", 443)
+
+        assert conn._context.verify_mode == ssl.CERT_REQUIRED
+
+    def test_setup_updater_可以重复调用(
+        self, data_dirs: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """import 期已经调过一次；再调一次不该把工厂降级成实例。
+
+        带上 data_dirs：setup_updater 里会 ensure_dirs()，不重定向的话
+        会在仓库里真的建出 data/.staging。
+        """
+        import ssl
+
+        monkeypatch.setattr(ssl, "_create_default_https_context", ssl.create_default_context)
+
+        updater_pkg.setup_updater()
+
+        assert callable(ssl._create_default_https_context)
+        assert isinstance(ssl._create_default_https_context(), ssl.SSLContext)

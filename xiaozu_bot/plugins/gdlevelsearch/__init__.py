@@ -112,6 +112,11 @@ def _add_search_result(  # noqa: PLR0913
             item.creator = creator
         if not item.tier and tier:
             item.tier = tier
+        # difficulty 和上面两个一样只补空的：先到的源（GDDL）给的值更权威，
+        # 后到的源不许覆盖。漏掉这条的话缺 difficulty 的条目会被 *gdsearch
+        # 拿去挨个打 gdapi。
+        if not item.difficulty and difficulty:
+            item.difficulty = difficulty
         return
     results[level_id] = SearchResult(level_id, name, creator, tier, difficulty)
 
@@ -149,8 +154,9 @@ def search_by_name(name: str) -> list[SearchResult]:
             getattr(level, "creator", None),
             None,
         )
-        logger.info(f"Find a result in {level.source}: " +
-                    str(level.tier) or "Unknown" + " Tier")
+        # 原来是 "..." + str(tier) or "Unknown" + " Tier"，+ 比 or 结合得紧，
+        # 左边永远非空，or 那一支是死代码，tier 为空时印的是字面量 "None"
+        logger.info(f"Find a result in {level.source}: {level.tier or 'Unknown'} Tier")
 
     # 4) Platdata exact match
     plat_info = Platapi.getlevelbyname(name)

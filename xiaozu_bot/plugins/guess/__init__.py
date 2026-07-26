@@ -9,7 +9,7 @@ from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageStat
 
 from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
@@ -83,28 +83,14 @@ def getid(event: Union[GroupMessageEvent,PrivateMessageEvent]) -> str:
     return "g" + str(event.group_id)
 
 def get_variance(image) -> tuple[float,float,float]:  # noqa: ANN001
-    pixels = image.getdata()
-    num_pixels = len(pixels)
-    red_sum = red_square_sum = 0
-    green_sum = green_square_sum = 0
-    blue_sum = blue_square_sum = 0
-    for p in pixels:
-        red_sum = red_sum + p[0]
-        red_square_sum = red_square_sum + p[0]**2
-        green_sum = green_sum + p[1]
-        green_square_sum = green_square_sum + p[1]**2
-        blue_sum = blue_sum + p[2]
-        blue_square_sum = blue_square_sum + p[2]**2
-    expect_red = red_sum / num_pixels
-    expect_red_square = red_square_sum / num_pixels
-    expect_green = green_sum / num_pixels
-    expect_green_square = green_square_sum / num_pixels
-    expect_blue = blue_sum / num_pixels
-    expect_blue_square = blue_square_sum / num_pixels
-    red_variance = expect_red_square - expect_red ** 2
-    green_variance = expect_green_square - expect_green ** 2
-    blue_variance = expect_blue_square - expect_blue ** 2
-    return (red_variance, green_variance, blue_variance)
+    # 原来是 image.getdata() 逐像素手算 E[x²]-E[x]²。Pillow 12 把 getdata()
+    # 标成了废弃（Pillow 14 移除），而 pytest 那边配了
+    # `error::DeprecationWarning:xiaozu_bot`，于是一升 Pillow 就全挂。
+    # ImageStat 从 Pillow 1.x 就有，走的是 C 实现的直方图，算的是同一个方差；
+    # 实测在插件真正会喂进来的裁剪块（边长 64/128/256，像素数是 2 的幂）上
+    # 两种算法逐位相等。前三个波段就是 RGB，RGBA 的 alpha 和以前一样忽略。
+    red, green, blue = ImageStat.Stat(image).var[:3]
+    return (red, green, blue)
 
 async def _list_files(folder_path: Path) -> list[str]:
     """异步获取文件夹下所有文件的名称列表"""
@@ -113,6 +99,37 @@ async def _list_files(folder_path: Path) -> list[str]:
             return []
         return [f.name for f in folder_path.iterdir() if f.is_file()]
     return await asyncio.to_thread(sync_list)
+
+
+async def _pick_random_shot(matcher: Union[Matcher, type[Matcher]]) -> tuple[dict, Path]:
+    """随机挑一张题图，返回 (那一条 map 记录, 图片完整路径)。
+
+    **无放回**地过一遍 maps：抽中的目录空着就换下一条，122 条全都空才算题库是空的。
+
+    原来是 `while not file_names` 无限重试，题库整个空着（干净 clone 就是这个状态）
+    时就是个死循环 —— 循环体里只 await 了 to_thread，不抛异常也不超时，
+    *guess_start 会把整个事件循环拖住。
+    但改成「有放回地抽固定次数」同样不行：那样只是把死循环换成了概率性误判，
+    122 条里只剩少数几条有图时会把「没抽中」当成「题库是空的」报出去
+    （只剩 1 条时误报率 (121/122)**50 ≈ 66%，只剩 5 条也还有 12%），
+    而题库是一张一张截出来的，「只填了一部分」恰恰是它平时的状态。
+    无放回就没有这个问题：报出去的「空」是真的空，最坏情况也只是多几毫秒 iterdir。
+    """
+    # 目录不存在和目录空着在 _list_files 里都是返回 []，这里一视同仁
+    for map_info in random.sample(maps, len(maps)):
+        folder_path = DATA_DIR / map_info["file_path"]
+        file_names = await _list_files(folder_path)
+        if file_names:
+            return map_info, folder_path / random.choice(file_names)
+
+    await matcher.finish(
+        "题库是空的！xiaozu_bot/plugins/guess/data/ 下一张截图都没有，先把题库补上再来。"
+    )
+    # finish() 必定抛 FinishedException，正常走不到这行。
+    # 写出来是让「要么返回二元组、要么抛异常」对静态检查和两个调用方都成立
+    # ——否则哪天 finish 被 stub 成不抛异常，调用方会在解包处炸得莫名其妙。
+    raise AssertionError("matcher.finish() 应该已经抛出 FinishedException")
+
 
 def isnonsense(image: Image.Image) -> bool:
     return sum(get_variance(image)) < NOISE_THRESHOLD
@@ -166,21 +183,12 @@ async def guessstart(
 ) -> None:
     session_id = getid(event)
     crop_width, crop_height = crop_size
-    file_names: list[str] = []
-    folder_path = Path()
-    map_info = None
 
-    while not file_names or not map_info:
-        map_info = random.choice(maps)
-        folder_path = DATA_DIR / map_info["file_path"]
-        file_names = await _list_files(folder_path)
-
-    file_name = random.choice(file_names)
-    image_path = folder_path / file_name
+    map_info, image_path = await _pick_random_shot(matcher)
     answer = map_info["answer"]
 
-    # 裁图 + 去噪判定是纯 CPU 活：get_variance 是 Python 循环，
-    # 一张 256x256 就是六万多像素，最多还要重试 20 次。
+    # 裁图 + 去噪判定是纯 CPU 活：一张 256x256 就是六万多像素，
+    # 每次都要过一遍直方图，最多还要重试 20 次。
     # 放在事件循环里跑会让整个 bot 卡住，丢线程池。
     cropped_path = PICTURES_DIR / f"{session_id}.png"
     left, top, right, bottom = await asyncio.to_thread(
@@ -328,14 +336,7 @@ async def handle_guess_count() -> None:
 @guess_test.handle()
 async def handle_guess_test() -> None:
     for _ in range(5):
-        file_names: list[str] = []
-        while not file_names:
-            map_info = random.choice(maps)
-            folder_path = DATA_DIR / map_info["file_path"]
-            file_names = await _list_files(folder_path)
-
-        file_name = random.choice(file_names)
-        image_path = folder_path / file_name # type: ignore  # noqa: PGH003
+        _, image_path = await _pick_random_shot(guess_test)
         image = Image.open(image_path)
         width, height = image.size
         left = random.randint(0, width - crop_width)

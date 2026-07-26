@@ -106,22 +106,18 @@ class TestThumbnailIdFor:
     def test_everything_else_is_just_str(self, level_id: int) -> None:
         assert _thumbnail_id_for(level_id) == str(level_id)
 
-    @pytest.mark.parametrize(
-        ("level_id", "expected"),
-        [(-1, "20"), (-2, "18"), (-3, "14"), (-4, "0")],
-    )
-    def test_negative_ids_index_from_the_end(self, level_id: int, expected: str) -> None:
-        """⚠️ BUG：守卫写的是 `level_id <= 3`，负数也满足，于是从表尾倒着取
+    @pytest.mark.parametrize("level_id", [-1, -2, -3, -4])
+    def test_negative_ids_do_not_index_from_the_end(self, level_id: int) -> None:
+        """守卫带下界，负数不再从表尾倒着取
 
-        -1 会拿到 "20"（本该是官方第 4 关的缩略图），静默给出一张错图，
-        不会抛异常。守卫应该是 `0 <= level_id <= 3`。
+        以前守卫是 `level_id <= 3`，负数也满足，-1 会静默拿到 "20"
+        （官方第 4 关的缩略图）。现在和其他表外 id 一样原样转字符串。
         """
-        assert _thumbnail_id_for(level_id) == expected
+        assert _thumbnail_id_for(level_id) == str(level_id)
 
-    def test_id_below_minus_four_raises_indexerror(self) -> None:
-        """同一个洞再往下走一步就不是静默错图而是直接崩了"""
-        with pytest.raises(IndexError):
-            _thumbnail_id_for(-5)
+    def test_id_below_minus_four_no_longer_raises(self) -> None:
+        """同一个洞再往下走一步以前是直接 IndexError，现在也只是普通表外 id"""
+        assert _thumbnail_id_for(-5) == "-5"
 
 
 # ==========================================================================
@@ -154,21 +150,55 @@ class TestWrapTextByWidth:
     def test_newlines_split_paragraphs(self) -> None:
         assert wrap_text_by_width("ab\ncd", 100, MonoFont()) == ["ab", "cd"]
 
-    def test_blank_paragraphs_are_dropped(self) -> None:
-        """⚠️ 空行会被吃掉：'ab\\n\\ncd' 出来只有两行，排版上那个空行就没了"""
-        assert wrap_text_by_width("ab\n\ncd", 100, MonoFont()) == ["ab", "cd"]
+    def test_blank_paragraphs_are_preserved(self) -> None:
+        """空行要留住：以前 'ab\\n\\ncd' 只出两行，段间那个视觉间隔就没了"""
+        assert wrap_text_by_width("ab\n\ncd", 100, MonoFont()) == ["ab", "", "cd"]
+
+    def test_consecutive_blank_lines_are_all_kept(self) -> None:
+        """连着几条空行就是几条，不合并"""
+        assert wrap_text_by_width("ab\n\n\ncd", 100, MonoFont()) == ["ab", "", "", "cd"]
+
+    def test_leading_and_trailing_blank_lines_are_kept_too(self) -> None:
+        """首尾的空行也照留 —— 是调用方自己写进 text 里的"""
+        assert wrap_text_by_width("\nab\n", 100, MonoFont()) == ["", "ab", ""]
+
+    def test_whitespace_only_line_counts_as_blank(self) -> None:
+        """只含空格的行画出来也是一条空行，按空行处理（而不是被静默丢掉）"""
+        assert wrap_text_by_width("ab\n   \ncd", 100, MonoFont()) == ["ab", "", "cd"]
+
+    def test_detail_text_shape_keeps_its_section_gaps(self) -> None:
+        """draw.py:521 唯一的调用方就是这个形状：detail_text 用 '\\n\\n' 分段"""
+        text = "Description: x\n\nAREDL Description: y"
+        assert wrap_text_by_width(text, 1000, MonoFont(1)) == [
+            "Description: x",
+            "",
+            "AREDL Description: y",
+        ]
 
     def test_runs_of_spaces_collapse(self) -> None:
-        """`f"{cur} {word}".strip()` 会把连续空格压成一个"""
+        """连续空格压成一个 —— 这是有意的，不是 bug（见函数 docstring）
+
+        `f"{cur} {word}".strip()` 顺带做了这件事：断行后行首/行尾要是留着
+        空格，画出来就是一段看不见的缩进，行与行对不齐。
+        """
         assert wrap_text_by_width("a  b", 100, MonoFont()) == ["a b"]
 
-    def test_width_smaller_than_one_character_emits_a_leading_empty_line(self) -> None:
-        """⚠️ BUG：连一个字符都放不下时，第一次 append 的 sub_line 还是空串
+    def test_width_smaller_than_one_character_emits_no_empty_line(self) -> None:
+        """连一个字符都放不下时不能吐空行
 
-        逐字符分支里 `result.append(sub_line)` 没判空，于是结果里混进一个 ""。
-        排版时就是一行看不见的空行。
+        逐字符分支里第一次 append 的 sub_line 还是空串，以前没判空，
+        结果里就混进一个 ""，排版时是一行看不见的空行。
+        每行只放得下一个字符（必然溢出）是这种宽度下唯一能做的。
         """
-        assert wrap_text_by_width("ab", 5, MonoFont(10)) == ["", "a", "b"]
+        assert wrap_text_by_width("ab", 5, MonoFont(10)) == ["a", "b"]
+
+    def test_width_zero_still_emits_one_character_per_line(self) -> None:
+        """max_width=0 是极端退化输入，同样不能出空行、不能丢字符"""
+        assert wrap_text_by_width("abc", 0, MonoFont(10)) == ["a", "b", "c"]
+
+    def test_blank_line_fix_does_not_resurrect_the_empty_string_case(self) -> None:
+        """保空行不等于空串也出一行：整段没内容还是 []"""
+        assert wrap_text_by_width("", 100, MonoFont()) == []
 
     def test_only_getbbox_is_ever_asked(self) -> None:
         """算宽只用 getbbox，没有偷偷调 getlength / getsize 之类"""
@@ -222,10 +252,36 @@ class TestCreateVerticalGradient:
             row = {img.getpixel((x, y)) for x in range(4)}
             assert len(row) == 1
 
-    def test_height_one_divides_by_zero(self) -> None:
-        """⚠️ BUG：`t = i / (h - 1)`，高度为 1 时直接 ZeroDivisionError"""
-        with pytest.raises(ZeroDivisionError):
-            create_vertical_gradient((4, 1), (0, 0, 0), (255, 255, 255))
+    def test_height_one_is_a_solid_top_colour(self) -> None:
+        """高度 1 以前是 ZeroDivisionError（`t = i / (h - 1)`）
+
+        现在取顶色：任何高度下第 0 行都是顶色，1 px 高就是「只剩第 0 行」。
+        """
+        img = create_vertical_gradient((4, 1), (10, 20, 30), (200, 100, 50))
+        assert img.size == (4, 1)
+        assert {img.getpixel((x, 0)) for x in range(4)} == {(10, 20, 30)}
+
+    def test_height_zero_is_an_empty_image(self) -> None:
+        """高度 0 时循环压根不进，出来一张 0 px 高的空图，不该抛"""
+        img = create_vertical_gradient((4, 0), (0, 0, 0), (255, 255, 255))
+        assert img.size == (4, 0)
+
+    def test_width_zero_is_an_empty_image(self) -> None:
+        """宽度 0 同理：PIL 允许 0 px 宽，逐行画线不会炸"""
+        img = create_vertical_gradient((0, 4), (0, 0, 0), (255, 255, 255))
+        assert img.size == (0, 4)
+
+    def test_width_one_still_gradates_vertically(self) -> None:
+        """宽度 1 不是退化情况，纵向该渐变还是得渐变"""
+        img = create_vertical_gradient((1, 3), (0, 0, 0), (100, 200, 255))
+        assert img.getpixel((0, 0)) == (0, 0, 0)
+        assert img.getpixel((0, 1)) == (50, 100, 127)
+        assert img.getpixel((0, 2)) == (100, 200, 255)
+
+    def test_negative_size_is_rejected_by_pil(self) -> None:
+        """负数尺寸不用我们自己判，Image.new 会先抛 ValueError"""
+        with pytest.raises(ValueError):
+            create_vertical_gradient((4, -1), (0, 0, 0), (255, 255, 255))
 
 
 # ==========================================================================

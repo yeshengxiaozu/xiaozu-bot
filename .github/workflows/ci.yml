@@ -83,11 +83,9 @@ jobs:
     name: 测试 (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     # 装依赖 + 跑完全量实测两三分钟，20 分钟已经很宽裕了。
-    # 特意加这个上限是因为仓库里确实有一条会「转而不是挂」的生产代码路径：
-    # guess 的 `while not file_names` 在题库目录为空时是死循环
-    # （见 tests/test_small_plugins.py::TestGuessStart 那条用例的说明），
-    # 而干净 checkout 恰好就是没有题库的状态。现在没有用例会走到那里，
-    # 但真有一天走到了，我们要的是 20 分钟后红掉，不是 6 小时后。
+    # 加这个上限是因为「转而不是挂」的代码路径最难查：guess 的题库轮询以前
+    # 在题库目录为空（也就是干净 checkout）时是死循环，现在已经改成有上限了，
+    # 但再冒出一条同类的，我们要的是 20 分钟后红掉，不是 6 小时后。
     timeout-minutes: 20
     strategy:
       # 一个版本挂了，别把其他版本的结果一起掐掉 —— 不然看不出是普遍问题
@@ -127,35 +125,24 @@ jobs:
       #    （搬家脚本坏了得有人知道），所以这里显式装上。
       #    换句话说：装它是为了多测一点，不是为了绕过什么。
       #
-      # 3. `"pillow<12"` —— 见下面一大段注释，是绕过一个生产代码里的兼容性问题。
-      #
-      # 4. 测试工具单独列，**没有**用 `.[dev]`：dev extra 里有 `pyright[nodejs]`，
+      # 3. 测试工具单独列，**没有**用 `.[dev]`：dev extra 里有 `pyright[nodejs]`，
       #    会顺带拖一整个 Node 运行时下来，而这个工作流根本不跑类型检查。
       #
-      # 5. **没装** `[tts]`：里面的 mlx-audio 只有 Apple Silicon 的包，
+      # 4. **没装** `[tts]`：里面的 mlx-audio 只有 Apple Silicon 的包，
       #    Linux runner 上装不上。say 插件是在 handler 里才 import 它的，
       #    不装不影响任何插件加载，也不影响测试。
+      #
+      # 5. pillow **不钉版本**，跟着 pyproject 的 `pillow>=10.0.0` 走。
+      #    这里以前钉着 `pillow<12`，因为 guess 的 get_variance() 用了
+      #    Pillow 12 才标废弃的 image.getdata()，撞上 pytest 的
+      #    `error::DeprecationWarning:xiaozu_bot` 会挂 19 个用例。
+      #    现在 get_variance() 改成 ImageStat 了，装最新的 Pillow 就行 ——
+      #    CI 装的依赖集必须和用户实际装到的一样，否则测了个寂寞。
       # ------------------------------------------------------------------
-      #
-      # 关于 pillow<12：
-      #   xiaozu_bot/plugins/guess/__init__.py:86 的 get_variance() 调了
-      #   `image.getdata()`。Pillow 12 把 Image.Image.getdata 标成了废弃
-      #   （"will be removed in Pillow 14"，替代品是 get_flattened_data）。
-      #   而 pyproject 的 [tool.pytest.ini_options] 里有
-      #   `filterwarnings = [..., "error::DeprecationWarning:xiaozu_bot", ...]`,
-      #   Pillow 发这个 warning 用的 stacklevel 正好指回调用方 xiaozu_bot，
-      #   于是命中规则被升级成异常 —— tests/test_small_plugins.py 里
-      #   TestGuessVariance / TestGuessCropAndSave / TestGuessStart 一共 19 个
-      #   用例全挂。pyproject 写的是 `pillow>=10.0.0`（没有上界），本地开发机
-      #   多半还停在 Pillow 11，所以这是典型的「本地绿、CI 红」。
-      #
-      #   正确的修法在生产代码那边：把 getdata() 换成 get_flattened_data()
-      #   （或者用 numpy / ImageStat 算方差）。改完就把下面这个 <12 删掉。
-      #   在那之前先钉住，免得 CI 第一天就是红的。
       - name: 装依赖
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[migrate]" "pillow<12" \
+          python -m pip install -e ".[migrate]" \
             pytest pytest-asyncio pytest-cov
 
       - name: 记一下实际装了什么版本

@@ -173,7 +173,10 @@ def create_vertical_gradient(size: tuple[int,int], top_color: tuple[int,int,int]
     tr, tg, tb = top_color
     br, bg, bb = bottom_color
     for i in range(h):
-        t = i / (h - 1)
+        # 高度为 1 时没有插值区间（h-1 == 0），取顶色 —— 任何高度下第 0 行都是顶色，
+        # 1 px 高的渐变就是「只剩第 0 行」。高度为 0 时循环压根不进，宽度 0 / 负数
+        # 由上面的 Image.new 自己管（负数它会抛 ValueError）。
+        t = i / (h - 1) if h > 1 else 0.0
         r = int(tr + (br - tr) * t)
         g = int(tg + (bg - tg) * t)
         b = int(tb + (bb - tb) * t)
@@ -181,10 +184,27 @@ def create_vertical_gradient(size: tuple[int,int], top_color: tuple[int,int,int]
     return grad
 
 
-def wrap_text_by_width(text: str, max_width: int, font: ImageFont.FreeTypeFont) -> list:
+def wrap_text_by_width(text: str, max_width: int, font: ImageFont.FreeTypeFont) -> list:  # noqa: C901, PLR0912
+    """按像素宽度贪心断行，返回逐行文本。
+
+    几条约定，改之前先看清楚（侧边栏排版全靠它）：
+
+    - 空行会保留成一条空行。调用方的 detail_text 是用 "\\n\\n" 分段的，
+      那条空行就是段与段之间的视觉间隔，吞掉的话几段描述会糊在一起。
+      只含空格的行同样算空行。整个 text 是空串时返回 []（没内容就没行）。
+    - 连续空格会被压成一个，这是有意的：断行以后行首/行尾留着空格，
+      画出来就是一段看不见的缩进，行与行对不齐。
+    - 单个词超过 max_width 时逐字符拆。max_width 连一个字符都放不下时
+      每行只能放一个字符（必然溢出），但不会因此吐出空行。
+    """
+    if not text:
+        return []
     paragraphs = text.split("\n")
     result = []
     for para in paragraphs:
+        if not para.strip():
+            result.append("")
+            continue
         words = para.split(" ")
         current_line = ""
         for word in words:
@@ -202,7 +222,8 @@ def wrap_text_by_width(text: str, max_width: int, font: ImageFont.FreeTypeFont) 
                         if font.getbbox(sub_test)[2] - font.getbbox(sub_test)[0] <= max_width:
                             sub_line = sub_test
                         else:
-                            result.append(sub_line)
+                            if sub_line:  # 宽度连一个字符都放不下时 sub_line 还是空的，别吐空行
+                                result.append(sub_line)
                             sub_line = ch
                     current_line = sub_line
                 else:
@@ -240,7 +261,9 @@ def _thumbnail_id_for(level_id: Optional[int]) -> str:
     """官方前三关在缩略图站上的 id 和关卡 id 不一样，单独映射"""
     if level_id is None:
         return ""
-    if level_id <= 3:  # noqa: PLR2004
+    # 必须带下界：没有下界的话负数会从表尾倒着取（-1 静默拿到别的关的图），
+    # 再小一点直接 IndexError。负数是无意义输入，和其他表外 id 一样原样转字符串。
+    if 0 <= level_id <= 3:  # noqa: PLR2004
         return ["0", "14", "18", "20"][level_id]
     return str(level_id)
 

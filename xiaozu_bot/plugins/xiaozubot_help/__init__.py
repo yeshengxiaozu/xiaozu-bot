@@ -264,13 +264,15 @@ async def handle_references(arg: Message = CommandArg()) -> None:  # noqa: C901
     if name == "aredl":
         await references.finish("AREDL是实时变化的，我不可能给你提供一个不会移动的参照线，建议手动使用*gdsearch搜索知名关的排名")
     elif name == "gddl":
-        if page > len(REF_GDDL):
-            await references.finish(f"你输入的页码数超过了总页数（共{len(REF_GDDL)}页，5个Tier一页），请重试")
+        # 页码是 1 开始的，下界必须挡掉：`"0".isdigit()` 是 True，
+        # 不挡的话 REF_GDDL[0-1] 会翻出最后一页，提示语却写着「第0页」
+        if page < 1 or page > len(REF_GDDL):
+            await references.finish(f"你输入的页码数超出范围（共{len(REF_GDDL)}页，5个Tier一页），请重试")
         else:
             await references.finish(REF_GDDL[page-1] + pagehint(page,len(REF_GDDL)))
     elif name == "nlw":
-        if page > len(REF_NLW):
-            await references.finish(f"你输入的页码数超过了总页数（共{len(REF_NLW)}页），请重试")
+        if page < 1 or page > len(REF_NLW):
+            await references.finish(f"你输入的页码数超出范围（共{len(REF_NLW)}页），请重试")
         else:
             await references.finish(REF_NLW[page-1] + pagehint(page,len(REF_NLW)))
     elif name == "lw":
@@ -280,8 +282,8 @@ async def handle_references(arg: Message = CommandArg()) -> None:  # noqa: C901
     elif name == "hds":
         await references.finish(REF_HDS[0])
     elif name == "plat":
-        if page > len(REF_PDIFF):
-            await references.finish(f"你输入的页码数超过了总页数（共{len(REF_PDIFF)}页），请重试")
+        if page < 1 or page > len(REF_PDIFF):
+            await references.finish(f"你输入的页码数超出范围（共{len(REF_PDIFF)}页），请重试")
         else:
             await references.finish(REF_PDIFF[page-1] + pagehint(page,len(REF_PDIFF)))
 

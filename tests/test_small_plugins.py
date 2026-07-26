@@ -1602,12 +1602,23 @@ class TestGuessVariance:
         assert guess.isnonsense(Image.new("RGB", (4, 4), (200, 200, 200))) is True
 
     def test_grayscale_image_crashes(self):
-        """L 模式的像素是 int 不是三元组，p[0] 直接 TypeError
+        """L 模式只有一个波段，解不出 RGB 三个方差，直接 ValueError
 
         题库里只要混进一张灰度图，*guess_start 就会炸在这里。
+        （以前是逐像素取 p[0] 抛 TypeError，换成 ImageStat 之后变成解包失败。）
         """
-        with pytest.raises(TypeError):
+        with pytest.raises(ValueError, match="unpack"):
             guess.get_variance(Image.new("L", (4, 4), 128))
+
+    def test_alpha_channel_is_ignored(self):
+        """RGBA 只看前三个波段，alpha 再怎么变都不影响判定"""
+        opaque = Image.new("RGBA", (2, 1))
+        opaque.putdata([(0, 0, 0, 255), (20, 40, 60, 255)])
+        transparent = Image.new("RGBA", (2, 1))
+        transparent.putdata([(0, 0, 0, 0), (20, 40, 60, 255)])
+
+        assert guess.get_variance(opaque) == (100.0, 400.0, 900.0)
+        assert guess.get_variance(transparent) == (100.0, 400.0, 900.0)
 
 
 class TestGuessListFiles:
@@ -1844,36 +1855,103 @@ class TestGuessStart:
         assert (pictures_dir / f"{DEFAULT_USER_ID}.png").exists()
         assert store.hget(guess.ANSWER_KEY, str(DEFAULT_USER_ID)) == "假图 Fake Level"
 
-    async def test_missing_question_bank_spins_forever(
+    @staticmethod
+    def _empty_bank(monkeypatch, entries: int = 40) -> list:
+        """把 maps 换成 entries 条全都指向空目录的记录，返回被看过的目录列表。
+
+        目录压根不存在和目录存在但空着，在 `_list_files` 里都是返回 []，
+        这里直接用不存在的路径覆盖两种情况里更常见的那种。
+        """
+        monkeypatch.setattr(
+            guess,
+            "maps",
+            [
+                {"file_path": f"Empty/{i}", "answer": f"空 {i}", "alias": []}
+                for i in range(entries)
+            ],
+        )
+        looked_at: list = []
+        real_list_files = guess._list_files
+
+        async def counting_list_files(folder_path):
+            looked_at.append(folder_path)
+            return await real_list_files(folder_path)
+
+        monkeypatch.setattr(guess, "_list_files", counting_list_files)
+        return looked_at
+
+    async def test_empty_question_bank_finishes_instead_of_spinning(
         self, guess_env, fake_bot, make_group_event, monkeypatch
     ):
-        """BUG：题库目录空的时候 `while not file_names` 是个死循环，永远出不来
+        """题库一张图都没有时要立刻收场，而且只把 maps 扫一遍。
 
-        仓库里题库是打包在 dist.zip 里的，没解压的话 DATA_DIR 下一个文件都没有，
-        *guess_start 会把事件循环卡死（循环体里 await 的是 to_thread，不会抛异常）。
-        这里用一个计数器在转够 30 圈之后强行掀桌，证明它确实不会自己停。
+        以前这里是 `while not file_names` 的死循环 —— 循环体里 await 的是
+        to_thread，不抛异常也不超时，干净 clone 上一发 *guess_start
+        就把整个事件循环卡死。
         """
+        looked_at = self._empty_bank(monkeypatch)
+
+        finished = await run_handler(guess.guess_start, fake_bot, make_group_event())
+
+        assert finished is True
+        assert "题库是空的" in sent_texts(fake_bot)[0]
+        # 无放回：40 条每条恰好看一次，不多不少
+        assert len(looked_at) == len(guess.maps) == 40
+        assert len(set(looked_at)) == 40
+
+    async def test_empty_question_bank_directory_that_exists_but_is_empty(
+        self, guess_env, fake_bot, make_group_event
+    ):
+        """目录在、但里面被清空了，走的也是同一条收场路径"""
         _, data_dir, _ = guess_env
-        # 把题库掏空，模拟 dist.zip 没解压的情况
         for path in (data_dir / "Fake" / "Level").iterdir():
             path.unlink()
 
-        class LoopGuard(Exception):
-            pass
+        finished = await run_handler(guess.guess_start, fake_bot, make_group_event())
 
-        spins = {"n": 0}
+        assert finished is True
+        assert "题库是空的" in sent_texts(fake_bot)[0]
 
-        def counting_choice(seq):
-            spins["n"] += 1
-            if spins["n"] > 30:
-                raise LoopGuard
-            return seq[0]
+    async def test_guess_test_also_finishes_on_empty_bank(
+        self, guess_env, fake_bot, make_group_event, monkeypatch
+    ):
+        """*guess_test 是第二个调用点，当初漏改的就是它。
 
-        monkeypatch.setattr(random, "choice", counting_choice)
+        顺带钉住「把 Matcher 这个类本身传给 _pick_random_shot 也能 finish」
+        ——handle_guess_test 传的是 guess_test 类而不是实例，靠的是
+        `Matcher.finish` 本来就是 classmethod。
+        """
+        looked_at = self._empty_bank(monkeypatch)
 
-        with pytest.raises(LoopGuard):
-            await run_handler(guess.guess_start, fake_bot, make_group_event())
-        assert spins["n"] == 31
+        finished = await run_handler(guess.guess_test, fake_bot, make_group_event())
+
+        assert finished is True
+        assert "题库是空的" in sent_texts(fake_bot)[0]
+        assert len(looked_at) == 40
+
+    async def test_sparse_bank_never_falsely_reports_empty(self, guess_env, monkeypatch):
+        """只填了一小部分的题库必须每次都能挑出题来。
+
+        这就是无放回扫描的意义：中间那版是**有放回**地固定抽 50 次，
+        40 条里只有 1 条有图的话，(39/40)**50 ≈ 28% 的概率会把「没抽中」
+        误报成「题库是空的」。题库是一张一张截出来的，「只填了一部分」
+        恰恰是它平时的状态，所以这个误判会真的发到群里。
+        """
+        _, data_dir, _ = guess_env
+        monkeypatch.setattr(
+            guess,
+            "maps",
+            [
+                {"file_path": f"Empty/{i}", "answer": f"空 {i}", "alias": []}
+                for i in range(39)
+            ]
+            + [{"file_path": "Fake/Level", "answer": "假图 Fake Level", "alias": ["假图"]}],
+        )
+
+        for _ in range(20):
+            map_info, image_path = await guess._pick_random_shot(guess.guess_start)
+            assert map_info["answer"] == "假图 Fake Level"
+            assert image_path == data_dir / "Fake" / "Level" / "shot.png"
 
 
 class TestGuessAnswer:

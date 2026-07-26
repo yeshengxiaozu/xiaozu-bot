@@ -143,10 +143,12 @@ CI 上不装 `[tts]`（mlx-audio 只有 Apple Silicon 的包，Linux runner 装�
 跑一次 `python scripts/run_updater.py` 就有了（见下）。没有这些 json 的话
 搜索不会报错，只是什么都搜不到。
 
-**`xiaozu_bot/plugins/guess/data/`** —— 猜图题库，打包在
-`xiaozu_bot/plugins/guess/dist.zip` 里，解开就行。
-⚠️ 题库为空时 `*guess_start` 会**死循环**（`while not file_names`
-里没有退出条件），务必先解压再用。
+**`xiaozu_bot/plugins/guess/data/`** —— 猜图题库（各地图目录下的截图）。
+⚠️ 这份题库**不在仓库里，也不在 `dist.zip` 里** —— `dist.zip` 装的是
+`setup.txt` / `icon.ico` / `main.exe`，跟题库没关系，以前 README 写「解开就行」
+是错的。题库得自己另外补进 `data/<地图目录>/`。
+没有题库时 `*guess_start` 会回一句「题库是空的」就结束（`_pick_random_shot`
+无放回地把 122 条地图全试一遍才下这个结论），不会像以前那样死循环。
 
 **`xiaozu_bot/plugins/zhua/data/`** —— 抓图图库，没有的话 `*zhua` 抓不到东西。
 
