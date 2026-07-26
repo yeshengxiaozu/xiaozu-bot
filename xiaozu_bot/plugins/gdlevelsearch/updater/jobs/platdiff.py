@@ -7,9 +7,9 @@ from .googlesheetapi import SheetAPI, persistently
 from .constants import PLAT_DIFF_ID, PLAT_DIFF_NAME
 
 try:
-    from ..paths import DATA_DIR
+    from ..paths import DATA_DIR, staged, staged_or_published
 except ImportError:
-    from updater.paths import DATA_DIR
+    from updater.paths import DATA_DIR, staged, staged_or_published
 
 class PlatDiff:
     def __init__(
@@ -143,7 +143,7 @@ def fetch_plat_diff_levels(service, sheet_id: str, sheet_name: str) -> List[Plat
 
 
 def save_plat_diff_cache(entries: List[PlatDiff]) -> None:
-    cache_path = DATA_DIR / 'platdiff.json'
+    cache_path = staged('platdiff.json')
 
     payload = {
         'timestamp': time.time(),
@@ -155,7 +155,7 @@ def save_plat_diff_cache(entries: List[PlatDiff]) -> None:
 
 
 def load_plat_diff_cache() -> List[PlatDiff]:
-    cache_path = DATA_DIR / 'platdiff.json'
+    cache_path = staged_or_published('platdiff.json')
     if not cache_path.exists():
         return []
 

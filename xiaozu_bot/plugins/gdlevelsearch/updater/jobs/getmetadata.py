@@ -5,9 +5,9 @@ from pathlib import Path
 from nonebot import logger
 
 try:
-    from ..paths import DATA_DIR
+    from ..paths import DATA_DIR, staged, staged_or_published
 except ImportError:
-    from updater.paths import DATA_DIR
+    from updater.paths import DATA_DIR, staged, staged_or_published
 
 from .metadata import enrich_levels_with_ids
 
@@ -31,36 +31,44 @@ def save_json_file(filepath, data):
         logger.error(f"[GETMETADATA] 写入缓存失败: {filepath}: {e}")
 
 def test():
-    data = load_json_file(DATA_DIR / "ids_levels.json")
+    data = load_json_file(staged_or_published("ids_levels.json"))
     if data:
         flat_list = data["levels"]
         enrich_levels_with_ids(flat_list, cache_dir=DATA_DIR)
 
 def main():
-    logger.info(f"[GETMETADATA] 开始处理元数据缓存目录: {DATA_DIR}")
-    # 定义要处理的数据源文件
+    """给 nlw/ids/lw/hds 补 metadata。
+
+    读的是 staging 里刚抓下来的那份（没抓到就退回上一次发布的），
+    补完之后写回 staging —— 只有整条流水线都跑完，runner 才会把 staging
+    搬进 DATA_DIR。所以这一步挂了不会让 bot 读到缺 metadata 的数据。
+
+    metadata.json 是跨次运行的缓存，一直放在 DATA_DIR，不参与发布。
+    """
+    logger.info(f"[GETMETADATA] 开始补 metadata，缓存目录: {DATA_DIR}")
     data_sources = ["nlw_levels.json", "ids_levels.json", "lw_levels.json", "hds_levels.json"]
-    cache_dir = DATA_DIR
-    
+
     # 加载所有数据
     all_data = {}
     for source in data_sources:
-        filepath = cache_dir / source
-        data = load_json_file(filepath)
+        data = load_json_file(staged_or_published(source))
         if data:
             logger.info(f"[GETMETADATA] 已加载数据源: {source}")
             all_data[source] = data
-    
+
+    if not all_data:
+        logger.warning("[GETMETADATA] 一个数据源都没读到，跳过")
+        return
+
     # 处理所有数据源的 levels
     for source, data in all_data.items():
         logger.info(f"[GETMETADATA] 开始补全 {source} 的 metadata")
-        enrich_levels_with_ids(data["levels"], cache_dir=cache_dir)
-    
-    # 保存所有数据
+        enrich_levels_with_ids(data["levels"], cache_dir=DATA_DIR)
+
+    # 补完写回 staging，等 runner 统一发布
     for source, data in all_data.items():
-        filepath = cache_dir / source
-        save_json_file(filepath, data)
-        logger.info(f"[GETMETADATA] 已保存更新后的数据源: {source}")
+        save_json_file(staged(source), data)
+        logger.info(f"[GETMETADATA] {source} 已写回 staging，待发布")
 
 if __name__=="__main__":
     main()

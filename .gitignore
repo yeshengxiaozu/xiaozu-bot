@@ -256,6 +256,8 @@ xiaozu_bot/plugins/say/*.mp3
 xiaozu_bot/plugins/gdlevelsearch/data/*.json
 xiaozu_bot/plugins/gdlevelsearch/data/*.cache
 xiaozu_bot/plugins/gdlevelsearch/data/*.tmp
+# updater 跑一半的中间产物，跑完才会搬进上面那层
+xiaozu_bot/plugins/gdlevelsearch/data/.staging/
 
 # JsonRedis 的存储文件：都是运行时数据（余额、人品、奖池等），不进仓库
 xiaozu_bot/plugins/zhua/data/

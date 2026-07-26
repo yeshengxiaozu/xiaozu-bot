@@ -5,9 +5,9 @@ from pathlib import Path
 from nonebot import logger
 
 try:
-    from ..paths import DATA_DIR
+    from ..paths import DATA_DIR, staged
 except ImportError:
-    from updater.paths import DATA_DIR
+    from updater.paths import DATA_DIR, staged
 
 def build_level_to_song_mapping(data):
     """
@@ -64,7 +64,7 @@ def main():
     logger.info(f"[SFH] 共映射了 {len(mapping)} 个 level ID")
 
     # 3. 保存到本地 JSON 文件
-    output_file = DATA_DIR / "nong_index.json"
+    output_file = staged("nong_index.json")
     with output_file.open("w", encoding="utf-8") as f:
         json.dump(mapping, f, indent=4, ensure_ascii=False)
     logger.info(f"[SFH] 映射已保存到 {output_file}")

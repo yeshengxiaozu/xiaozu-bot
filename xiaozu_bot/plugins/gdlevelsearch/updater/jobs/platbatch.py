@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from nonebot import logger
 
 try:
-    from ..paths import DATA_DIR
+    from ..paths import DATA_DIR, staged, staged_or_published
 except ImportError:
-    from updater.paths import DATA_DIR
+    from updater.paths import DATA_DIR, staged, staged_or_published
 
 ID_FIX = {
     #标记错误的id手动修复
@@ -81,7 +81,7 @@ def merge_plat_data() -> Dict[str, PlatLevel]:
     """
     logger.info("[PLATBATCH] loading platdata...")
     try:
-        with (DATA_DIR / "platdata.json").open("r", encoding="utf-8") as f:
+        with staged_or_published("platdata.json").open("r", encoding="utf-8") as f:
             platdata_raw = json.load(f).get('data', [])
     except FileNotFoundError:
         logger.warning("[PLATBATCH] platdata.json not found, skip")
@@ -89,7 +89,7 @@ def merge_plat_data() -> Dict[str, PlatLevel]:
     
     logger.info("[PLATBATCH] loading platdiff...")
     try:
-        with (DATA_DIR / "platdiff.json").open("r", encoding="utf-8") as f:
+        with staged_or_published("platdiff.json").open("r", encoding="utf-8") as f:
             platdiff_raw = json.load(f).get('entries', [])
     except FileNotFoundError:
         logger.warning("[PLATBATCH] platdiff.json not found, skip")
@@ -97,7 +97,7 @@ def merge_plat_data() -> Dict[str, PlatLevel]:
     
     logger.info("[PLATBATCH] loading platrank...")
     try:
-        with (DATA_DIR / "platrank_weights.json").open("r", encoding="utf-8") as f:
+        with staged_or_published("platrank_weights.json").open("r", encoding="utf-8") as f:
             platrank_raw = json.load(f).get('levels', [])
     except FileNotFoundError:
         logger.warning("[PLATBATCH] platrank_weights.json not found, skip")
@@ -255,7 +255,7 @@ def batch_process():
         "levels": [level.to_dict() for level in sorted(merged.values(), key=lambda x: x.name)]
     }
     
-    output_path = DATA_DIR / "plat_combined.json"
+    output_path = staged("plat_combined.json")
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=4)
     

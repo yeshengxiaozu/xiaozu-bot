@@ -6,9 +6,9 @@ from pathlib import Path
 from .constants import PLAT_DATA_ID, PLAT_DATA_SHEET_NAME
 
 try:
-    from ..paths import DATA_DIR
+    from ..paths import DATA_DIR, staged
 except ImportError:
-    from updater.paths import DATA_DIR
+    from updater.paths import DATA_DIR, staged
 
 
 @persistently
@@ -93,7 +93,7 @@ def fetch():
         "row_count": len(data)
     }
     
-    output_path = DATA_DIR / "platdata.json"
+    output_path = staged("platdata.json")
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=4)
 

@@ -121,6 +121,22 @@ python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没�
 各个 api 模块是在 import 时把数据读进模块级 list/dict 的，
 所以少了这一步的话，抓回来的新 json 要等下次重启才生效。
 
+### 分层并发 + 跑完才发布
+
+任务按依赖分成两层，同一层并发跑（都是网络 IO，丢线程池里）：
+
+```
+第 1 层： nlw  ids  lw  hds  platdiff  platrank  platdata  sfh
+第 2 层： platbatch（要上面三个 plat 文件）  getmetadata（要上面四个 levels 文件）
+```
+
+抓下来的东西先写进 `data/.staging/`，**整条流水线全绿了才原子地搬进 `data/`**。
+
+这一步是必须的：`nlw`/`ids`/`lw`/`hds` 抓下来的数据是不带 metadata 的，
+要等最后 `getmetadata` 回填。以前是直接写进 `data/`，中间任何一步失败
+（runner 默认遇错即停）都会让 bot 读到缺 metadata 的半成品，把好数据冲掉。
+现在失败就不发布，`data/` 保持上一次的样子，中间产物留在 `.staging/` 方便排查。
+
 ## 关键配置与外部服务
 
 - 本地存储：`JsonRedis`，各插件的 `data/storage.json`（`jrrp`, `roulette`, `zhua`, `zhua_api`, `game`, `guess` 使用）。这些文件都在 `.gitignore` 里。

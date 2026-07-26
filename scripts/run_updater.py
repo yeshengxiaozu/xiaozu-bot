@@ -44,42 +44,63 @@ def main() -> int:
         print(f"! 请在仓库根目录运行：cd {REPO_ROOT}", file=sys.stderr)
         return 2
 
+    import asyncio
+
     from updater import runner
-    from updater.paths import DATA_DIR, ensure_dirs
+    from updater.paths import DATA_DIR, STAGING_DIR, ensure_dirs, publish
 
     ensure_dirs()
-
-    jobs = runner.JOBS
-    if args.jobs:
-        known = {name for name, _ in jobs}
-        unknown = [j for j in args.jobs if j not in known]
-        if unknown:
-            print(f"! 没有这些任务：{', '.join(unknown)}", file=sys.stderr)
-            print(f"  可选：{', '.join(sorted(known))}", file=sys.stderr)
-            return 2
-        jobs = [(name, fn) for name, fn in jobs if name in args.jobs]
-
-    print(f"== 准备跑 {len(jobs)} 个任务，输出目录 {DATA_DIR}")
     started = time.time()
 
-    ok, failed = [], []
-    for name, job in jobs:
-        job_started = time.time()
-        print(f"-- {name} ... ", end="", flush=True)
-        try:
-            job()
-        except Exception as e:  # noqa: BLE001
-            failed.append((name, e))
-            print(f"失败 ({time.time() - job_started:.1f}s): {type(e).__name__}: {e}")
-            if not args.keep_going:
-                print("   (加 --continue 可以让它接着跑后面的任务)")
-                break
-        else:
-            ok.append(name)
-            print(f"OK ({time.time() - job_started:.1f}s)")
+    if args.jobs:
+        unknown = [j for j in args.jobs if j not in runner.JOBS]
+        if unknown:
+            print(f"! 没有这些任务：{', '.join(unknown)}", file=sys.stderr)
+            print(f"  可选：{', '.join(runner.JOBS)}", file=sys.stderr)
+            return 2
 
-    print(f"\n== 成功 {len(ok)} / 失败 {len(failed)}，共 {time.time() - started:.1f}s")
-    for name, e in failed:
+        # 只跑指定的几个：写进 staging，跑完手动发布。
+        # 注意这样可能只发布一部分文件，其余的还是上一次的。
+        print(f"== 只跑 {len(args.jobs)} 个任务：{', '.join(args.jobs)}")
+        print(f"   中间产物写到 {STAGING_DIR}")
+        ok, failed = [], []
+        for name in args.jobs:
+            job_started = time.time()
+            print(f"-- {name} ... ", end="", flush=True)
+            try:
+                runner.JOBS[name]()
+            except Exception as e:  # noqa: BLE001
+                failed.append((name, e))
+                print(f"失败 ({time.time() - job_started:.1f}s): {type(e).__name__}: {e}")
+                if not args.keep_going:
+                    print("   (加 --continue 可以让它接着跑后面的任务)")
+                    break
+            else:
+                ok.append(name)
+                print(f"OK ({time.time() - job_started:.1f}s)")
+        if failed and not args.keep_going:
+            print("\n有任务失败，不发布，data/ 保持原样")
+        else:
+            moved = publish()
+            print(f"\n已发布 {len(moved)} 个文件：{', '.join(moved) or '（无）'}")
+    else:
+        # 跑完整流水线：分层并发，全绿才发布
+        print(f"== 跑完整流水线，共 {len(runner.STAGES)} 层")
+        for i, stage in enumerate(runner.STAGES, start=1):
+            print(f"   第 {i} 层（并发）：{', '.join(stage)}")
+        try:
+            results = asyncio.run(runner.run_all_async(stop_on_error=not args.keep_going))
+        except Exception as e:  # noqa: BLE001
+            print(f"\n== 流水线失败：{e}")
+            print(f"   没有发布，data/ 保持上一次的样子；中间产物留在 {STAGING_DIR} 方便排查")
+            return 1
+        ok, failed = results["success"], results["failed"]
+        print(f"\n== 成功 {len(ok)}：{', '.join(ok)}")
+        print(f"== 已发布 {len(results['published'])} 个文件："
+              f"{', '.join(results['published']) or '（无）'}")
+
+    print(f"\n== 共用时 {time.time() - started:.1f}s")
+    for name, e in failed if args.jobs else []:
         print(f"   ✖ {name}: {type(e).__name__}: {e}")
 
     print(f"\n== {DATA_DIR} 现状：")

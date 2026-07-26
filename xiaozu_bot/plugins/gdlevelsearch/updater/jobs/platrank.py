@@ -4,9 +4,9 @@ import json,time
 from pathlib import Path
 
 try:
-    from ..paths import DATA_DIR
+    from ..paths import DATA_DIR, staged
 except ImportError:
-    from updater.paths import DATA_DIR
+    from updater.paths import DATA_DIR, staged
 
 from .constants import PLAT_RANK_ID
 
@@ -51,7 +51,7 @@ def fetch_levels(service, sheet_name: str) -> List[Dict[str, Any]]:
 
 def fetch():
     data = fetch_levels(service=SheetAPI.get_service(),sheet_name="Weight")
-    output_path = DATA_DIR / "platrank_weights.json"
+    output_path = staged("platrank_weights.json")
     with output_path.open("w", encoding="utf-8") as f:
        json.dump({"timestamp": time.time(), "levels": data}, f, indent=4)
 

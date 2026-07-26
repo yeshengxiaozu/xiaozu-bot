@@ -8,9 +8,9 @@ from .googlesheetapi import persistently,SheetAPI
 from typing import Dict, List, Any
 
 try:
-    from ..paths import DATA_DIR
+    from ..paths import DATA_DIR, staged
 except ImportError:
-    from updater.paths import DATA_DIR
+    from updater.paths import DATA_DIR, staged
 
 from .constants import (
     NLW_ID,
@@ -189,7 +189,7 @@ def fetch_all_levels() -> Dict[str, List[Dict[str, Any]]]:
 def fetch():
     logger.info('[NLW] 开始生成 NLW 数据文件')
     data = fetch_all_levels()
-    output_path = DATA_DIR / "nlw_levels.json"
+    output_path = staged("nlw_levels.json")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
        json.dump({"timestamp": time.time(), "levels": data['regular']+data['platformer']+data['pending']}, f, indent=4)

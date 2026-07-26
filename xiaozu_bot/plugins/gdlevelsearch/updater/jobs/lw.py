@@ -8,9 +8,9 @@ from nonebot import logger
 from .googlesheetapi import persistently,SheetAPI
 
 try:
-    from ..paths import DATA_DIR
+    from ..paths import DATA_DIR, staged
 except ImportError:
-    from updater.paths import DATA_DIR
+    from updater.paths import DATA_DIR, staged
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -164,7 +164,7 @@ def fetch_all_levels() -> Dict[str, List[Dict[str, Any]]]:
 def fetch():
     logger.info('[LW] 开始生成 LW 数据文件')
     data = fetch_all_levels()
-    output_path = DATA_DIR / "lw_levels.json"
+    output_path = staged("lw_levels.json")
     with output_path.open("w", encoding="utf-8") as f:
        json.dump({"timestamp": time.time(), "levels": data['regular']+data['pending']}, f, indent=4)
     logger.info(f"[LW] 已保存到 {output_path}")
