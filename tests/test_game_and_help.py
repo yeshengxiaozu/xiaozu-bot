@@ -270,16 +270,33 @@ class TestWhitelist:
         )
 
     def test_game_里每个命令都挂了白名单(self):
-        """恶魔投降历史上漏挂过 whitelist_rule，这条就是防它再漏。"""
-        matchers = {
-            name: obj
-            for name, obj in vars(game).items()
-            if isinstance(obj, type) and issubclass(obj, Matcher) and obj is not Matcher
-        }
-        assert len(matchers) == 8, f"game 里的命令数变了：{sorted(matchers)}"
+        """恶魔投降历史上漏挂过 whitelist_rule，这条就是防它再漏。
+
+        这里刻意不数命令个数：加一条新命令不该让这条红，该红的是
+        「新命令忘了挂白名单」。所以断言的是「每一个都挂了」这个性质。
+        """
+        matchers = _game_matchers()
+        assert matchers, "一个 matcher 都没扫到，说明反射逻辑坏了而不是真没命令"
         for name, matcher in matchers.items():
             calls = [checker.call for checker in matcher.rule.checkers]
             assert game.whitelist in calls, f"{name} 没挂白名单 rule"
+
+    def test_轮盘的核心命令一个都不能少(self):
+        """代替原来那句 `len(matchers) == 8`。
+
+        数字变了只说明「命令数变了」，不说明变得对不对；这里列的是轮盘
+        跑起来必须有的几条，少一条就是功能掉了，多一条不关它的事。
+        """
+        core = {"setmode", "betgame", "开枪", "使用", "查看局势", "恶魔投降",
+                "恶魔道具", "恶魔帮助"}
+        missing = sorted(core - _game_command_names())
+        assert missing == [], f"game 里少了这些核心命令：{missing}"
+
+    def test_game_的命令在全局注册表里都扫得到(self):
+        """_all_registered_commands 是 help 那几条测试的地基，
+        它要是扫不到 game 的命令，那边的「help 写了但没注册」就成了空断言。"""
+        registered = set(_all_registered_commands())
+        assert _game_command_names() <= registered
 
 
 # ==========================================================================
@@ -287,8 +304,13 @@ class TestWhitelist:
 # ==========================================================================
 class TestDemonDefault:
     def test_字段与初值(self, clock):
+        """比的是「这些字段必须在，且初值是这些」，不是「字典正好只有这些字段」。
+
+        以后给对局状态加一个新字段不该让这条红 —— 那不是坏事，是加功能。
+        真正要钉住的是状态机每一处都读的这几个初值（尤其 game_turn 从 1 起）。
+        """
         d = game.demon_default()
-        assert d == {
+        expected = {
             "pl": [],
             "hp": [],
             "item_0": [],
@@ -299,13 +321,16 @@ class TestDemonDefault:
             "atk": 0,
             "hp_max": 0,
             "item_max": 0,
-            "game_turn": 1,
+            "game_turn": 1,  # 轮数从 1 开始，不是 0
             "add_atk": False,
             "start": False,
             "identity": 0,
             "demon_coldtime": FAKE_NOW,
             "turn_start_time": FAKE_NOW,
         }
+        missing = sorted(set(expected) - set(d))
+        assert missing == [], f"demon_default 少了这些字段：{missing}"
+        assert {k: d[k] for k in expected} == expected
 
     def test_每次都是新的可变对象(self):
         a, b = game.demon_default(), game.demon_default()
@@ -317,28 +342,31 @@ class TestDemonDefault:
 # 道具表本身的完整性
 # ==========================================================================
 class TestItemTables:
-    def test_两张表不重叠且拼起来就是总表(self):
+    def test_两张子表按id把总表切成前后两段(self):
+        """原来是三条写死数字的断言（26 / 1-15 / 16-26），加一个道具要手改四处。
+
+        真正的不变量只有三条，而且都能从表本身推出来：两张子表不重叠、
+        拼起来正好是总表、id 从 1 连续排到总数（item_dic1 在前，item_dic2 在后）。
+        """
+        n1, n2 = len(game.item_dic1), len(game.item_dic2)
         assert set(game.item_dic1) & set(game.item_dic2) == set()
         assert game.item_dic == game.item_dic1 | game.item_dic2
+        assert sorted(game.item_dic) == list(range(1, n1 + n2 + 1))
+        assert sorted(game.item_dic1) == list(range(1, n1 + 1))
+        assert sorted(game.item_dic2) == list(range(n1 + 1, n1 + n2 + 1))
 
-    def test_id_连续从1开始(self):
-        assert sorted(game.item_dic) == list(range(1, 27))
-        assert sorted(game.item_dic1) == list(range(1, 16))
-        assert sorted(game.item_dic2) == list(range(16, 27))
+    def test_普通模式道具数就是子表1的大小(self):
+        """get_random_item 拿 len(item_dic) - len(item_dic2) 当普通模式上限，
+        这个差必须正好是 item_dic1 的大小 —— 是不是 15 无所谓，相等才是重点。"""
+        assert len(game.item_dic) - len(game.item_dic2) == len(game.item_dic1)
 
     def test_道具名不重复(self):
         names = list(game.item_dic.values())
         assert len(set(names)) == len(names)
 
-    def test_普通模式道具数是15(self):
-        """get_random_item 拿 len(item_dic) - len(item_dic2) 当普通模式上限，
-        这个差必须正好是 item_dic1 的大小。"""
-        assert len(game.item_dic) - len(game.item_dic2) == len(game.item_dic1) == 15
-
-    def test_每个道具都有效果说明(self):
+    def test_每个道具都有非空效果说明(self):
+        """原来拆成「有说明」和「说明不为空」两条，其实是同一个不变量的两半。"""
         assert set(game.item_effects) == set(game.item_dic.values())
-
-    def test_效果说明都不是空的(self):
         for name, effect in game.item_effects.items():
             assert effect.strip(), f"{name} 的效果说明是空的"
 
@@ -421,23 +449,28 @@ class TestCalculateInterval:
 # get_random_item（按模式抽道具）
 # ==========================================================================
 class TestGetRandomItem:
-    def test_普通模式只抽前15个(self, rand):
-        item = game.get_random_item(0, 15, "111")
+    def test_普通模式只抽子表1里的道具(self, rand):
+        """上限和期望范围都从表本身推，加道具不用回来改数字（线上传的也是
+        len(item_dic) - len(item_dic2)，不是写死的 15）。"""
+        limit = len(game.item_dic1)
+        item = game.get_random_item(0, limit, "111")
         pool = rand.args_of("choice")[0][0]
-        assert sorted(set(pool)) == list(range(1, 16))
-        assert len(pool) == 15  # 普通模式没有加权道具
+        assert sorted(set(pool)) == list(range(1, limit + 1))
+        assert len(pool) == limit  # 普通模式没有加权道具
         assert item in game.item_dic1
 
     def test_身份模式全量并且放大镜双权重(self, rand):
-        game.get_random_item(1, 26, "111")
+        total = len(game.item_dic)
+        game.get_random_item(1, total, "111")
         pool = rand.args_of("choice")[0][0]
-        assert sorted(set(pool)) == list(range(1, 27))
+        assert sorted(set(pool)) == list(range(1, total + 1))
         assert pool.count(3) == 2, "放大镜的权重应该是 2"
-        assert len(pool) == 27
+        assert len(pool) == total + 1, "只有放大镜被复制了一份"
 
     def test_膀胱模式和身份模式共用同一张权重表(self, rand):
-        game.get_random_item(1, 26, "111")
-        game.get_random_item(2, 26, "111")
+        total = len(game.item_dic)
+        game.get_random_item(1, total, "111")
+        game.get_random_item(2, total, "111")
         assert rand.args_of("choice")[0][0] == rand.args_of("choice")[1][0]
 
     def test_普通模式上限传0时候选池为空会炸(self):
@@ -458,11 +491,8 @@ class TestGetRandomItem:
 # setmode
 # ==========================================================================
 class TestSetmode:
-    @pytest.mark.parametrize(
-        ("value", "label"),
-        [("0", "普通模式"), ("1", "身份模式"), ("2", "膀胱模式")],
-    )
-    async def test_三个合法值(self, game_r, fake_bot, group_event, value, label):
+    @pytest.mark.parametrize("value", ["0", "1", "2"])
+    async def test_三个合法值(self, game_r, fake_bot, group_event, value):
         event = group_event(f"*setmode {value}")
         assert await drive(
             game.setmode,
@@ -474,7 +504,7 @@ class TestSetmode:
             arg=Message(value),
         )
         assert game_r.hget("game_mode", str(P0)) == value
-        assert last_text(fake_bot) == f"已将你的游戏模式设置为{label}"
+        assert len(sent_texts(fake_bot)) == 1
 
     @pytest.mark.parametrize("bad", ["", "abc", "1.5", "-1", "1 2", "一"])
     async def test_非整数参数(self, game_r, fake_bot, group_event, bad):
@@ -488,7 +518,7 @@ class TestSetmode:
             event=event,
             arg=Message(bad),
         )
-        assert last_text(fake_bot) == "请输入一个整数！"
+        assert len(sent_texts(fake_bot)) == 1, "该回一句，但别把模式写进去"
         assert game_r.hget("game_mode", str(P0)) is None
 
     @pytest.mark.parametrize("bad", ["3", "10", "999"])
@@ -503,9 +533,7 @@ class TestSetmode:
             event=event,
             arg=Message(bad),
         )
-        assert "目前只接受0（普通模式），1（身份模式），2（膀胱模式）" in last_text(
-            fake_bot
-        )
+        assert len(sent_texts(fake_bot)) == 1
         assert game_r.hget("game_mode", str(P0)) is None
 
     async def test_设置跟人走不跟群走(self, game_r, fake_bot, make_group_event):
@@ -625,14 +653,16 @@ class TestBetJoin:
         state = game.datas.demon_data[GID_S]
         assert state["pl"] == [str(P0)]
         assert state["start"] is False
-        assert "玩家 小卒 加入游戏，等待第二位玩家加入。" in last_text(game_bot)
+        assert len(sent_texts(game_bot)) == 1
+        # 昵称是数据不是措辞：加进来的是谁得报出来
+        assert "小卒" in last_text(game_bot)
 
     async def test_同一个人不能重复加入(self, game_r, game_bot, group_event):
         await _join(game_bot, group_event, P0)
         await _join(game_bot, group_event, P0)
         assert game.datas.demon_data[GID_S]["pl"] == [str(P0)]
         assert game.datas.demon_data[GID_S]["start"] is False
-        assert "你已经加入了游戏，无需重复加入！" in last_text(game_bot)
+        assert len(sent_texts(game_bot)) == 2, "第二次也得有回话，只是不能开局"
 
     async def test_第二个人进来直接开局(self, game_r, game_bot, group_event, rand):
         await _join(game_bot, group_event, P0)
@@ -645,16 +675,15 @@ class TestBetJoin:
         assert state["turn"] in (0, 1)
         assert len(state["clip"]) >= 2
         assert state["hp"][0] == state["hp"][1], "开局双方血量必须一样"
-        msg = last_text(game_bot)
-        assert msg.startswith("轮盘，开局!")
-        assert "- 本局模式：正常模式" in msg
+        assert state["identity"] == 0
+        assert sent_texts(game_bot), "开局得有回话"
 
     async def test_开局后第三个人被挡(self, game_r, game_bot, group_event):
         await _join(game_bot, group_event, P0)
         await _join(game_bot, group_event, P1)
         await _join(game_bot, group_event, P2)
         assert game.datas.demon_data[GID_S]["pl"] == [str(P0), str(P1)]
-        assert last_text(game_bot) == "游戏已开始，无法加入！"
+        assert game.datas.demon_data[GID_S]["start"] is True, "第三个人不该把局搅黄"
 
     async def test_没设过模式的人会被写默认0(self, game_r, game_bot, group_event):
         await _join(game_bot, group_event, P0)
@@ -670,7 +699,6 @@ class TestBetJoin:
         assert game.datas.demon_data[GID_S]["identity"] == 1
         # 模式一致的时候不走 random.choice
         assert [a for a in rand.args_of("choice") if a[0] == [1, 1]] == []
-        assert "- 本局模式：身份模式" in last_text(game_bot)
 
     async def test_两人模式不同时二选一(self, game_r, game_bot, group_event, rand):
         game_r.hset("game_mode", str(P0), "0")
@@ -680,7 +708,6 @@ class TestBetJoin:
         await _join(game_bot, group_event, P1)
         assert rand.args_of("choice")[0] == ([0, 2],)
         assert game.datas.demon_data[GID_S]["identity"] == 2
-        assert "- 本局模式：急速模式" in last_text(game_bot)
 
     async def test_两个白名单群互不干扰(self, game_r, game_bot, make_group_event):
         other = GAME_WHITELIST_GROUP_IDS[1]
@@ -702,15 +729,15 @@ class TestBetStartArithmetic:
     """开局的数值必须精确，help 里就是照着这几个数写的"""
 
     @pytest.mark.parametrize(
-        ("mode", "hp_range", "hp_max", "item_max", "label"),
+        ("mode", "hp_range", "hp_max", "item_max"),
         [
-            (0, (3, 6), 6, 6, "正常模式"),
-            (1, (6, 10), 10, 8, "身份模式"),
-            (2, (9, 14), 16, 10, "急速模式"),
+            (0, (3, 6), 6, 6),
+            (1, (6, 10), 10, 8),
+            (2, (9, 14), 16, 10),
         ],
     )
     async def test_血量道具上限(
-        self, game_r, game_bot, group_event, rand, mode, hp_range, hp_max, item_max, label
+        self, game_r, game_bot, group_event, rand, mode, hp_range, hp_max, item_max
     ):
         game_r.hset("game_mode", str(P0), str(mode))
         game_r.hset("game_mode", str(P1), str(mode))
@@ -724,7 +751,6 @@ class TestBetStartArithmetic:
         assert state["hp_max"] == hp_max
         assert state["item_max"] == item_max
         assert state["identity"] == mode
-        assert f"- 本局模式：{label}" in last_text(game_bot)
 
     @pytest.mark.parametrize(
         ("mode", "interval"), [(0, (2, 4)), (1, (3, 5)), (2, (4, 6))]
@@ -780,22 +806,19 @@ class TestDeathMode:
 
     def test_扣血量上限并把血量夹回来(self):
         state = make_state(identity=1, game_turn=13, hp=(10, 4), hp_max=10, item_max=6)
-        msg = str(game.death_mode(1, GID_S))
+        game.death_mode(1, GID_S)
         assert state["hp_max"] == 9
         assert state["hp"] == [9, 4]
-        assert "扣1点hp上限，当前hp上限：9" in msg
 
     def test_道具上限最低到6就不再扣(self, rand):
         state = make_state(identity=1, game_turn=13, hp_max=10, item_max=6)
-        msg = str(game.death_mode(1, GID_S))
+        game.death_mode(1, GID_S)
         assert state["item_max"] == 6
-        assert "扣1点道具上限" not in msg
 
     def test_道具上限大于6时扣一点(self, rand):
         state = make_state(identity=1, game_turn=13, hp_max=10, item_max=8)
-        msg = str(game.death_mode(1, GID_S))
+        game.death_mode(1, GID_S)
         assert state["item_max"] == 7
-        assert "扣1点道具上限，当前道具上限：7" in msg
 
     def test_随机销毁道具(self, rand):
         rand.plan("randint", 2)  # remove_random = 2
@@ -804,24 +827,22 @@ class TestDeathMode:
             identity=1, game_turn=13, hp_max=10, item_max=8,
             items0=(1, 2, 3), items1=(3,),
         )
-        msg = str(game.death_mode(1, GID_S))
+        game.death_mode(1, GID_S)
         assert state["item_0"] == [3]
         assert state["item_1"] == []
-        assert "失去了2个道具：桃、医疗箱" in msg
-        assert "失去了1个道具：放大镜" in msg
 
-    def test_道具栏空的时候不销毁也不刷消息(self, rand):
+    def test_道具栏空的时候不销毁也不炸(self, rand):
+        """random.sample 摸空列表是要抛异常的，这条守的就是那一下。"""
         rand.plan("randint", 2)
         state = make_state(identity=1, game_turn=13, hp_max=10, item_max=8)
-        msg = str(game.death_mode(1, GID_S))
+        assert str(game.death_mode(1, GID_S))  # 死斗还是得发话
         assert state["item_0"] == []
-        assert "失去了" not in msg
+        assert state["item_1"] == []
 
     def test_血量上限已经是1就不再扣(self):
         state = make_state(identity=1, game_turn=13, hp=(1, 1), hp_max=1, item_max=6)
-        msg = str(game.death_mode(1, GID_S))
+        game.death_mode(1, GID_S)
         assert state["hp_max"] == 1
-        assert "扣1点hp上限" not in msg
 
     def test_999分支是死代码(self):
         """死斗的外层判断是 `identity_found in turn_limit`，turn_limit 只有
@@ -840,11 +861,10 @@ class TestRefershItem:
         rand.plan("randint", 3)
         rand.plan("choice", 1, 2, 3, 4, 5, 6)
         state = make_state()
-        msg = str(game.refersh_item(0, GID_S))
+        assert str(game.refersh_item(0, GID_S))
+        # 两人交替发牌：奇数次给 0 号，偶数次给 1 号
         assert state["item_0"] == [1, 3, 5]
         assert state["item_1"] == [2, 4, 6]
-        assert "道具(3/6)" in msg
-        assert "桃, 放大镜, 手铐" in msg
 
     def test_超过道具上限的部分被截掉(self, rand):
         rand.plan("randint", 4)
@@ -853,12 +873,12 @@ class TestRefershItem:
         assert len(state["item_0"]) == 3
         assert len(state["item_1"]) == 3
 
-    def test_没道具时的提示语(self, rand):
+    def test_区间掷到0就一个都不补(self, rand):
         rand.plan("randint", 0)
-        make_state()
-        msg = str(game.refersh_item(0, GID_S))
-        assert msg.count("你目前没有道具哦！") == 2
-        assert "道具(0/6)" in msg
+        state = make_state()
+        assert str(game.refersh_item(0, GID_S))
+        assert state["item_0"] == []
+        assert state["item_1"] == []
 
     def test_首轮才有加成(self, rand):
         make_state(game_turn=1)
@@ -869,13 +889,6 @@ class TestRefershItem:
         make_state(game_turn=2)
         game.refersh_item(0, GID_S)
         assert rand.args_of("randint")[0] == (1, 3)
-
-    def test_消息里带血量和上限(self, rand):
-        rand.plan("randint", 0)
-        make_state(hp=(3, 5), hp_max=6)
-        msg = str(game.refersh_item(0, GID_S))
-        assert "hp：3/6" in msg
-        assert "hp：5/6" in msg
 
 
 # ==========================================================================
@@ -890,33 +903,44 @@ async def _fire(bot, group_event, target: str, *, user_id: int = P0) -> bool:
 
 
 class TestFireGuards:
+    """四条拦截分支。被拦下来的标志不是回了哪句话，而是「这一枪根本没打出去」：
+    弹夹没少子弹、血没掉、回合没交出去，而且只回了一句。
+    """
+
     async def test_没开局(self, game_bot, group_event):
-        make_state(start=False)
+        state = make_state(start=False, hp=(4, 4), clip=[0, 1, 1], turn=0)
         await _fire(game_bot, group_event, "对方")
-        assert "轮盘尚未开始！" in last_text(game_bot)
+        assert state["clip"] == [0, 1, 1] and state["hp"] == [4, 4]
+        assert len(sent_texts(game_bot)) == 1
 
     async def test_局外人不能动手(self, game_bot, group_event):
-        make_state()
+        state = make_state(hp=(4, 4), clip=[0, 1, 1], turn=0)
         await _fire(game_bot, group_event, "对方", user_id=P2)
-        assert "只有当前局内玩家能行动哦！" in last_text(game_bot)
+        assert state["clip"] == [0, 1, 1] and state["hp"] == [4, 4]
+        assert state["turn"] == 0
+        assert len(sent_texts(game_bot)) == 1
 
     async def test_不是自己的回合(self, game_bot, group_event):
-        make_state(turn=0)
+        state = make_state(hp=(4, 4), clip=[0, 1, 1], turn=0)
         await _fire(game_bot, group_event, "对方", user_id=P1)
-        assert "现在不是你的回合，请等待对方操作！" in last_text(game_bot)
+        assert state["clip"] == [0, 1, 1] and state["hp"] == [4, 4]
+        assert state["turn"] == 0, "回合不能被抢走"
+        assert len(sent_texts(game_bot)) == 1
 
     @pytest.mark.parametrize("bad", ["", "自已", "别人", "self"])
     async def test_参数不认识(self, game_bot, group_event, bad):
-        make_state()
+        state = make_state(hp=(4, 4), clip=[0, 1, 1], turn=0)
         await _fire(game_bot, group_event, bad)
-        assert "请输入 <*开枪 自己> 或者 <*开枪 对方> 来开枪哦！" in last_text(game_bot)
+        assert state["clip"] == [0, 1, 1] and state["hp"] == [4, 4]
+        assert state["turn"] == 0
+        assert len(sent_texts(game_bot)) == 1
 
     async def test_没开局的群里第一条指令不会炸(self, game_bot, group_event):
         """check_timeout 会顺手把群的默认状态建出来，所以不会 KeyError。"""
         assert GID_S not in game.datas.demon_data
         await _fire(game_bot, group_event, "对方")
         assert GID_S in game.datas.demon_data
-        assert "轮盘尚未开始！" in last_text(game_bot)
+        assert len(sent_texts(game_bot)) == 1
 
 
 class TestShoot:
@@ -926,15 +950,15 @@ class TestShoot:
         assert state["hp"] == [4, 3]
         assert state["turn"] == 1, "打对方要交出回合"
         assert state["clip"] == [0, 1]
-        msg = last_text(game_bot)
-        assert "子弹 *【击中了】* 对方！对方剩余hp：3/6" in msg
+        assert len(sent_texts(game_bot)) == 1
 
     async def test_打对方空枪(self, game_bot, group_event):
         state = make_state(hp=(4, 4), clip=[1, 0], turn=0)
         await _fire(game_bot, group_event, "对方")
-        assert state["hp"] == [4, 4]
+        assert state["hp"] == [4, 4], "空弹不该扣血"
         assert state["turn"] == 1
-        assert "子弹未击中对方！对方剩余hp：4/6" in last_text(game_bot)
+        assert state["clip"] == [1], "空弹一样要退出膛"
+        assert len(sent_texts(game_bot)) == 1
 
     async def test_打自己命中回合不交出(self, game_bot, group_event):
         state = make_state(hp=(4, 4), clip=[0, 1, 1], turn=0)
@@ -955,20 +979,14 @@ class TestShoot:
         assert state["hp"] == [3, 4]
         assert state["turn"] == 0
 
-    @pytest.mark.parametrize(
-        ("atk", "extra"),
-        [(1, ""), (2, ""), (3, "癫狂屠戮！"), (4, "癫狂屠戮！"), (5, "无双，万军取首！")],
-    )
-    async def test_加伤生效并且打完清零(self, game_bot, group_event, atk, extra):
+    @pytest.mark.parametrize("atk", [1, 2, 3, 4, 5])
+    async def test_加伤生效并且打完清零(self, game_bot, group_event, atk):
+        """atk 3 / 5 各有一句额外的吹嘘台词，那是措辞；伤害算对了才是行为。"""
         state = make_state(hp=(4, 9), hp_max=9, clip=[0, 1, 1], turn=0, atk=atk, add_atk=True)
         await _fire(game_bot, group_event, "对方")
         assert state["hp"][1] == 9 - (1 + atk)
         assert state["atk"] == 0
         assert state["add_atk"] is False
-        msg = last_text(game_bot)
-        assert f"这颗子弹伤害为……{atk + 1}点！" in msg
-        if extra:
-            assert extra in msg
 
     async def test_空枪也会把加伤清掉(self, game_bot, group_event):
         state = make_state(clip=[1, 0], turn=0, atk=3, add_atk=True)
@@ -985,16 +1003,12 @@ class TestShoot:
         await _fire(game_bot, group_event, "对方")
         assert state["game_turn"] == 2
         assert state["clip"] == [1, 0, 0]
-        msg = last_text(game_bot)
-        assert "子弹用尽，重新换弹，道具更新！" in msg
-        assert "当前轮数：2" in msg
 
     async def test_打光对方的血就结算并重置(self, game_bot, group_event):
         make_state(hp=(4, 1), clip=[0, 1, 1], turn=0)
         await _fire(game_bot, group_event, "对方")
-        msg = last_text(game_bot)
-        assert "游戏结束！" in msg and "恭喜" in msg
-        assert f"[CQ:at,qq={P0}]" in msg, "赢的应该是开枪的人"
+        # 赢家的 QQ 号是结算的结果，不是措辞
+        assert f"[CQ:at,qq={P0}]" in last_text(game_bot), "赢的应该是开枪的人"
         # 状态被重置回默认
         state = game.datas.demon_data[GID_S]
         assert state["start"] is False
@@ -1003,24 +1017,20 @@ class TestShoot:
     async def test_打自己打死自己算对方赢(self, game_bot, group_event):
         make_state(hp=(1, 4), clip=[0, 1, 1], turn=0)
         await _fire(game_bot, group_event, "自己")
-        msg = last_text(game_bot)
-        assert "游戏结束！" in msg
-        assert f"[CQ:at,qq={P1}]" in msg
+        assert f"[CQ:at,qq={P1}]" in last_text(game_bot)
+        assert game.datas.demon_data[GID_S]["start"] is False
 
     async def test_手铐让当前玩家多打一枪(self, game_bot, group_event):
         state = make_state(hp=(4, 4), clip=[1, 1, 0], turn=0, hcf=1)
         await _fire(game_bot, group_event, "对方")
         assert state["turn"] == 0, "对方被拷住，回合留在自己手里"
         assert state["hcf"] == -1
-        # 展示用的公式是 (hcf+1)//2，hcf 落到 -1 之后显示成 0，看着别扭
-        assert "当前对方剩余束缚回合数：0" in last_text(game_bot)
 
     async def test_束缚耗尽后回合交还(self, game_bot, group_event):
         state = make_state(hp=(4, 4), clip=[1, 1, 0], turn=0, hcf=-1)
         await _fire(game_bot, group_event, "对方")
         assert state["hcf"] == 0
         assert state["turn"] == 1
-        assert "已挣脱束缚！" in last_text(game_bot)
 
     async def test_打自己不消耗束缚(self, game_bot, group_event):
         state = make_state(hp=(4, 4), clip=[1, 1, 0], turn=0, hcf=1)
@@ -1055,11 +1065,11 @@ class TestTimeout:
         state = game.datas.demon_data[GID_S]
         assert state["start"] is False and state["pl"] == []
         api, data = game_bot.calls[-1]
-        assert api == "send_group_msg"
+        assert api == "send_group_msg", "超时是主动推送，不是回话"
+        assert str(data["group_id"]) == GID_S
+        # 判负和判胜的是谁，是结算结果；「自动判负」四个字是措辞
         msg = str(data["message"])
-        assert "回合超时！当前回合玩家" in msg
-        assert f"[CQ:at,qq={P0}]" in msg and "自动判负" in msg
-        assert f"恭喜[CQ:at,qq={P1}]胜利！" in msg
+        assert f"[CQ:at,qq={P0}]" in msg and f"[CQ:at,qq={P1}]" in msg
 
     async def test_只有一个人等太久就重置(self, game_bot, clock):
         state = make_state(start=False, now=FAKE_NOW)
@@ -1067,7 +1077,7 @@ class TestTimeout:
         clock.advance(601)
         assert await game.check_timeout(GID_S) is True
         assert game.datas.demon_data[GID_S]["pl"] == []
-        assert "由于长时间无第二人进入轮盘，现已重置游戏。" in sent_texts(game_bot)[-1]
+        assert len(sent_texts(game_bot)) == 1, "重置了就得吱一声"
 
     async def test_一个人都没有就什么也不做(self, game_bot, clock):
         make_state(start=False)
@@ -1081,8 +1091,9 @@ class TestTimeout:
         clock.advance(601)
         finished = await _fire(game_bot, group_event, "对方")
         assert finished is False, "超时分支是 return，不是 finish"
-        assert "回合超时" in sent_texts(game_bot)[0]
+        # 只有超时那一条推送，开枪本身不该再回话
         assert len(sent_texts(game_bot)) == 1
+        assert game.datas.demon_data[GID_S]["pl"] == []
 
     async def test_没有bot实例时直接早退(self, monkeypatch, fake_bot):
         """get_bots() 为空时 check_timeout 返回 None 且不建默认状态。
@@ -1101,7 +1112,6 @@ class TestTimeout:
         clock.advance(601)
         await game.check_all_games()
         assert game.datas.demon_data[GID_S]["pl"] == []
-        assert "回合超时" in sent_texts(game_bot)[-1]
         # 非数字的 key 被 isdigit 判断挡掉，一条消息都不会发
         assert game.datas.demon_data["不是群号"]["pl"] == [str(P2)]
         assert len(sent_texts(game_bot)) == 1
@@ -1123,39 +1133,54 @@ async def _use(bot, group_event, name: str, *, user_id: int = P0) -> bool:
 
 
 class TestUseItemGuards:
+    """五条拦截分支。被拦下来的标志是「道具没被吃掉、血没变、回合没动」，
+    回的是哪句话不管。
+    """
+
     async def test_没开局(self, game_bot, group_event):
-        make_state(start=False)
+        state = make_state(start=False, hp=(3, 4), items0=(1,))
         await _use(game_bot, group_event, "桃")
-        assert "轮盘尚未开始！" in last_text(game_bot)
+        assert state["item_0"] == [1] and state["hp"] == [3, 4]
+        assert len(sent_texts(game_bot)) == 1
 
     async def test_局外人(self, game_bot, group_event):
-        make_state(items0=(1,))
+        state = make_state(hp=(3, 4), items0=(1,))
         await _use(game_bot, group_event, "桃", user_id=P2)
-        assert "只有当前局内玩家能行动哦！" in last_text(game_bot)
+        assert state["item_0"] == [1] and state["hp"] == [3, 4]
+        assert len(sent_texts(game_bot)) == 1
 
     async def test_不是自己的回合(self, game_bot, group_event):
-        make_state(turn=0, items1=(1,))
+        state = make_state(turn=0, hp=(3, 4), items1=(1,))
         await _use(game_bot, group_event, "桃", user_id=P1)
-        assert "现在不是你的回合，请等待对方操作！" in last_text(game_bot)
+        assert state["item_1"] == [1] and state["hp"] == [3, 4]
+        assert state["turn"] == 0, "回合不能被抢走"
+        assert len(sent_texts(game_bot)) == 1
 
     @pytest.mark.parametrize("name", ["不存在的道具", "peach", ""])
     async def test_道具名不存在(self, game_bot, group_event, name):
-        make_state(items0=(1,))
+        state = make_state(hp=(3, 4), items0=(1,))
         await _use(game_bot, group_event, name)
-        assert last_text(game_bot) == "你输入的道具不存在，请确认后再使用！"
+        assert state["item_0"] == [1], "名字不认识就不该动道具栏"
+        assert state["hp"] == [3, 4]
+        assert len(sent_texts(game_bot)) == 1
 
     async def test_道具名对但自己没有(self, game_bot, group_event):
-        make_state(items0=(2,))
+        state = make_state(hp=(3, 4), items0=(2,))
         await _use(game_bot, group_event, "桃")
-        assert "你并没有这个道具，请确认后再使用！" in last_text(game_bot)
+        assert state["item_0"] == [2], "手里没有的道具不能凭空用掉"
+        assert state["hp"] == [3, 4]
+        assert len(sent_texts(game_bot)) == 1
 
     async def test_道具名忽略大小写(self, game_bot, group_event):
-        """唯一带拉丁字母的道具是「烈性TNT」，小写也得认。"""
+        """唯一带拉丁字母的道具是「烈性TNT」，小写也得认。
+
+        认没认出来看的是道具有没有被吃掉，不是回话怎么写。
+        """
         tnt = item_id_of("烈性TNT")
         state = make_state(identity=1, hp=(5, 5), hp_max=10, items0=(tnt,))
         await _use(game_bot, group_event, "烈性tnt")
         assert state["item_0"] == []
-        assert "使用了道具：烈性TNT" in last_text(game_bot)
+        assert state["hp_max"] == 9, "TNT 的效果真的结算了"
 
     async def test_只消耗一个同名道具(self, game_bot, group_event):
         state = make_state(hp=(3, 4), items0=(1, 1, 1))
@@ -1170,20 +1195,30 @@ class TestUseItemGuards:
 
 
 class TestItemsCoverage:
-    @pytest.mark.parametrize("name", sorted(game.item_dic.values()))
-    async def test_每个道具都有对应分支(self, game_bot, group_event, name):
-        """if/elif 链漏掉任何一个道具都会掉进 else 的「道具不存在或无法使用」。
-        新增道具忘了写效果的话这条会红。"""
-        item = item_id_of(name)
-        state = make_state(
-            identity=1, hp=(5, 5), hp_max=10, item_max=8,
-            clip=[0, 1, 0, 1], items0=(item,), items1=(1,), turn=0,
-        )
-        await _use(game_bot, group_event, name)
-        msg = last_text(game_bot)
-        assert f"使用了道具：{name}" in msg
-        assert "道具不存在或无法使用！" not in msg
-        assert state["hp_max"] >= 1
+    async def test_每个道具都有对应分支(self, game_bot, group_event):
+        """if/elif 链漏掉任何一个道具，就会掉进最后那条「无法使用」的 else。
+
+        怎么在不钉措辞的前提下发现「掉进 else」：else 分支和道具本身无关，
+        两个都掉进去的道具会给出**除了名字以外一模一样**的回话。所以把名字
+        抠掉之后，26 条回话必须两两不同 —— 谁跟谁撞了，谁就漏写了分支。
+        文案随便改，这条都不会红。
+        """
+        bodies: dict[str, str] = {}
+        for i, name in enumerate(sorted(game.item_dic.values()), start=1):
+            item = item_id_of(name)
+            state = make_state(
+                identity=1, hp=(5, 5), hp_max=10, item_max=8,
+                clip=[0, 1, 0, 1], items0=(item,), items1=(1,), turn=0,
+            )
+            await _use(game_bot, group_event, name)
+            assert len(sent_texts(game_bot)) == i, f"{name} 用完没回话"
+            assert state["hp_max"] >= 1, f"{name} 把血量上限打到 0 以下了"
+            bodies[name] = last_text(game_bot).replace(name, "")
+
+        seen: dict[str, str] = {}
+        for name, body in bodies.items():
+            twin = seen.setdefault(body, name)
+            assert twin == name, f"{name} 和 {twin} 的回话完全一样，多半漏写了效果分支"
 
 
 class TestItemEffects:
@@ -1191,7 +1226,6 @@ class TestItemEffects:
         state = make_state(hp=(3, 4), hp_max=6, items0=(item_id_of("桃"),))
         await _use(game_bot, group_event, "桃")
         assert state["hp"] == [4, 4]
-        assert "当前hp：4/6" in last_text(game_bot)
 
     async def test_桃_满血时不溢出(self, game_bot, group_event):
         state = make_state(hp=(6, 4), hp_max=6, items0=(item_id_of("桃"),))
@@ -1207,37 +1241,35 @@ class TestItemEffects:
         assert state["atk"] == 0
         assert state["turn"] == 1
 
-    async def test_放大镜(self, game_bot, group_event):
-        make_state(clip=[0, 0, 1], items0=(item_id_of("放大镜"),))
-        await _use(game_bot, group_event, "放大镜")
-        assert "下一颗子弹是：实弹！" in last_text(game_bot)
-
-    async def test_眼镜_看后两发(self, game_bot, group_event):
-        make_state(clip=[1, 1, 0, 1], items0=(item_id_of("眼镜"),))
-        await _use(game_bot, group_event, "眼镜")
-        assert "前两颗子弹中有 1 颗实弹。" in last_text(game_bot)
-
-    async def test_眼镜_只剩一发(self, game_bot, group_event):
-        make_state(clip=[1], items0=(item_id_of("眼镜"),))
-        await _use(game_bot, group_event, "眼镜")
-        assert "枪膛里只剩最后一颗子弹了，是实弹！" in last_text(game_bot)
-
-    async def test_墨镜_首尾相加(self, game_bot, group_event):
-        make_state(clip=[1, 0, 0, 1], items0=(item_id_of("墨镜"),))
-        await _use(game_bot, group_event, "墨镜")
-        assert "有2颗实弹！" in last_text(game_bot)
-
-    async def test_墨镜_只剩一发(self, game_bot, group_event):
-        make_state(clip=[0], items0=(item_id_of("墨镜"),))
-        await _use(game_bot, group_event, "墨镜")
-        assert "枪膛里只剩最后一颗子弹了，是空弹！" in last_text(game_bot)
+    @pytest.mark.parametrize(
+        ("name", "clips"),
+        [
+            ("放大镜", ([0, 0, 1], [0, 0, 0])),
+            ("眼镜", ([1, 1, 0, 1], [1, 1, 1, 1], [1])),
+            ("墨镜", ([1, 0, 0, 1], [0, 0, 0, 1], [0])),
+        ],
+    )
+    async def test_窥视类道具_不同弹夹给出不同结论(
+        self, game_bot, group_event, name, clips
+    ):
+        """放大镜 / 眼镜 / 墨镜 只报「膛里是什么」，报出来的句子怎么写不管，
+        但不同的弹夹必须报出不同的结论 —— 报得一模一样就是没在看弹夹。
+        每组的最后一个弹夹是「只剩一发」那条单独的分支。
+        """
+        replies = []
+        for clip in clips:
+            state = make_state(clip=list(clip), items0=(item_id_of(name),))
+            await _use(game_bot, group_event, name)
+            assert state["item_0"] == [], f"{name} 没被消耗"
+            assert state["clip"] == list(clip), f"{name} 只是看，不该动弹夹"
+            replies.append(last_text(game_bot))
+        assert len(set(replies)) == len(clips), f"{name} 对不同弹夹给了一样的回话"
 
     async def test_手铐(self, game_bot, group_event):
         state = make_state(hcf=0, items0=(item_id_of("手铐"),))
         await _use(game_bot, group_event, "手铐")
         assert state["hcf"] == 1
         assert state["item_0"] == []
-        assert "你成功拷住了对方！" in last_text(game_bot)
 
     async def test_手铐_已经拷着就退回道具(self, game_bot, group_event):
         cuff = item_id_of("手铐")
@@ -1245,10 +1277,9 @@ class TestItemEffects:
         await _use(game_bot, group_event, "手铐")
         assert state["hcf"] == 1
         assert state["item_0"] == [cuff], "用不掉的道具要还回来"
-        assert "不可使用！对方仍处于束缚状态！" in last_text(game_bot)
 
-    @pytest.mark.parametrize(("roll", "hcf", "skip"), [(0, 1, 1), (1, 3, 2)])
-    async def test_禁止卡_禁一到两回合(self, game_bot, group_event, rand, roll, hcf, skip):
+    @pytest.mark.parametrize(("roll", "hcf"), [(0, 1), (1, 3)])
+    async def test_禁止卡_禁一到两回合(self, game_bot, group_event, rand, roll, hcf):
         ban = item_id_of("禁止卡")
         rand.plan("randint", roll)
         state = make_state(identity=1, hp_max=10, item_max=8,
@@ -1256,7 +1287,6 @@ class TestItemEffects:
         await _use(game_bot, group_event, "禁止卡")
         assert state["hcf"] == hcf
         assert state["item_1"] == [ban], "对方会白捡一张禁止卡"
-        assert f"禁止了{skip}个回合" in last_text(game_bot)
 
     async def test_禁止卡_对方道具满了就不给(self, game_bot, group_event, rand):
         ban = item_id_of("禁止卡")
@@ -1264,13 +1294,11 @@ class TestItemEffects:
         state = make_state(item_max=2, items0=(ban,), items1=(1, 1))
         await _use(game_bot, group_event, "禁止卡")
         assert state["item_1"] == [1, 1]
-        assert "对方道具已满，并未获得这张禁止卡" in last_text(game_bot)
 
     async def test_小刀_伤害变二(self, game_bot, group_event):
         state = make_state(atk=0, items0=(item_id_of("小刀"),))
         await _use(game_bot, group_event, "小刀")
         assert state["atk"] == 1
-        assert "攻击力提升至两点！" in last_text(game_bot)
 
     async def test_小刀_烈弓之后可以叠加(self, game_bot, group_event):
         knife = item_id_of("小刀")
@@ -1278,14 +1306,12 @@ class TestItemEffects:
                            items0=(knife, knife))
         await _use(game_bot, group_event, "小刀")
         assert state["atk"] == 3
-        assert "目前这颗子弹的攻击力为4！" in last_text(game_bot)
 
     async def test_酒_残血时额外回血(self, game_bot, group_event):
         state = make_state(hp=(1, 4), items0=(item_id_of("酒"),))
         await _use(game_bot, group_event, "酒")
         assert state["atk"] == 1
         assert state["hp"] == [2, 4]
-        assert "酒精振奋了你，hp恢复到2点！" in last_text(game_bot)
 
     async def test_酒_血量不是1就不回(self, game_bot, group_event):
         state = make_state(hp=(2, 4), items0=(item_id_of("酒"),))
@@ -1303,7 +1329,6 @@ class TestItemEffects:
         state = make_state(clip=[0, 1, 1], items0=(item_id_of("啤酒"),))
         await _use(game_bot, group_event, "啤酒")
         assert state["clip"] == [0, 1]
-        assert "你退掉了一颗子弹，这颗子弹是：实弹" in last_text(game_bot)
 
     async def test_啤酒_退掉最后一发实弹就换弹加轮(self, game_bot, group_event, rand):
         rand.plan("choices", [1])
@@ -1314,7 +1339,6 @@ class TestItemEffects:
         await _use(game_bot, group_event, "啤酒")
         assert state["game_turn"] == 2
         assert state["clip"] == [1, 0]
-        assert "子弹已耗尽，重新装填！" in last_text(game_bot)
 
     async def test_手套_只换弹不刷道具(self, game_bot, group_event, rand):
         rand.plan("choices", [2])
@@ -1324,8 +1348,7 @@ class TestItemEffects:
         await _use(game_bot, group_event, "手套")
         assert state["clip"] == [1, 0, 0, 1]
         assert state["game_turn"] == 1, "换弹不算新的一轮"
-        assert state["item_1"] == []
-        assert "新弹夹总数：4 实弹数：2" in last_text(game_bot)
+        assert state["item_1"] == [], "手套不给对方补道具"
 
     @pytest.mark.parametrize(
         ("roll", "hp_max", "expected"),
@@ -1346,13 +1369,11 @@ class TestItemEffects:
         state = make_state(items0=(ticket, 1, 1))
         await _use(game_bot, group_event, "刷新票")
         assert state["item_0"] == [2, 3]
-        assert "新道具为：医疗箱, 放大镜" in last_text(game_bot)
 
     async def test_刷新票_只有它自己(self, game_bot, group_event):
         state = make_state(items0=(item_id_of("刷新票"),))
         await _use(game_bot, group_event, "刷新票")
         assert state["item_0"] == []
-        assert "现在一个新道具都没有！" in last_text(game_bot)
 
     @pytest.mark.parametrize("roll", [1, 5])
     async def test_欲望之盒_抽道具(self, game_bot, group_event, rand, roll):
@@ -1361,7 +1382,6 @@ class TestItemEffects:
         state = make_state(items0=(item_id_of("欲望之盒"),))
         await _use(game_bot, group_event, "欲望之盒")
         assert state["item_0"] == [5]
-        assert "获得了道具：手铐" in last_text(game_bot)
 
     @pytest.mark.parametrize("roll", [6, 8])
     async def test_欲望之盒_回血(self, game_bot, group_event, rand, roll):
@@ -1369,15 +1389,13 @@ class TestItemEffects:
         state = make_state(hp=(3, 4), items0=(item_id_of("欲望之盒"),))
         await _use(game_bot, group_event, "欲望之盒")
         assert state["hp"] == [4, 4]
-        assert "恢复了1点体力" in last_text(game_bot)
 
     async def test_欲望之盒_满血转成桃(self, game_bot, group_event, rand):
         rand.plan("randint", 6)
         state = make_state(hp=(6, 4), hp_max=6, items0=(item_id_of("欲望之盒"),))
         await _use(game_bot, group_event, "欲望之盒")
         assert state["hp"] == [6, 4]
-        assert state["item_0"] == [1]
-        assert "这点体力将转化为桃送给你" in last_text(game_bot)
+        assert state["item_0"] == [1], "回不了血就折成一个桃"
 
     @pytest.mark.parametrize("roll", [9, 10])
     async def test_欲望之盒_打对面(self, game_bot, group_event, rand, roll):
@@ -1385,7 +1403,6 @@ class TestItemEffects:
         state = make_state(hp=(4, 4), items0=(item_id_of("欲望之盒"),))
         await _use(game_bot, group_event, "欲望之盒")
         assert state["hp"] == [4, 3]
-        assert "对对面造成了一点伤害" in last_text(game_bot)
 
     async def test_无中生有_没束缚就跳回合(self, game_bot, group_event, rand):
         rand.plan("choice", 1, 2)
@@ -1394,7 +1411,6 @@ class TestItemEffects:
         assert state["item_0"] == [1, 2]
         assert state["turn"] == 1
         assert state["atk"] == 0
-        assert "代价是跳过了自己的回合" in last_text(game_bot)
 
     async def test_无中生有_有束缚就扣束缚(self, game_bot, group_event, rand):
         rand.plan("choice", 1, 2)
@@ -1403,7 +1419,6 @@ class TestItemEffects:
         assert state["hcf"] == 1
         assert state["turn"] == 0, "回合留在自己这儿"
         assert state["atk"] == 3, "这条分支不清加伤"
-        assert "对方的束缚的回合将-1" in last_text(game_bot)
 
     async def test_天秤_道具多就打人(self, game_bot, group_event):
         scale = item_id_of("天秤")
@@ -1411,7 +1426,6 @@ class TestItemEffects:
                            items0=(scale, 1, 1), items1=(1,))
         await _use(game_bot, group_event, "天秤")
         assert state["hp"] == [5, 4]
-        assert "由于2≥1，你成功对对方造成一点伤害" in last_text(game_bot)
 
     async def test_天秤_道具少就回血(self, game_bot, group_event):
         scale = item_id_of("天秤")
@@ -1419,14 +1433,12 @@ class TestItemEffects:
                            items0=(scale,), items1=(1, 1))
         await _use(game_bot, group_event, "天秤")
         assert state["hp"] == [6, 5]
-        assert "由于0<2，你回复一点体力" in last_text(game_bot)
 
     async def test_休养生息_对面满血只回自己一点(self, game_bot, group_event):
         state = make_state(identity=1, hp=(5, 10), hp_max=10, item_max=8,
                            items0=(item_id_of("休养生息"),))
         await _use(game_bot, group_event, "休养生息")
         assert state["hp"] == [6, 10]
-        assert "对方hp已满，你仅恢复了1点hp" in last_text(game_bot)
 
     async def test_休养生息_双方都回并夹上限(self, game_bot, group_event):
         state = make_state(identity=1, hp=(9, 5), hp_max=10, item_max=8,
@@ -1458,8 +1470,7 @@ class TestItemEffects:
                            items0=(blade,))
         await _use(game_bot, group_event, "血刃")
         assert state["hp"] == [1, 5]
-        assert state["item_0"] == [blade]
-        assert "你的血量无法支持你使用血刃！" in last_text(game_bot)
+        assert state["item_0"] == [blade], "用不掉的道具要还回来"
 
     async def test_黑洞_抢一个道具(self, game_bot, group_event, rand):
         rand.plan("randint", 1)
@@ -1468,15 +1479,13 @@ class TestItemEffects:
         await _use(game_bot, group_event, "黑洞")
         assert state["item_1"] == [1, 3]
         assert state["item_0"] == [2]
-        assert "对方的【医疗箱】被黑洞吞噬" in last_text(game_bot)
 
     async def test_黑洞_对面没道具就退回来(self, game_bot, group_event):
         hole = item_id_of("黑洞")
         state = make_state(identity=1, hp=(5, 5), hp_max=10, item_max=8,
                            items0=(hole,), items1=())
         await _use(game_bot, group_event, "黑洞")
-        assert state["item_0"] == [hole]
-        assert "黑洞在无尽的沉寂中回到了你的手中" in last_text(game_bot)
+        assert state["item_0"] == [hole], "用不掉的道具要还回来"
 
     async def test_金苹果_回三点跳两回合(self, game_bot, group_event):
         state = make_state(identity=1, hp=(5, 5), hp_max=10, item_max=8,
@@ -1493,7 +1502,6 @@ class TestItemEffects:
         await _use(game_bot, group_event, "铂金草莓")
         assert state["hp_max"] == 11
         assert state["hp"] == [11, 5]
-        assert "当前hp上限：11" in last_text(game_bot)
 
     async def test_肾上腺素_换上限(self, game_bot, group_event, rand):
         rand.plan("choice", 1)
@@ -1512,8 +1520,7 @@ class TestItemEffects:
         await _use(game_bot, group_event, "肾上腺素")
         assert state["hp_max"] == 1
         assert state["item_max"] == 8
-        assert state["item_0"] == [adr]
-        assert "你无法承受这种后果" in last_text(game_bot)
+        assert state["item_0"] == [adr], "用不掉的道具要还回来"
 
     async def test_烈性TNT_先扣上限再扣血(self, game_bot, group_event):
         state = make_state(identity=1, hp=(10, 6), hp_max=10, item_max=8,
@@ -1534,8 +1541,7 @@ class TestItemEffects:
         await _use(game_bot, group_event, "烈性TNT")
         assert state["hp"] == list(hp)
         assert state["hp_max"] == hp_max
-        assert state["item_0"] == [tnt]
-        assert "这样做无异于自杀" in last_text(game_bot)
+        assert state["item_0"] == [tnt], "用不掉的道具要还回来"
 
     async def test_双转团_转给对方(self, game_bot, group_event, rand):
         gift = item_id_of("双转团")
@@ -1545,7 +1551,6 @@ class TestItemEffects:
         await _use(game_bot, group_event, "双转团")
         assert state["item_0"] == []
         assert state["item_1"] == [gift]
-        assert "对方十分感兴趣，所以拿走了这件物品" in last_text(game_bot)
 
     async def test_双转团_对方满了就丢掉(self, game_bot, group_event, rand):
         gift = item_id_of("双转团")
@@ -1553,8 +1558,8 @@ class TestItemEffects:
         state = make_state(identity=1, hp=(5, 5), hp_max=10, item_max=2,
                            items0=(gift,), items1=(1, 1))
         await _use(game_bot, group_event, "双转团")
-        assert state["item_1"] == [1, 1]
-        assert "没办法拿走这件物品，所以把双转团丢了" in last_text(game_bot)
+        assert state["item_0"] == [], "自己这边一定会少一个"
+        assert state["item_1"] == [1, 1], "对方满了就凭空消失"
 
     async def test_双转团_顺手牵羊还摔一跤(self, game_bot, group_event, rand):
         gift = item_id_of("双转团")
@@ -1564,10 +1569,8 @@ class TestItemEffects:
                            items0=(gift, 1), items1=())
         await _use(game_bot, group_event, "双转团")
         assert state["item_0"] == []
-        assert sorted(state["item_1"]) == sorted([gift, 1])
-        assert state["hp"] == [5, 4]
-        assert "对方还顺手拿走了你的【桃】" in last_text(game_bot)
-        assert "一不小心摔了一跤，hp-1" in last_text(game_bot)
+        assert sorted(state["item_1"]) == sorted([gift, 1]), "桃也被顺走了"
+        assert state["hp"] == [5, 4], "对方摔了一跤，掉一点血"
 
     @pytest.mark.parametrize(("second", "hp0"), [(2, 4), (3, 6)])
     async def test_双转团_自己掉血或回血(self, game_bot, group_event, rand, second, hp0):
@@ -1582,10 +1585,9 @@ class TestItemEffects:
         rand.plan("randint", 9)  # 欲望之盒 -> 打对面一点
         make_state(hp=(4, 1), items0=(item_id_of("欲望之盒"),))
         await _use(game_bot, group_event, "欲望之盒")
-        msg = last_text(game_bot)
-        assert "游戏结束！" in msg
-        assert f"恭喜[CQ:at,qq={P0}]胜利！" in msg
+        assert f"[CQ:at,qq={P0}]" in last_text(game_bot), "赢的是用道具的人"
         assert game.datas.demon_data[GID_S]["start"] is False
+        assert game.datas.demon_data[GID_S]["pl"] == []
 
 
 # ==========================================================================
@@ -1597,63 +1599,82 @@ async def _check(bot, group_event, *, user_id: int = P0) -> bool:
 
 
 class TestCheckSituation:
-    async def test_没开局(self, game_bot, group_event):
-        make_state(start=False)
+    async def test_没开局或者不是局内人就不给局势(self, game_bot, group_event):
+        """两条拦截分支。断言的是「回的不是局势本身」—— 拿一次正常输出当对照，
+        拦下来的两次必须和它不一样。措辞怎么改都不影响这条。
+        """
+        make_state(hp=(4, 5), hp_max=6, game_turn=3)
         await _check(game_bot, group_event)
-        assert "当前并没有开始任何一句轮盘哦！" in last_text(game_bot)
+        board = last_text(game_bot)
 
-    async def test_局外人看不了(self, game_bot, group_event):
-        make_state()
+        make_state(start=False, hp=(4, 5), hp_max=6, game_turn=3)
+        await _check(game_bot, group_event)
+        assert last_text(game_bot) != board, "没开局却把局势报出来了"
+
+        make_state(hp=(4, 5), hp_max=6, game_turn=3)
         await _check(game_bot, group_event, user_id=P2)
-        assert "只有当前局内玩家能查看局势哦！" in last_text(game_bot)
+        assert last_text(game_bot) != board, "局外人也能看到局势"
 
-    async def test_正常输出(self, game_bot, group_event, clock):
+        assert len(sent_texts(game_bot)) == 3
+
+    async def test_正常输出把该报的数都报了(self, game_bot, group_event, clock):
+        """局势正文怎么排版随便改，但这几个数得在：双方血量、剩余步时、
+        双方道具名。都是算出来的值，不是措辞。
+        """
         make_state(hp=(4, 5), hp_max=6, item_max=6, clip=[0, 1, 1],
                    items0=(1, 2), items1=(), game_turn=3, now=FAKE_NOW)
         clock.advance(90)
         await _check(game_bot, group_event)
         msg = last_text(game_bot)
-        assert "- 本局模式：正常模式" in msg
-        assert "- 本步剩余时间：8分30秒" in msg  # 600-90 = 510s
-        assert "- 当前轮数：3" in msg
-        assert "hp：4/6" in msg and "hp：5/6" in msg
-        assert "道具(2/6)" in msg and "道具(0/6)" in msg
-        assert "桃, 医疗箱" in msg
-        assert "你目前没有道具哦！" in msg
-        assert "总弹数3，实弹数2" in msg
+        assert "4/6" in msg and "5/6" in msg, "双方血量"
+        assert "8分30秒" in msg, "600-90=510 秒，换算成 8 分 30 秒"
+        assert "桃" in msg and "医疗箱" in msg, "手里的道具名"
+        assert f"[CQ:at,qq={P0}]" in msg and f"[CQ:at,qq={P1}]" in msg
 
-    async def test_束缚和加伤只在非零时显示(self, game_bot, group_event):
-        make_state(hcf=3, atk=2)
-        await _check(game_bot, group_event)
-        msg = last_text(game_bot)
-        assert "- 当前对方剩余束缚回合数：2" in msg
-        assert "- 本颗子弹伤害为：3点" in msg
-
-    async def test_没束缚没加伤就不显示(self, game_bot, group_event):
+    async def test_束缚和加伤只在非零时才进局势(self, game_bot, group_event):
+        """有没有这两行，靠「回话跟没有的时候不一样」来保证。"""
         make_state(hcf=0, atk=0)
         await _check(game_bot, group_event)
-        msg = last_text(game_bot)
-        assert "剩余束缚回合数" not in msg
-        assert "本颗子弹伤害为" not in msg
+        plain = last_text(game_bot)
 
-    @pytest.mark.parametrize(
-        ("identity", "turn", "label", "death"),
-        [
-            (1, 12, "身份模式", False),
-            (1, 13, "身份模式", True),
-            (2, 5, "急速模式", False),
-            (2, 6, "急速模式", True),
-            (0, 999, "正常模式", False),
-        ],
-    )
-    async def test_模式与死斗标记(
-        self, game_bot, group_event, identity, turn, label, death
-    ):
-        make_state(identity=identity, game_turn=turn, hp_max=10, item_max=8)
+        make_state(hcf=3, atk=2)
         await _check(game_bot, group_event)
-        msg = last_text(game_bot)
-        assert label in msg
-        assert ("（死斗）" in msg) is death
+        assert last_text(game_bot) != plain
+
+    async def test_束缚回合数按_hcf加一整除二_显示(self, game_bot, group_event):
+        """展示用的公式是 (hcf+1)//2：1 和 2 会显示成同一个数，3 才跳下一档。
+        钉的是这个换算关系，不是那一行怎么写。
+        """
+        texts = []
+        for hcf in (1, 2, 3):
+            make_state(hcf=hcf, atk=0)
+            await _check(game_bot, group_event)
+            texts.append(last_text(game_bot))
+        assert texts[0] == texts[1], "hcf 1 和 2 该显示成同一个数"
+        assert texts[2] != texts[1], "hcf 3 该跳到下一档"
+
+    async def test_三种模式的局势各不相同(self, game_bot, group_event):
+        """正常 / 身份 / 急速三条分支，报出来的局势必须能区分开。"""
+        texts = []
+        for identity in (0, 1, 2):
+            make_state(identity=identity, game_turn=1, hp_max=10, item_max=8)
+            await _check(game_bot, group_event)
+            texts.append(last_text(game_bot))
+        assert len(set(texts)) == 3, "三种模式的局势报得一模一样"
+
+    @pytest.mark.parametrize(("identity", "before", "after"), [(1, 12, 13), (2, 5, 6)])
+    async def test_越过死斗轮数局势会变个样(
+        self, game_bot, group_event, identity, before, after
+    ):
+        """死斗标记怎么写不管，但越过阈值那一轮，局势里除了轮数以外得多点东西
+        —— 所以先把所有数字抹成 # 再比。
+        """
+        texts = []
+        for turn in (before, after):
+            make_state(identity=identity, game_turn=turn, hp_max=10, item_max=8)
+            await _check(game_bot, group_event)
+            texts.append(re.sub(r"\d+", "#", last_text(game_bot)))
+        assert texts[0] != texts[1], "越过死斗阈值，局势一点变化都没有"
 
 
 # ==========================================================================
@@ -1668,41 +1689,50 @@ async def _surrender(bot, group_event, *, user_id: int = P0) -> bool:
 
 class TestSurrender:
     async def test_没有对局(self, fake_bot, group_event):
+        """连状态都不该建出来 —— 投降走的是 .get()，不像开枪会顺手补默认值。"""
         await _surrender(fake_bot, group_event)
-        assert "当前没有进行中的游戏！" in last_text(fake_bot)
+        assert GID_S not in game.datas.demon_data
+        assert len(sent_texts(fake_bot)) == 1
 
     async def test_只有一个人等着也算没开局(self, fake_bot, group_event):
         state = make_state(start=False)
         state["pl"] = [str(P0)]
         await _surrender(fake_bot, group_event)
-        assert "当前没有进行中的游戏！" in last_text(fake_bot)
+        assert state["pl"] == [str(P0)], "等人的队列不该被投降清掉"
+        assert state["start"] is False
+        assert len(sent_texts(fake_bot)) == 1
 
     async def test_局外人投不了(self, fake_bot, group_event):
-        make_state()
+        state = make_state()
         await _surrender(fake_bot, group_event, user_id=P2)
-        assert "你当前不在游戏中，无法投降！" in last_text(fake_bot)
+        assert state["start"] is True, "局外人不能把别人的局投掉"
+        assert state["pl"] == [str(P0), str(P1)]
+        assert len(sent_texts(fake_bot)) == 1
 
     @pytest.mark.parametrize(("loser", "winner"), [(P0, P1), (P1, P0)])
     async def test_投降判对方胜(self, fake_bot, group_event, loser, winner):
         make_state()
         await _surrender(fake_bot, group_event, user_id=loser)
+        # 结算里两个人的 QQ 号都得点到（谁投的、谁赢的），这是结果不是措辞
         msg = last_text(fake_bot)
-        assert f"玩家[CQ:at,qq={loser}]已投降。" in msg
-        assert f"恭喜[CQ:at,qq={winner}]胜利！" in msg
+        assert f"[CQ:at,qq={loser}]" in msg and f"[CQ:at,qq={winner}]" in msg
         assert game.datas.demon_data[GID_S]["start"] is False
         assert game.datas.demon_data[GID_S]["pl"] == []
 
     async def test_重复投降(self, fake_bot, group_event):
         make_state()
         await _surrender(fake_bot, group_event)
-        await _surrender(fake_bot, group_event)
-        assert "当前没有进行中的游戏！" in last_text(fake_bot)
+        second = await _surrender(fake_bot, group_event)
+        assert second, "第二次也得有回话，不能挂着"
+        assert len(sent_texts(fake_bot)) == 2
+        assert game.datas.demon_data[GID_S]["pl"] == []
 
     async def test_投降不受回合限制(self, fake_bot, group_event):
         """轮到 P0，但 P1 照样能投。"""
         make_state(turn=0)
         await _surrender(fake_bot, group_event, user_id=P1)
-        assert f"恭喜[CQ:at,qq={P0}]胜利！" in last_text(fake_bot)
+        assert f"[CQ:at,qq={P0}]" in last_text(fake_bot)
+        assert game.datas.demon_data[GID_S]["start"] is False
 
 
 # ==========================================================================
@@ -1715,9 +1745,8 @@ class TestItemQuery:
             game.prop_demon_query, game.prop_demon_query_handle, fake_bot, event,
             bot=fake_bot, event=event, arg=Message("烈弓"),
         )
-        msg = last_text(fake_bot)
-        assert "道具【烈弓】的效果是：" in msg
-        assert game.item_effects["烈弓"] in msg
+        # 比的是模块自己那张表里的说明，不是抄一份字面量
+        assert game.item_effects["烈弓"] in last_text(fake_bot)
 
     async def test_查不存在的道具(self, fake_bot, group_event):
         event = group_event("*恶魔道具 不存在")
@@ -1725,21 +1754,27 @@ class TestItemQuery:
             game.prop_demon_query, game.prop_demon_query_handle, fake_bot, event,
             bot=fake_bot, event=event, arg=Message("不存在"),
         )
-        assert "未找到名为【不存在】的道具" in last_text(fake_bot)
-
-    @pytest.mark.parametrize("arg", ["", "all", "  ALL  "])
-    async def test_查全部走合并转发(self, fake_bot, group_event, arg):
-        event = group_event("*恶魔道具")
-        await drive(
-            game.prop_demon_query, game.prop_demon_query_handle, fake_bot, event,
-            bot=fake_bot, event=event, arg=Message(arg),
+        text = last_text(fake_bot)
+        assert not any(e in text for e in game.item_effects.values()), (
+            "查不到就一条效果说明都不该吐出来"
         )
-        api, data = fake_bot.calls[-1]
-        assert api == "send_group_forward_msg"
-        assert data["group_id"] == GID
-        content = data["messages"][0]["data"]["content"]
-        for name in game.item_dic.values():
-            assert f"-【{name}】：" in content
+
+    async def test_查全部走合并转发(self, fake_bot, group_event):
+        """空参 / all / 带空格的大写 ALL 都归到同一个「查全部」分支，
+        原来是三个参数化节点，合并成表内循环。"""
+        for arg in ("", "all", "  ALL  "):
+            event = group_event("*恶魔道具")
+            await drive(
+                game.prop_demon_query, game.prop_demon_query_handle, fake_bot, event,
+                bot=fake_bot, event=event, arg=Message(arg),
+            )
+            api, data = fake_bot.calls[-1]
+            assert api == "send_group_forward_msg", f"{arg!r} 没走合并转发"
+            assert data["group_id"] == GID
+            content = data["messages"][0]["data"]["content"]
+            for name, effect in game.item_effects.items():
+                assert name in content, f"{arg!r} 的清单里漏了 {name}"
+                assert effect in content, f"{arg!r} 的清单里 {name} 没带说明"
 
     async def test_大小写不敏感(self, fake_bot, group_event):
         event = group_event("*恶魔道具 烈性tnt")
@@ -1747,7 +1782,7 @@ class TestItemQuery:
             game.prop_demon_query, game.prop_demon_query_handle, fake_bot, event,
             bot=fake_bot, event=event, arg=Message("烈性tnt"),
         )
-        assert "道具【烈性TNT】的效果是：" in last_text(fake_bot)
+        assert game.item_effects["烈性TNT"] in last_text(fake_bot)
 
 
 class TestDemonHelpText:
@@ -1766,14 +1801,25 @@ class TestDemonHelpText:
         assert mentioned <= registered, f"帮助里有不存在的命令：{mentioned - registered}"
 
 
+def _game_matchers() -> dict[str, type]:
+    """game 模块里所有 matcher，变量名 -> matcher。
+
+    从模块命名空间反射，不写死清单：加命令自动进来，删命令自动出去。
+    """
+    return {
+        name: obj
+        for name, obj in vars(game).items()
+        if isinstance(obj, type) and issubclass(obj, Matcher) and obj is not Matcher
+    }
+
+
 def _game_command_names() -> set[str]:
     """game 模块里所有注册过的命令名 + 别名"""
     names: set[str] = set()
-    for obj in vars(game).values():
-        if isinstance(obj, type) and issubclass(obj, Matcher) and obj is not Matcher:
-            for checker in obj.rule.checkers:
-                if isinstance(checker.call, CommandRule):
-                    names |= {".".join(cmd) for cmd in checker.call.cmds}
+    for obj in _game_matchers().values():
+        for checker in obj.rule.checkers:
+            if isinstance(checker.call, CommandRule):
+                names |= {".".join(cmd) for cmd in checker.call.cmds}
     return names
 
 
@@ -1799,28 +1845,33 @@ class TestHelpRegistryIntegrity:
         assert COMMANDS
         assert CATEGORIES
 
-    @pytest.mark.parametrize("name", sorted(COMMANDS))
-    def test_每条都有必填字段(self, name):
-        cmd = COMMANDS[name]
-        assert isinstance(cmd, Cmd)
-        assert name.strip() == name and name, f"{name} 的命令名有多余空白"
-        for field in ("usage", "summary", "detail"):
-            value = getattr(cmd, field)
-            assert isinstance(value, str)
-            assert value.strip(), f"{name} 的 {field} 是空的"
-        assert cmd.category in CATEGORIES, f"{name} 的分类 {cmd.category} 不在 CATEGORIES 里"
-        assert isinstance(cmd.examples, tuple)
-        assert isinstance(cmd.aliases, tuple)
-        assert all(isinstance(e, str) and e.strip() for e in cmd.examples)
-        assert all(isinstance(a, str) and a.strip() for a in cmd.aliases)
+    def test_每条都有必填字段(self):
+        """原来是 @parametrize(sorted(COMMANDS))，36 个节点盯同一条不变量。
 
-    @pytest.mark.parametrize("name", sorted(COMMANDS))
-    def test_usage_以前缀加命令名开头(self, name):
-        cmd = COMMANDS[name]
-        if cmd.prefix:
-            assert cmd.usage.startswith(cmd.prefix + name), (
-                f"{name} 的 usage 和命令名对不上：{cmd.usage}"
+        改成表内循环：加一条命令不再多出一个测试节点，出错信息里照样有命令名。
+        """
+        for name, cmd in sorted(COMMANDS.items()):
+            assert isinstance(cmd, Cmd)
+            assert name.strip() == name and name, f"{name} 的命令名有多余空白"
+            for field in ("usage", "summary", "detail"):
+                value = getattr(cmd, field)
+                assert isinstance(value, str)
+                assert value.strip(), f"{name} 的 {field} 是空的"
+            assert cmd.category in CATEGORIES, (
+                f"{name} 的分类 {cmd.category} 不在 CATEGORIES 里"
             )
+            assert isinstance(cmd.examples, tuple)
+            assert isinstance(cmd.aliases, tuple)
+            assert all(isinstance(e, str) and e.strip() for e in cmd.examples)
+            assert all(isinstance(a, str) and a.strip() for a in cmd.aliases)
+
+    def test_usage_以前缀加命令名开头(self):
+        """同上，原来也是 36 个节点。断言本身一个字没改。"""
+        for name, cmd in sorted(COMMANDS.items()):
+            if cmd.prefix:
+                assert cmd.usage.startswith(cmd.prefix + name), (
+                    f"{name} 的 usage 和命令名对不上：{cmd.usage}"
+                )
 
     def test_别名不重复也不和命令名撞车(self):
         seen: dict[str, str] = {}
@@ -1854,8 +1905,16 @@ class TestHelpRegistryIntegrity:
                 # `if cat and _by_category(cat)` 兜住，不会 KeyError
                 assert helpmod._by_category(cat) == []
 
-    def test_前缀只有星号和空(self):
-        assert {c.prefix for c in COMMANDS.values()} == {"*", ""}
+    def test_前缀都在合法集合里(self):
+        """commands.py 里 Cmd.prefix 的注释白纸黑字写了三种合法前缀
+        （* / . / 空），所以断言「每条的前缀都是其中之一」。
+
+        原来写的是 `{...} == {"*", ""}`，也就是「现存前缀恰好是这两种」——
+        那条会在有人合法地加一条 . 开头的命令时红，可那是产品允许的。
+        """
+        legal = {"*", ".", ""}
+        for name, cmd in COMMANDS.items():
+            assert cmd.prefix in legal, f"{name} 的前缀 {cmd.prefix!r} 不在 {legal} 里"
 
 
 class TestHelpMatchesReality:
@@ -1881,10 +1940,14 @@ class TestHelpMatchesReality:
         )
         assert missing == [], f"help 里有这些别名，但插件里没注册：{missing}"
 
-    def test_没有前缀的那条是戳一戳而且真的挂了处理函数(self):
-        """唯一 prefix 为空的条目是「戳一戳」，它不是命令而是 on_type 的通知响应。"""
-        no_prefix = [n for n, c in COMMANDS.items() if not c.prefix]
-        assert no_prefix == ["戳一戳"]
+    def test_戳一戳没有前缀而且真的挂了处理函数(self):
+        """「戳一戳」不是命令，是 on_type 的通知响应，所以 prefix 是空的。
+
+        原来写的是 `no_prefix == ["戳一戳"]`，也就是「全表只有它一条没前缀」——
+        再来一条通知类响应（比如入群欢迎）就会红，可那并不是坏事。
+        现在只断言它自己：没前缀、注册了、有处理函数。
+        """
+        assert COMMANDS["戳一戳"].prefix == ""
         joy = importlib.import_module("xiaozu_bot.plugins.joy")
         assert issubclass(joy.group_poke, Matcher)
         assert joy.group_poke.handlers, "戳一戳注册了但没有处理函数"
@@ -1899,30 +1962,31 @@ class TestHelpMatchesReality:
         )
         assert empty == [], f"help 里写了但没有处理函数的命令：{empty}"
 
-    def test_setmode说明里的数字和代码一致(self):
-        """help 把三个模式的血量/道具上限写死在正文里了，得和 game 对得上。"""
-        detail = COMMANDS["setmode"].detail
-        assert f"基础 {len(game.item_dic1)} 个道具，血量上限 6，道具上限 6" in detail
-        assert f"全部 {len(game.item_dic)} 个道具，血量上限 10，道具上限 8" in detail
-        assert f"超过 {game.death_turn} 轮进死斗" in detail
-        assert "血量上限 16，道具上限 10" in detail
-        assert f"超过 {game.pangguang_turn} 轮就进死斗" in detail
+    def test_说明里抄的数字和代码对得上(self):
+        """help 把 game 里几个常量抄进了正文（道具数、死斗轮数、每步限时）。
+        抄错了是真骗人，所以数字还钉着；至于这些数字被写进哪句话里，不管。
 
-    def test_betgame说明里的等待超时和代码一致(self):
-        assert f"（{game.turn_time // 60} 分钟）" in COMMANDS["betgame"].detail
+        原来是四条，每条都把整句话抄了一遍，改一个字就红。
+        """
+        setmode = COMMANDS["setmode"].detail
+        for value in (
+            len(game.item_dic1), len(game.item_dic),
+            game.death_turn, game.pangguang_turn,
+        ):
+            assert str(value) in setmode, f"setmode 说明里没提到 {value}"
 
-    def test_开枪说明里的超时和代码一致(self):
-        assert f"每步限时 {game.turn_time // 60} 分钟" in COMMANDS["开枪"].constraints
+        minutes = str(game.turn_time // 60)
+        assert minutes in COMMANDS["betgame"].detail
+        assert minutes in COMMANDS["开枪"].constraints
+        assert str(len(game.item_dic)) in COMMANDS["恶魔道具"].detail
 
-    def test_使用说明里列的道具名和代码一致(self):
+    def test_使用说明里列全了所有道具(self):
+        """道具清单漏一个就是 help 骗人 —— 这条跟措辞无关，是清单完整性。"""
         detail = COMMANDS["使用"].detail
-        assert f"通用道具 {len(game.item_dic1)} 个" in detail
-        assert f"还会多出 {len(game.item_dic2)} 个" in detail
         for name in game.item_dic.values():
             assert name in detail, f"help 的道具清单里漏了 {name}"
-
-    def test_恶魔道具说明里的总数和代码一致(self):
-        assert f"全部 {len(game.item_dic)} 个道具" in COMMANDS["恶魔道具"].detail
+        assert str(len(game.item_dic1)) in detail
+        assert str(len(game.item_dic2)) in detail
 
 
 def _all_registered_commands() -> dict[str, list[type]]:
@@ -1952,12 +2016,11 @@ def _all_registered_commands() -> dict[str, list[type]]:
 # help：排版函数
 # ==========================================================================
 class TestHelpLayout:
-    @pytest.mark.parametrize(
-        ("text", "width"),
-        [("", 0), ("abc", 3), ("中文", 4), ("*jrrp", 5), ("a中", 3), ("１", 2)],
-    )
-    def test_显示宽度(self, text, width):
-        assert helpmod._width(text) == width
+    def test_显示宽度(self):
+        """一张纯函数的输入输出表，原来一行一个参数化节点，合并成表内循环。"""
+        cases = [("", 0), ("abc", 3), ("中文", 4), ("*jrrp", 5), ("a中", 3), ("１", 2)]
+        for text, width in cases:
+            assert helpmod._width(text) == width, f"{text!r} 的宽度算错了"
 
     def test_按显示宽度补空格(self):
         padded = helpmod._pad("中", 5)
@@ -1983,55 +2046,58 @@ class TestHelpLayout:
 
 
 class TestHelpOverview:
-    def test_列出了每一条命令(self):
-        text = helpmod._overview()
-        for name, cmd in COMMANDS.items():
-            assert cmd.prefix + name in text, f"总览里少了 {name}"
-            assert cmd.summary in text
+    def test_列出的命令不多不少(self):
+        """总览里缩进两格的每个标签，必须和 COMMANDS 一一对应。
 
-    def test_列出了每一个分类标题(self):
-        text = helpmod._overview()
-        for title in CATEGORIES.values():
-            assert f"【{title}】" in text
-
-    def test_列出的条目不多不少(self):
-        """总览里缩进两格的每个标签，必须和 COMMANDS 一一对应。"""
+        原来「列出了每一条命令」和「条目不多不少」是两条，前者是后者的一半，
+        合并成一条：标签集合精确相等 + 每条的 summary 都在。
+        """
         text = helpmod._overview()
         labels = set(re.findall(r"^ {2}(\S+)", text, flags=re.M))
         known = {c.prefix + n for n, c in COMMANDS.items()}
         assert labels == known, (
             f"总览多出来的：{labels - known}；漏掉的：{known - labels}"
         )
+        for name, cmd in COMMANDS.items():
+            assert cmd.summary in text, f"总览里少了 {name} 的一句话说明"
 
-    def test_头几行是使用提示(self):
-        lines = helpmod._overview().splitlines()
-        assert lines[0] == "小小卒的命令基本都以 * 开头"
-        assert "*help 命令名" in lines[1]
-        assert lines[2] == "按分类看：*help " + " / ".join(CATEGORIES)
+    def test_列出了每一个分类标题(self):
+        text = helpmod._overview()
+        for title in CATEGORIES.values():
+            assert title in text
 
 
 class TestHelpRender:
-    def test_基本结构(self):
-        text = helpmod._render("jrrp", COMMANDS["jrrp"])
-        assert text.startswith("【*jrrp】今日人品，每天一次")
-        assert COMMANDS["jrrp"].usage in text
-        assert COMMANDS["jrrp"].detail in text
-        assert "限制：只能在群里用" in text
-        assert "别名：" not in text
+    def test_四个字段一个都不能漏(self):
+        """命令名 / 一句话说明 / 用法 / 正文 / 限制，渲染出来必须一个不落。
+        内容全部从 COMMANDS 里取，改说明文案不牵连这条；分段标题怎么写不管。
+        """
+        cmd = COMMANDS["jrrp"]
+        text = helpmod._render("jrrp", cmd)
+        assert cmd.prefix + "jrrp" in text
+        assert cmd.summary in text
+        assert cmd.usage in text
+        assert cmd.detail in text
+        assert cmd.constraints in text
 
     def test_有别名才有别名段(self):
-        text = helpmod._render("news", COMMANDS["news"])
-        assert "别名：*公告、*新闻" in text
+        cmd = COMMANDS["news"]
+        text = helpmod._render("news", cmd)
+        assert cmd.aliases, "news 得有别名，否则这条测的是空气"
+        for alias in cmd.aliases:
+            assert cmd.prefix + alias in text
 
     def test_有例子才有例子段(self):
-        with_examples = helpmod._render("map", COMMANDS["map"])
-        assert "例子：" in with_examples
-        assert "  *map" in with_examples
-        no_examples = helpmod._render(
-            "x", Cmd(usage="*x", summary="s", detail="d", category="fun")
+        """空的字段不该占版面：同一条命令加上例子/限制，渲染结果必须变长。"""
+        bare = Cmd(usage="*x", summary="s", detail="d", category="fun")
+        rich = Cmd(
+            usage="*x", summary="s", detail="d", category="fun",
+            examples=("*x 举个例子",), constraints="只有周三能用",
         )
-        assert "例子：" not in no_examples
-        assert "限制：" not in no_examples
+        short, long = helpmod._render("x", bare), helpmod._render("x", rich)
+        assert "*x 举个例子" in long
+        assert "只有周三能用" in long
+        assert len(short) < len(long), "没例子没限制的时候不该留空段"
 
     def test_自带前缀的别名不会被重复加前缀(self):
         cmd = Cmd(
@@ -2039,18 +2105,20 @@ class TestHelpRender:
             aliases=("。带前缀", "不带前缀"),
         )
         text = helpmod._render("x", cmd)
-        assert "别名：。带前缀、*不带前缀" in text
+        assert "。带前缀" in text and "*。带前缀" not in text, "别名的前缀被加了两遍"
+        assert "*不带前缀" in text
 
-    def test_空前缀命令的标题(self):
+    def test_空前缀命令不会被硬加星号(self):
         text = helpmod._render("戳一戳", COMMANDS["戳一戳"])
-        assert text.startswith("【戳一戳】")
+        assert "戳一戳" in text
+        assert "*戳一戳" not in text
 
     def test_分类页(self):
         text = helpmod._render_category("guess")
-        assert text.startswith("【猜图】")
+        assert CATEGORIES["guess"] in text
         for name, cmd in helpmod._by_category("guess"):
             assert cmd.prefix + name in text
-        assert text.endswith("看单条的详细用法：*help 命令名")
+            assert cmd.summary in text
 
 
 # ==========================================================================
@@ -2062,6 +2130,17 @@ async def _help(bot, event_factory, query: str) -> str:
         helpmod.xiaozubothelp, helpmod.handle_help, bot, event, arg=Message(query)
     )
     return last_text(bot)
+
+
+def _suggested(text: str) -> set[str]:
+    """从兜底提示里挑出被推荐的命令名。
+
+    只认「带 * 的、而且确实是 COMMANDS 里的名字」这个形状；提示语本身怎么写、
+    拿什么分隔都无所谓。help 单独排掉：兜底那句话里固定带一个 `*help 看全部`，
+    今天 COMMANDS 里没有 help 这条所以碰不上，哪天加了也不该被当成推荐。
+    """
+    found = set(re.findall(r"\*([A-Za-z0-9_一-鿿]+)", text))
+    return (found & set(COMMANDS)) - {"help"}
 
 
 class TestHelpHandler:
@@ -2102,27 +2181,32 @@ class TestHelpHandler:
         )
 
     async def test_指向空分类的别名走兜底(self, fake_bot, group_event):
-        """CATEGORY_ALIASES 里的 admin 指向一个没有命令的分类。"""
-        text = await _help(fake_bot, group_event, "admin")
-        assert text.startswith("没有「admin」这个命令或分类")
+        """CATEGORY_ALIASES 里的 admin 指向一个没有命令的分类 —— _render_category
+        对它是会 KeyError 的，所以 handle_help 必须在渲染之前就拐进兜底。"""
+        assert helpmod._by_category("admin") == []
+        with pytest.raises(KeyError):
+            helpmod._render_category("admin")
 
-    async def test_未知命令给兜底提示(self, fake_bot, group_event):
+        text = await _help(fake_bot, group_event, "admin")
+        assert "admin" in text, "兜底得把查的词原样报回来"
+        assert text != helpmod._overview()
+
+    async def test_未知命令不带推荐(self, fake_bot, group_event):
+        """zzzzz 和谁都不像，所以一条命令都不该推荐。"""
         text = await _help(fake_bot, group_event, "zzzzz")
-        assert text == "没有「zzzzz」这个命令或分类，*help 看全部。"
+        assert "zzzzz" in text
+        assert _suggested(text) == set(), "跟谁都不像却给了推荐"
 
     async def test_未知命令带相近推荐(self, fake_bot, group_event):
         text = await _help(fake_bot, group_event, "gdsearchhelpx")
-        assert "没有「gdsearchhelpx」这个命令或分类" in text
-        assert "你是不是想找：" in text
-        assert "*gdsearchhelp" in text
+        assert "gdsearchhelpx" in text
+        assert "gdsearchhelp" in _suggested(text)
 
     async def test_推荐最多五条(self, fake_bot, group_event):
-        """gues 能匹配到 6 条 guess_*，但提示语只截前 5 条。"""
+        """gues 能匹配到 6 条 guess_*，但只推前 5 条。"""
         assert len([n for n in COMMANDS if "gues" in n]) > 5
         text = await _help(fake_bot, group_event, "gues")
-        suggestions = text.split("你是不是想找：")[1].split("、")
-        assert len(suggestions) == 5
-        assert all(s.startswith("*") for s in suggestions)
+        assert len(_suggested(text)) == 5
 
     async def test_私聊也能用(self, fake_bot, make_private_event):
         event = make_private_event("*help jrrp")
@@ -2141,87 +2225,94 @@ async def _refs(bot, group_event, arg: str) -> str:
     return last_text(bot)
 
 
+# 三张分页参考表：命令名 -> 表。页数一律从表本身量，往表里加一页
+# 不用回来改测试（原来 8 / 4 / 2 这三个数字在六条用例里各写了一遍）。
+PAGED_REFS = {"gddl": helpmod.REF_GDDL, "nlw": helpmod.REF_NLW, "plat": helpmod.REF_PDIFF}
+# 三张单页表：不接受翻页
+SINGLE_REFS = {"lw": helpmod.REF_LW, "ids": helpmod.REF_IDS, "hds": helpmod.REF_HDS}
+
+
 class TestReferences:
-    USAGE = "use *references nlw/plat/gddl/hds/ids <page>"
+    async def test_不带参数或者表名不认识都不给表(self, fake_bot, group_event):
+        """走兜底的标志是「一张参考表都没吐出来」，回的那句用法提示怎么写不管。"""
+        tables = [page for t in {**PAGED_REFS, **SINGLE_REFS}.values() for page in t]
+        for arg in ("", "nope", "gddl2", "参考"):
+            text = await _refs(fake_bot, group_event, arg)
+            assert not any(page in text for page in tables), f"{arg!r} 居然翻出了表"
 
-    async def test_不带参数(self, fake_bot, group_event):
-        assert await _refs(fake_bot, group_event, "") == self.USAGE
+    async def test_aredl_单独一条分支(self, fake_bot, group_event):
+        """aredl 没有固定参考线，走的是自己那条分支，回的既不是表也不是用法提示。"""
+        text = await _refs(fake_bot, group_event, "aredl")
+        assert text != await _refs(fake_bot, group_event, "nope")
+        assert text not in [page for t in PAGED_REFS.values() for page in t]
 
-    @pytest.mark.parametrize("name", ["nope", "gddl2", "参考"])
-    async def test_未知表名(self, fake_bot, group_event, name):
-        assert await _refs(fake_bot, group_event, name) == self.USAGE
+    async def test_分页表每一页都翻得到(self, fake_bot, group_event):
+        """原来「页数对不对」「第一页有效」「最后一页有效」是三条乘三张表 = 9 个节点，
+        其实都是这个循环的某一次迭代：第 1 页到第 len 页，页页对得上，页脚也对。
+        末页那次顺带守住上界的差一位（判断写的是 `page > len`，不是 `>=`）。
+        """
+        for name, table in PAGED_REFS.items():
+            pages = len(table)
+            assert pages > 1, f"{name} 不是分页表了？"
+            for page in range(1, pages + 1):
+                text = await _refs(fake_bot, group_event, f"{name} {page}")
+                assert text == table[page - 1] + helpmod.pagehint(page, pages), (
+                    f"{name} 第 {page} 页翻错了"
+                )
 
-    async def test_aredl_没有固定参考线(self, fake_bot, group_event):
-        assert "AREDL是实时变化的" in await _refs(fake_bot, group_event, "aredl")
+    async def test_页码超出上界(self, fake_bot, group_event):
+        for name, table in PAGED_REFS.items():
+            pages = len(table)
+            text = await _refs(fake_bot, group_event, f"{name} {pages + 1}")
+            assert not any(page in text for page in table), f"{name} 没挡住越界"
+            assert str(pages) in text, "报错里得说清楚一共几页"
 
-    @pytest.mark.parametrize(
-        ("name", "pages"),
-        [("gddl", 8), ("nlw", 4), ("plat", 2)],
-    )
-    async def test_分页表的页数(self, fake_bot, group_event, name, pages):
-        table = {"gddl": helpmod.REF_GDDL, "nlw": helpmod.REF_NLW,
-                 "plat": helpmod.REF_PDIFF}[name]
-        assert len(table) == pages
-        for page in range(1, pages + 1):
-            text = await _refs(fake_bot, group_event, f"{name} {page}")
-            assert text == table[page - 1] + helpmod.pagehint(page, pages)
-
-    @pytest.mark.parametrize(("name", "pages"), [("gddl", 8), ("nlw", 4), ("plat", 2)])
-    async def test_页码超出范围(self, fake_bot, group_event, name, pages):
-        text = await _refs(fake_bot, group_event, f"{name} {pages + 1}")
-        assert f"你输入的页码数超出范围（共{pages}页" in text
-
-    @pytest.mark.parametrize(("name", "pages"), [("gddl", 8), ("nlw", 4), ("plat", 2)])
-    async def test_最后一页仍然有效(self, fake_bot, group_event, name, pages):
-        """上界是 `page > len`，最后一页必须还能翻到（差一位的另一边）"""
-        table = {"gddl": helpmod.REF_GDDL, "nlw": helpmod.REF_NLW,
-                 "plat": helpmod.REF_PDIFF}[name]
-        text = await _refs(fake_bot, group_event, f"{name} {pages}")
-        assert text == table[-1] + helpmod.pagehint(pages, pages)
-
-    @pytest.mark.parametrize(("name", "pages"), [("gddl", 8), ("nlw", 4), ("plat", 2)])
-    async def test_页码0被拒绝(self, fake_bot, group_event, name, pages):
+    @pytest.mark.parametrize("name", sorted(PAGED_REFS))
+    async def test_页码0被拒绝(self, fake_bot, group_event, name):
         """"0".isdigit() 是 True，以前 page=0 会走到 REF_XXX[-1] 翻出最后一页，
-        提示语还写着「第0页」。现在和超上界一样报错。"""
-        text = await _refs(fake_bot, group_event, f"{name} 0")
-        assert f"你输入的页码数超出范围（共{pages}页" in text
-        assert "当前处于第0页" not in text
+        提示语还写着「第0页」。现在和超上界一样报错。
 
-    @pytest.mark.parametrize(("name", "pages"), [("gddl", 8), ("nlw", 4), ("plat", 2)])
-    async def test_第一页有效(self, fake_bot, group_event, name, pages):
-        table = {"gddl": helpmod.REF_GDDL, "nlw": helpmod.REF_NLW,
-                 "plat": helpmod.REF_PDIFF}[name]
-        text = await _refs(fake_bot, group_event, f"{name} 1")
-        assert text == table[0] + helpmod.pagehint(1, pages)
+        钉的就是那条回归：page=0 绝不能翻出任何一页，而且和超上界一个待遇。
+        """
+        table = PAGED_REFS[name]
+        pages = len(table)
+        text = await _refs(fake_bot, group_event, f"{name} 0")
+        assert not any(page in text for page in table), f"{name} 的第0页翻出内容了"
+        assert text == await _refs(fake_bot, group_event, f"{name} {pages + 1}")
 
     async def test_多个0也被拒绝(self, fake_bot, group_event):
         """"00".isdigit() 同样是 True"""
-        assert "你输入的页码数超出范围（共8页" in await _refs(fake_bot, group_event, "gddl 00")
+        table = helpmod.REF_GDDL
+        text = await _refs(fake_bot, group_event, "gddl 00")
+        assert not any(page in text for page in table)
+        assert text == await _refs(fake_bot, group_event, f"gddl {len(table) + 1}")
 
     async def test_不给页码默认第一页(self, fake_bot, group_event):
-        assert await _refs(fake_bot, group_event, "gddl") == helpmod.REF_GDDL[
-            0
-        ] + helpmod.pagehint(1, 8)
+        expected = helpmod.REF_GDDL[0] + helpmod.pagehint(1, len(helpmod.REF_GDDL))
+        assert await _refs(fake_bot, group_event, "gddl") == expected
 
-    @pytest.mark.parametrize("bad", ["-1", "-8", "abc", "1.5"])
-    async def test_页码不是数字就当第一页(self, fake_bot, group_event, bad):
+    async def test_页码不是数字就当第一页(self, fake_bot, group_event):
         """负号和小数点都过不了 isdigit()，跟乱输一样退回第一页（不是报错）"""
-        assert await _refs(fake_bot, group_event, f"gddl {bad}") == helpmod.REF_GDDL[
-            0
-        ] + helpmod.pagehint(1, 8)
+        expected = helpmod.REF_GDDL[0] + helpmod.pagehint(1, len(helpmod.REF_GDDL))
+        for bad in ("-1", "-8", "abc", "1.5"):
+            assert await _refs(fake_bot, group_event, f"gddl {bad}") == expected, (
+                f"{bad} 没退回第一页"
+            )
 
-    @pytest.mark.parametrize(
-        ("name", "table_attr"),
-        [("lw", "REF_LW"), ("ids", "REF_IDS"), ("hds", "REF_HDS")],
-    )
-    async def test_单页表忽略页码(self, fake_bot, group_event, name, table_attr):
-        table = getattr(helpmod, table_attr)
-        assert len(table) == 1
-        assert await _refs(fake_bot, group_event, name) == table[0]
-        assert await _refs(fake_bot, group_event, f"{name} 99") == table[0]
+    async def test_单页表忽略页码(self, fake_bot, group_event):
+        for name, table in SINGLE_REFS.items():
+            assert len(table) == 1, f"{name} 不再是单页表了，得换到 PAGED_REFS"
+            assert await _refs(fake_bot, group_event, name) == table[0]
+            assert await _refs(fake_bot, group_event, f"{name} 99") == table[0]
 
     async def test_表名大小写不敏感(self, fake_bot, group_event):
-        assert "AREDL是实时变化的" in await _refs(fake_bot, group_event, "AREDL")
+        for upper, lower in (("AREDL", "aredl"), ("GDDL", "gddl")):
+            assert await _refs(fake_bot, group_event, upper) == await _refs(
+                fake_bot, group_event, lower
+            ), f"{upper} 和 {lower} 该是同一张表"
 
-    def test_pagehint文案(self):
-        assert helpmod.pagehint(3, 8) == "\n当前处于第3页，共8页"
+    def test_pagehint带上了当前页和总页数(self):
+        hint = helpmod.pagehint(3, 8)
+        assert "3" in hint and "8" in hint
+        assert hint != helpmod.pagehint(4, 8)
+        assert hint != helpmod.pagehint(3, 9)

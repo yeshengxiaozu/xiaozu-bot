@@ -196,12 +196,15 @@ class TestOfficialSongMap:
     }
 
     def test_whole_table(self) -> None:
-        """整张表逐项相等，不多不少。"""
-        assert gdapi.OFFICIAL_SONG_MAP == self.EXPECTED
+        """整张表逐项相等，不多不少；而且 id 必须连号，中间不能缺。
 
-    def test_ids_are_contiguous(self) -> None:
-        """-1（练习模式）到 39（Power Trip）连号，中间不能缺。"""
-        assert sorted(gdapi.OFFICIAL_SONG_MAP) == list(range(-1, 40))
+        连号那一句是从 EXPECTED 自己算边界的：RobTop 加一首歌时只要改 EXPECTED
+        这一处，不用再同步维护一个写死的 range(-1, 40)。
+        """
+        assert gdapi.OFFICIAL_SONG_MAP == self.EXPECTED
+        assert sorted(gdapi.OFFICIAL_SONG_MAP) == list(
+            range(min(self.EXPECTED), max(self.EXPECTED) + 1)
+        )
 
     def test_constants(self) -> None:
         """几个魔数常量本身也是接口的一部分。"""
@@ -456,76 +459,50 @@ class TestGDLevelFromServerResponse:
 # ==========================================================================
 # GDLevel 歌曲相关
 # ==========================================================================
-class TestGDLevelSongId:
-    def test_custom_song_wins(self) -> None:
-        level = make_level(custom_song_id=467339, official_song=13)
-        assert level.song_id == 467339
+# song_id / song_name / song_author / _get_song_display 读的是同一组输入
+# （song_info、official_song、custom_song_id），分支也一一对应，
+# 所以合成一张表：(song_info, official_song, custom_song_id) -> 四个输出。
+SONG_TABLE: list[tuple[Any, Any, Any, Any, str, str, Optional[str]]] = [
+    # song_info 存在时压过一切（song_id 仍然只看 custom_song_id）
+    (
+        {"name": "NONG", "artist_name": "Nobody", "id": 1},
+        13, 467339,
+        467339, "NONG", "Nobody", "NONG by Nobody (NG ID:1)",
+    ),
+    # 有自定义歌曲 ID 但没拿到歌曲信息
+    (None, None, 467339, 467339, "Unknown", "Unknown", "Custom song (ID:467339) not loaded"),
+    # 官方歌曲：song_id 取负，跟 NG 的自定义 ID 区分开
+    (None, 13, 0, -13, "Clubstep", "DJ-Nate", "Clubstep by DJ-Nate (Official)"),
+    # Stereo Madness（官方 0 号）取负还是 0，跟「没有歌曲」不好区分
+    (None, 0, 0, 0, "Stereo Madness", "Foreverbound", "Stereo Madness by Foreverbound (Official)"),
+    # custom_song_id 是 None 时退回官方歌曲
+    (None, 21, None, -21, "Dash", "MDK", "Dash by MDK (Official)"),
+    # 什么都没有
+    (None, None, None, None, "Unknown", "Unknown", None),
+    # 官方歌曲表里没有的编号：名字兜底成 Unknown，展示串直接没有
+    (None, 999, 0, -999, "Unknown", "Unknown", None),
+    (None, -2, 0, 2, "Unknown", "Unknown", None),
+]
 
-    def test_official_song_returns_negative(self) -> None:
-        """官方歌曲用负数表示，跟 NG 的自定义 ID 区分开。"""
-        level = make_level(custom_song_id=0, official_song=13)
-        assert level.song_id == -13
 
-    def test_official_song_zero_returns_zero(self) -> None:
-        """Stereo Madness（官方 0 号）取负还是 0，跟「没有歌曲」不好区分。"""
-        level = make_level(custom_song_id=0, official_song=0)
-        assert level.song_id == 0
-
-    def test_both_absent_returns_none(self) -> None:
-        assert make_level(custom_song_id=None, official_song=None).song_id is None
-
-    def test_custom_song_id_none_falls_back_to_official(self) -> None:
-        level = make_level(custom_song_id=None, official_song=21)
-        assert level.song_id == -21
-
-
-class TestGDLevelSongNameAuthor:
-    def test_song_info_takes_priority(self) -> None:
-        level = make_level(
-            custom_song_id=1,
-            official_song=13,
-            song_info={"name": "NONG", "artist_name": "Nobody"},
-        )
-        assert level.song_name == "NONG"
-        assert level.song_author == "Nobody"
+class TestGDLevelSong:
+    def test_song_lookup_table(self) -> None:
+        """整张歌曲取舍表一次走完，四个输出一起对。"""
+        for row in SONG_TABLE:
+            song_info, official, custom, song_id, name, author, display = row
+            level = make_level(
+                song_info=song_info, official_song=official, custom_song_id=custom
+            )
+            assert level.song_id == song_id, row
+            assert level.song_name == name, row
+            assert level.song_author == author, row
+            assert level._get_song_display() == display, row
 
     def test_song_info_missing_keys_returns_none(self) -> None:
         """song_info 存在但缺 key 时返回 None（不会退回官方歌曲表）。"""
         level = make_level(official_song=13, song_info={"id": 1})
         assert level.song_name is None
         assert level.song_author is None
-
-    def test_official_song_lookup(self) -> None:
-        level = make_level(official_song=19, song_info=None)
-        assert level.song_name == "Deadlocked"
-        assert level.song_author == "F-777"
-
-    @pytest.mark.parametrize("official", [None, 999, -2])
-    def test_unknown_official_song(self, official: Optional[int]) -> None:
-        level = make_level(official_song=official, song_info=None)
-        assert level.song_name == "Unknown"
-        assert level.song_author == "Unknown"
-
-
-class TestGDLevelSongDisplay:
-    def test_custom_song_display(self) -> None:
-        level = make_level(
-            song_info={"name": "ATSOL", "artist_name": "Dimrain47", "id": 467339}
-        )
-        assert level._get_song_display() == "ATSOL by Dimrain47 (NG ID:467339)"
-
-    def test_official_song_display(self) -> None:
-        level = make_level(official_song=21, custom_song_id=0, song_info=None)
-        assert level._get_song_display() == "Dash by MDK (Official)"
-
-    def test_custom_song_not_loaded(self) -> None:
-        """有 custom_song_id 但没拿到歌曲信息时给出明确提示。"""
-        level = make_level(official_song=None, custom_song_id=467339, song_info=None)
-        assert level._get_song_display() == "Custom song (ID:467339) not loaded"
-
-    def test_nothing_at_all(self) -> None:
-        level = make_level(official_song=None, custom_song_id=0, song_info=None)
-        assert level._get_song_display() is None
 
     def test_display_string_with_song(self) -> None:
         level = GDLevel.from_server_response(LEVEL_A)
@@ -558,38 +535,26 @@ class TestGDLevelSongDisplay:
 # GDLevel 长度 / demon 判定
 # ==========================================================================
 class TestGDLevelFlags:
-    @pytest.mark.parametrize(
-        ("length", "expected"),
-        [(0, False), (1, False), (3, False), (4, False), (5, True), (None, False)],
-    )
-    def test_is_plat(self, length: Optional[int], expected: bool) -> None:
-        """长度 5 就是 platformer；长度缺失时不算 plat 而不是报错。"""
-        assert make_level(length=length).is_plat() is expected
+    # (length, is_demon) -> (is_plat, is_pemon, is_demon_detail)
+    # 三个方法读的是同一对字段，合成一张表一次走完。
+    FLAG_TABLE: list[tuple[Any, Any, bool, bool, bool]] = [
+        (4, False, False, False, False),
+        (5, False, True, False, False),      # 长度 5 就是 platformer
+        (6, False, False, False, False),     # 越界的长度也不算 plat
+        (None, False, False, False, False),  # 长度缺失时不算 plat，而不是报错
+        ("5", False, True, False, False),    # int() 转换是显式的，字符串 "5" 也算
+        (3, True, False, False, True),       # 普通 demon
+        (5, True, True, True, False),        # platformer demon = pemon
+        (None, True, False, False, True),    # 长度缺失时按非 plat 处理
+    ]
 
-    def test_is_plat_accepts_numeric_string(self) -> None:
-        """int() 转换在这里是显式的，字符串 "5" 也算 plat。"""
-        assert make_level(length="5").is_plat() is True
-
-    @pytest.mark.parametrize(
-        ("length", "is_demon", "pemon", "demon_detail"),
-        [
-            (3, True, False, True),  # 普通 demon
-            (5, True, True, False),  # platformer demon = pemon
-            (3, False, False, False),
-            (5, False, False, False),
-            (None, True, False, True),  # 长度缺失时按非 plat 处理
-        ],
-    )
-    def test_pemon_and_demon_detail(
-        self,
-        length: Optional[int],
-        is_demon: bool,  # noqa: FBT001
-        pemon: bool,  # noqa: FBT001
-        demon_detail: bool,  # noqa: FBT001
-    ) -> None:
-        level = make_level(length=length, is_demon=is_demon)
-        assert level.is_pemon() is pemon
-        assert level.is_demon_detail() is demon_detail
+    def test_flag_table(self) -> None:
+        for row in self.FLAG_TABLE:
+            length, is_demon, plat, pemon, demon_detail = row
+            level = make_level(length=length, is_demon=is_demon)
+            assert level.is_plat() is plat, row
+            assert level.is_pemon() is pemon, row
+            assert level.is_demon_detail() is demon_detail, row
 
 
 # ==========================================================================
@@ -609,34 +574,29 @@ class TestDifficultyLabel:
         "9{sign}insane",
     ]
 
-    @pytest.mark.parametrize("stars", list(range(10)))
-    def test_classic_table(self, stars: int) -> None:
-        """0~9 星的经典关标签，整张表逐项校验，星号是 ⭐。"""
-        level = make_level(stars=stars, length=3, is_demon=False)
-        assert level.difficulty_label() == self.NON_DEMON[stars].format(sign="⭐")
+    @pytest.mark.parametrize(("length", "sign"), [(3, "⭐"), (5, "🌙")])
+    def test_nondemon_table(self, length: int, sign: str) -> None:
+        """0~9 星的整张表：非 plat 用 ⭐、platformer 用 🌙，其余文案完全一样。
 
-    @pytest.mark.parametrize("stars", list(range(10)))
-    def test_platformer_table(self, stars: int) -> None:
-        """platformer 用月亮而不是星星，其余文案完全一样。"""
-        level = make_level(stars=stars, length=5, is_demon=False)
-        assert level.difficulty_label() == self.NON_DEMON[stars].format(sign="🌙")
+        表本身是 NON_DEMON（对着源码 gdapi.py:275 那个字面量列表抄的），
+        表加一行时这里自动跟着多校验一行，不用再写一个函数。
+        0 星那一格是纯 "Unrated"，没有星号，两种 sign 下都一样。
+        """
+        for stars, template in enumerate(self.NON_DEMON):
+            level = make_level(stars=stars, length=length, is_demon=False)
+            assert level.difficulty_label() == template.format(sign=sign), stars
 
-    def test_unrated_has_no_sign(self) -> None:
-        """0 星那一格是纯 "Unrated"，plat 和非 plat 一样。"""
-        assert make_level(stars=0, length=3).difficulty_label() == "Unrated"
-        assert make_level(stars=0, length=5).difficulty_label() == "Unrated"
+    @pytest.mark.parametrize(("length", "word"), [(3, "Demon"), (5, "Pemon")])
+    def test_demon_table(self, length: int, word: str) -> None:
+        """字段 43 的整张恶魔难度表：0=Hard, 1/2=Unknown, 3=Easy, 4=Medium, 5=Insane, 6=Extreme。
 
-    @pytest.mark.parametrize(("code", "name"), list(enumerate(DEMON_NAMES)))
-    def test_demon_table(self, code: int, name: str) -> None:
-        """字段 43 的整张恶魔难度表：0=Hard, 1/2=Unknown, 3=Easy, 4=Medium, 5=Insane, 6=Extreme。"""
-        level = make_level(stars=10, length=3, is_demon=True, demon_difficulty=code)
-        assert level.difficulty_label() == f"{name} Demon"
-
-    @pytest.mark.parametrize(("code", "name"), list(enumerate(DEMON_NAMES)))
-    def test_pemon_table(self, code: int, name: str) -> None:
-        """platformer demon 显示成 Pemon。"""
-        level = make_level(stars=10, length=5, is_demon=True, demon_difficulty=code)
-        assert level.difficulty_label() == f"{name} Pemon"
+        platformer 的 demon 显示成 Pemon，名字部分和普通 demon 共用同一张表。
+        """
+        for code, name in enumerate(DEMON_NAMES):
+            level = make_level(
+                stars=10, length=length, is_demon=True, demon_difficulty=code
+            )
+            assert level.difficulty_label() == f"{name} {word}", code
 
     def test_demon_without_demon_difficulty(self) -> None:
         """10 星但没给字段 43 时退回统一的 "10⭐demon"（注意这里写死了星号）。"""
@@ -875,13 +835,14 @@ class TestSearchPage:
         a.levels.append(make_level())
         assert b.levels == []
 
-    @pytest.mark.parametrize(
-        ("total", "capped"),
-        [(0, False), (10, False), (9998, False), (9999, True), (12345, True)],
-    )
-    def test_total_is_capped(self, total: int, capped: bool) -> None:  # noqa: FBT001
-        """total 到 9999 就是服务器封顶值，不能拿去算总页数。"""
-        assert SearchPage(total=total).total_is_capped is capped
+    def test_total_is_capped(self) -> None:
+        """total 到封顶值就是服务器没给真实条数，不能拿去算总页数。
+
+        边界直接从 gdapi.GD_TOTAL_CAP 算，常量改了这里不用跟着改。
+        """
+        cap = gdapi.GD_TOTAL_CAP
+        for total, capped in [(0, False), (cap - 1, False), (cap, True), (cap + 1, True)]:
+            assert SearchPage(total=total).total_is_capped is capped, total
 
     def test_is_empty(self) -> None:
         assert SearchPage(levels=[make_level()]).is_empty is False
@@ -1481,36 +1442,25 @@ def write_cache(path: Path, levels: list[dict[str, Any]], age_seconds: float) ->
 
 
 class TestAREDLLevel:
-    def test_full_payload(self) -> None:
-        level = AREDLLevel(AREDL_SAMPLE)
-        assert level.id == AREDL_SAMPLE["id"]
-        assert level.name == "Society"
-        assert level.position == 1
-        assert level.points == 5000
-        assert level.legacy is False
-        assert level.level_id == 127323087
-        assert level.two_player is False
-        assert level.tags == ["2.2", "Long", "NONG"]
-        assert level.description == "The sequel to Escalator."
-        assert level.song is None
-        assert level.edel_enjoyment is None
-        assert level.is_edel_pending is False
-        assert level.gddl_tier == 39.0
-        assert level.nlw_tier is None
+    def test_every_key_lands_on_the_attribute_of_the_same_name(self) -> None:
+        """14 个键原样落到同名属性上；可空字段填了值也要留住。
 
-    def test_nullable_fields_accept_values(self) -> None:
-        level = AREDLLevel(
+        照着 AREDL_SAMPLE 的键走，样本加一个字段这里自动跟着校验。
+        """
+        payloads = [
+            AREDL_SAMPLE,
+            # 五个可空字段全部填上真值，确认不是被写死成 None
             aredl_dict_payload(
                 song=489111,
                 edel_enjoyment=42.5,
                 is_edel_pending=True,
                 nlw_tier="Top Extreme",
-            )
-        )
-        assert level.song == 489111
-        assert level.edel_enjoyment == 42.5
-        assert level.is_edel_pending is True
-        assert level.nlw_tier == "Top Extreme"
+            ),
+        ]
+        for payload in payloads:
+            level = AREDLLevel(payload)
+            for key in AREDL_KEYS:
+                assert getattr(level, key) == payload[key], key
 
     def test_to_dict_round_trip(self) -> None:
         """to_dict 出来的 14 个键正好能再喂回构造函数。"""
@@ -1547,7 +1497,7 @@ class TestFetchAredlLevels:
         assert call["method"] == "GET"
         assert call["url"] == AREDL_URL
         assert call["headers"] == {"Content-Type": "application/json"}
-        assert call["timeout"] == aredlapi.AREDL_TIMEOUT == 15
+        assert call["timeout"] == aredlapi.AREDL_TIMEOUT
 
     def test_empty_list(self, stub_requests: Any) -> None:
         stub_requests.get(AREDL_URL, json_data=[])

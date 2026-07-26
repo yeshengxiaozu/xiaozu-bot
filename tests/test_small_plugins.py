@@ -26,7 +26,7 @@ import sys
 import types
 from datetime import datetime as real_datetime
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, ClassVar, Optional, Union
 from urllib.parse import unquote
 
 import httpx
@@ -50,77 +50,17 @@ BANNED_GROUP = 569801410
 MASTER_ID = 3251605531
 
 
-def _as_message(value: Union[None, str, Message]) -> Message:
-    if value is None:
-        return Message("")
-    return value if isinstance(value, Message) else Message(value)
-
-
-@contextlib.contextmanager
-def matcher_context(bot: FakeBot, event: Any):
-    """把 nonebot 的 current_bot / current_event 临时设成给定的 bot 和事件。
-
-    `Matcher.send` 就是从这两个 ContextVar 里取东西的，不设的话直接 LookupError。
-    """
-    token_bot = current_bot.set(bot)
-    token_event = current_event.set(event)
-    try:
-        yield
-    finally:
-        current_bot.reset(token_bot)
-        current_event.reset(token_event)
-
-
-async def run_handler(
-    matcher: Any,
-    bot: FakeBot,
-    event: Any = None,
-    *,
-    arg: Union[None, str, Message] = None,
-    index: int = 0,
-) -> bool:
-    """直接调用某个 matcher 的第 index 个 handler。
-
-    返回 True 表示 handler 以 `finish()` 收尾（抛了 FinishedException），
-    返回 False 表示它自己 return 掉了。发出去的东西都在 `bot.calls` 里。
-    """
-    handler = matcher.handlers[index].call
-    message = _as_message(arg)
-    pool: dict[str, Any] = {
-        "bot": bot,
-        "event": event,
-        "matcher": matcher,
-        "arg": message,
-        "args": message,
-    }
-    signature = inspect.signature(handler)
-    kwargs = {name: value for name, value in pool.items() if name in signature.parameters}
-    with matcher_context(bot, event):
-        try:
-            await handler(**kwargs)
-        except FinishedException:
-            return True
-    return False
-
-
-async def run_coro(bot: FakeBot, event: Any, factory: Callable[[], Any]) -> bool:
-    """跑一个不是 handler 的协程（比如 guess.can_start），语义同 run_handler。"""
-    with matcher_context(bot, event):
-        try:
-            await factory()
-        except FinishedException:
-            return True
-    return False
-
-
-def sent_messages(bot: FakeBot) -> list[Message]:
-    """FakeBot 收到的所有 send_msg 调用里的消息体"""
-    return [data["message"] for api, data in bot.calls if api == "send_msg"]
-
-
-def sent_texts(bot: FakeBot) -> list[str]:
-    """FakeBot 发出去的纯文本（@ 段之类会被 extract_plain_text 滤掉）"""
-    return [msg.extract_plain_text().strip() for msg in sent_messages(bot)]
+# 驱动 handler 的那几个工具（run_handler / sent_texts / only_text ...）现在住在
+# tests/conftest.py 里。挪过去的原因：别的测试文件也要用，原来是
+# `from tests.test_small_plugins import ...` 拿的，那样这个文件就删不掉了。
+from tests.conftest import (  # noqa: E402
+    matcher_context,
+    only_text,
+    run_coro,
+    run_handler,
+    sent_messages,
+    sent_texts,
+)
 
 
 def emoji_likes(bot: FakeBot) -> list[tuple[Any, str]]:
@@ -141,6 +81,21 @@ def image_size(path: Path) -> tuple[int, int]:
     """读一张图的尺寸，顺手关掉文件句柄（不然 PIL 会留下 ResourceWarning）"""
     with Image.open(path) as image:
         return image.size
+
+
+def picking_spy(pools: list[list[Any]], index: int = 0) -> Callable[[Any], Any]:
+    """替掉 `random.choice`：把每次的候选表记进 pools，并固定挑第 index 个。
+
+    有了它就能断言「回复里带上了被挑中的那一项」，而不用把候选表里的词抄进测试。
+    候选表里的词属于文案，改词不该让用例红；「从几个里挑一个、挑中的报出来」才是行为。
+    """
+
+    def _choice(seq: Any) -> Any:
+        pool = list(seq)
+        pools.append(pool)
+        return pool[index]
+
+    return _choice
 
 
 def scripted(values: list[Any]) -> Callable[..., Any]:
@@ -184,34 +139,23 @@ class TestJrrp:
             types.SimpleNamespace(datetime=types.SimpleNamespace(now=lambda: moment)),
         )
 
-    # ---- 评语分档的边界 ------------------------------------------------
-    # 源码是一串 `rp <= N` 的 elif，每档都测两侧，防止哪天改成 `<` 悄悄错位。
-    @pytest.mark.parametrize(
-        ("rp", "append"),
-        [
-            (1, "要不要挑战一下祈愿出1级？"),
-            (2, "也许今天不适合玩会boom的道具……"),
-            (20, "也许今天不适合玩会boom的道具……"),
-            (21, "可能在其他bot那里的rp会高一些……"),
-            (40, "可能在其他bot那里的rp会高一些……"),
-            (41, "平平淡淡才是真。"),
-            (60, "平平淡淡才是真。"),
-            (61, "打什么蔚蓝，快来玩zhuamadeline"),
-            (80, "打什么蔚蓝，快来玩zhuamadeline"),
-            (81, "似乎浪费了一次五级不boom的机会(bushi)"),
-            (99, "似乎浪费了一次五级不boom的机会(bushi)"),
-            (100, "wow！你裸抓五级/藏品的运气用在这了！"),
-        ],
-    )
-    async def test_comment_buckets(
-        self, rp, append, store, fake_bot, make_group_event, monkeypatch
-    ):
-        """每一档评语的上下边界都对得上"""
-        monkeypatch.setattr(random, "randint", lambda a, b: rp)
-        event = make_group_event("*jrrp")
+    # ---- 摇出来的数要报回去 --------------------------------------------
+    #: 七档评语的上下边界（源码是一串 `rp <= N` 的 elif），每个边界都摇一次，
+    #: 好让整条 elif 链真跑到；配的是哪句评语不管。
+    BUCKET_BOUNDS: ClassVar[list[int]] = [1, 2, 20, 21, 40, 41, 60, 61, 80, 81, 99, 100]
 
-        assert await run_handler(jrrp.jrrp, fake_bot, event) is True
-        assert sent_texts(fake_bot) == [f"你的今日人品是……{rp}！{append}"]
+    @pytest.mark.parametrize("rp", BUCKET_BOUNDS)
+    async def test_any_roll_answers_with_the_number(
+        self, rp, store, fake_bot, make_group_event, monkeypatch
+    ):
+        """不管摇到几，都要正常收场并把摇到的数报出来。
+
+        「摇到几就报几」是行为，「哪一档配哪句评语、评语怎么写」是措辞 ——
+        评语一个字都不钉，改文案不该弄红任何一条用例。
+        """
+        monkeypatch.setattr(random, "randint", lambda a, b: rp)
+        assert await run_handler(jrrp.jrrp, fake_bot, make_group_event("*jrrp")) is True
+        assert str(rp) in only_text(fake_bot)
 
     async def test_rolls_in_1_to_100(
         self, store, fake_bot, make_group_event, monkeypatch
@@ -248,7 +192,7 @@ class TestJrrp:
         monkeypatch.setattr(random, "randint", boom)
 
         assert await run_handler(jrrp.jrrp, fake_bot, make_group_event("*jrrp")) is True
-        assert sent_texts(fake_bot) == ["你的今日人品是66！（你不是已经知道了吗）"]
+        assert "66" in only_text(fake_bot)
 
     async def test_cached_reply_ats_the_sender(
         self, store, fake_bot, make_group_event
@@ -274,7 +218,8 @@ class TestJrrp:
         monkeypatch.setattr(random, "randint", lambda a, b: 7)
 
         await run_handler(jrrp.jrrp, fake_bot, make_group_event("*jrrp", user_id=999))
-        assert sent_texts(fake_bot)[0].startswith("你的今日人品是……7！")
+        assert "7" in only_text(fake_bot)
+        assert store.get("jrrp_999") == "7"
 
     async def test_true_sentinel_is_treated_as_no_cache(
         self, store, fake_bot, make_group_event, monkeypatch
@@ -287,7 +232,7 @@ class TestJrrp:
         monkeypatch.setattr(random, "randint", lambda a, b: 55)
 
         await run_handler(jrrp.jrrp, fake_bot, make_group_event("*jrrp"))
-        assert sent_texts(fake_bot)[0].startswith("你的今日人品是……55！")
+        assert "55" in only_text(fake_bot)
         assert store.get(f"jrrp_{DEFAULT_USER_ID}") == "55"
 
     # ---- 过期时间算的是“到今天 23:59:59 还有几秒” ----------------------
@@ -385,11 +330,13 @@ class TestJoyUltra:
         assert sent_messages(bot) == []
 
     async def test_no_argument_sends_the_copypasta(self, bot, make_group_event):
-        """不带参数发原版长文，并给自己那条消息贴 128560"""
+        """不带参数走的是硬编码那份，发完给自己那条消息贴 128560
+
+        那段小作文的内容不钉（改文案是常事），钉的是「回了一条」以及
+        「贴表情贴的是自己刚发那条的 message_id，不是用户那条」。
+        """
         assert await run_handler(joy.ultra, bot, make_group_event("*ultra")) is True
-        text = sent_texts(bot)[0]
-        assert text.startswith("不要再Ultra了！")
-        assert text.endswith("抵制Ultra！！！")
+        assert only_text(bot)
         assert emoji_likes(bot) == [(4242, "128560")]
 
     async def test_single_argument_is_rejected(self, bot, make_group_event):
@@ -400,48 +347,56 @@ class TestJoyUltra:
         assert sent_messages(bot) == []
 
     async def test_two_arguments_fill_the_template(self, bot, make_group_event):
+        """两个词都被套进模板（钉的是用户给的词进去了，模板本身怎么写不管）"""
         assert (
-            await run_handler(joy.ultra, bot, make_group_event(), arg="蔚蓝 加拿大人")
+            await run_handler(joy.ultra, bot, make_group_event(), arg="甲游 乙国人")
             is True
         )
-        text = sent_texts(bot)[0]
-        assert text.startswith("不要再蔚蓝了！蔚蓝是加拿大人研发的新型压片！")
-        assert text.endswith("抵制蔚蓝！！！")
+        text = only_text(bot)
+        assert "甲游" in text
+        assert "乙国人" in text
         assert emoji_likes(bot) == [(4242, "128560")]
 
     async def test_arguments_are_lowercased(self, bot, make_group_event):
         """源码里 `str(arg).lower().split()`，大写会被抹平"""
         await run_handler(joy.ultra, bot, make_group_event(), arg="ULTRA Canada")
-        assert sent_texts(bot)[0].startswith("不要再ultra了！ultra是canada研发的")
+        text = only_text(bot)
+        assert "ultra" in text
+        assert "canada" in text
+        assert "ULTRA" not in text
+        assert "Canada" not in text
 
     async def test_extra_arguments_are_ignored(self, bot, make_group_event):
         """第三个词及以后不进模板"""
-        await run_handler(joy.ultra, bot, make_group_event(), arg="a b c d")
-        text = sent_texts(bot)[0]
-        assert text.startswith("不要再a了！a是b研发的")
-        assert " c " not in text
+        await run_handler(joy.ultra, bot, make_group_event(), arg="甲 乙 丙 丁")
+        text = only_text(bot)
+        assert "甲" in text
+        assert "乙" in text
+        assert "丙" not in text
+        assert "丁" not in text
 
 
 class TestJoyNsdd:
     """*nsdd：三选一的“你说的对，但是……”"""
 
-    @pytest.mark.parametrize(
-        ("roll", "prefix"),
-        [
-            (1, "你说的对，但是《几何冲刺》是由RobTop Games自主研发的"),
-            (2, "你说的对，但《game2》是一款由Desom-fu不太自主研发的"),
-            (3, "你说的对，但《蔚蓝》是一款由EXOK Games Inc.制作并发行的"),
-        ],
-    )
-    async def test_three_variants(
-        self, roll, prefix, fake_bot, make_group_event, monkeypatch
-    ):
-        fake_bot.api_results["send_msg"] = {"message_id": 11}
-        monkeypatch.setattr(random, "randint", lambda a, b: roll)
+    async def test_three_variants(self, fake_bot, make_group_event, monkeypatch):
+        """1/2/3 三个分支各回各的一段，每段都给自己贴 424。
 
-        assert await run_handler(joy.nsdd, fake_bot, make_group_event()) is True
-        assert sent_texts(fake_bot)[0].startswith(prefix)
-        assert emoji_likes(fake_bot) == [(11, "424")]
+        原来是把三段长文的开头抄进 parametrize 逐字比 —— 改一个标点就红。
+        这里钉的是「三个分支都能走到、而且回的不是同一段」，措辞随便改。
+        """
+        texts = []
+        for roll in (1, 2, 3):
+            fake_bot.calls.clear()
+            fake_bot.api_results["send_msg"] = {"message_id": 11}
+            monkeypatch.setattr(random, "randint", lambda a, b, roll=roll: roll)
+
+            assert await run_handler(joy.nsdd, fake_bot, make_group_event()) is True
+            texts.append(only_text(fake_bot))
+            assert emoji_likes(fake_bot) == [(11, "424")]
+
+        assert all(texts), "三个分支都得真回点东西"
+        assert len(set(texts)) == 3, "三个分支的文案不该重样"
 
     async def test_roll_range_is_1_to_3(self, fake_bot, make_group_event, monkeypatch):
         seen: list[tuple[int, int]] = []
@@ -454,29 +409,40 @@ class TestJoyNsdd:
 class TestJoyGame:
     """*game N：给几个小游戏瞎出主意"""
 
+    # 下面每条断言的都是「这一支挑出来的那个值」，不是整句话怎么写的。
+    # 少了 return 会 IndexError、分支串了会挑错值，都还是会红。
+
     async def test_missing_argument_explains_usage(self, fake_bot, make_group_event):
+        """没给编号时要回一句就收场（而不是接着读 args[0] 直接 IndexError）"""
         assert await run_handler(joy.game, fake_bot, make_group_event()) is True
-        assert sent_texts(fake_bot) == [
-            "请在使用小小卒的时候带上想要让小小卒帮忙的游戏编号(1~4)哦~免责声明：仅供参考"
-        ]
+        assert only_text(fake_bot)
 
     async def test_unknown_number(self, fake_bot, make_group_event):
+        """编号不认识时也得回一条 —— 认了命令又一个字不回是这个仓库出过的老毛病"""
         assert (
             await run_handler(joy.game, fake_bot, make_group_event(), arg="5") is True
         )
-        assert sent_texts(fake_bot) == ["小小卒不知道你想让我建议什么哦~"]
+        assert only_text(fake_bot)
 
     async def test_game1_branch_high_low(self, fake_bot, make_group_event, monkeypatch):
+        """t==1 走的是「大/小」二选一，挑中的那项要报出来"""
+        pools: list[list[Any]] = []
         monkeypatch.setattr(random, "randint", lambda a, b: 1)
-        monkeypatch.setattr(random, "choice", lambda seq: seq[0])
+        monkeypatch.setattr(random, "choice", picking_spy(pools))
         await run_handler(joy.game, fake_bot, make_group_event(), arg="1")
-        assert sent_texts(fake_bot) == ["小小卒的猜测建议是：大于7"]
+        assert len(pools) == 1
+        assert len(pools[0]) == 2  # 二选一，和下面四选一的花色分支区分开
+        assert pools[0][0] in only_text(fake_bot)
 
     async def test_game1_branch_suit(self, fake_bot, make_group_event, monkeypatch):
+        """t==2 走的是四种花色，挑中的那项要报出来"""
+        pools: list[list[Any]] = []
         monkeypatch.setattr(random, "randint", lambda a, b: 2)
-        monkeypatch.setattr(random, "choice", lambda seq: seq[-1])
+        monkeypatch.setattr(random, "choice", picking_spy(pools, index=-1))
         await run_handler(joy.game, fake_bot, make_group_event(), arg="1")
-        assert sent_texts(fake_bot) == ["小小卒的猜测建议是：红桃"]
+        assert len(pools) == 1
+        assert len(pools[0]) == 4
+        assert pools[0][-1] in only_text(fake_bot)
 
     async def test_game1_branch_two_distinct_cards(
         self, fake_bot, make_group_event, monkeypatch
@@ -485,30 +451,37 @@ class TestJoyGame:
         monkeypatch.setattr(random, "randint", lambda a, b: 3)
         monkeypatch.setattr(random, "choice", scripted(["A", "A", "A", "K"]))
         await run_handler(joy.game, fake_bot, make_group_event(), arg="1")
-        assert sent_texts(fake_bot) == ["小小卒的猜测建议是：A/K"]
+        assert "A/K" in only_text(fake_bot)
 
     async def test_game2_branch(self, fake_bot, make_group_event, monkeypatch):
-        monkeypatch.setattr(random, "choice", lambda seq: seq[0])
+        """编号 2 是二选一，挑中的那项要报出来"""
+        pools: list[list[Any]] = []
+        monkeypatch.setattr(random, "choice", picking_spy(pools))
         await run_handler(joy.game, fake_bot, make_group_event(), arg="2")
-        assert sent_texts(fake_bot) == ["小小卒觉得下一发是：实弹"]
+        assert len(pools) == 1
+        assert len(pools[0]) == 2
+        assert pools[0][0] in only_text(fake_bot)
 
     async def test_game3_branch(self, fake_bot, make_group_event, monkeypatch):
         monkeypatch.setattr(random, "randint", lambda a, b: 6)
         await run_handler(joy.game, fake_bot, make_group_event(), arg="3")
-        assert sent_texts(fake_bot) == ["小小卒觉得最有潜力的擂台是：6"]
+        assert "6" in only_text(fake_bot)
 
     async def test_game4_branch(self, fake_bot, make_group_event, monkeypatch):
         monkeypatch.setattr(random, "randint", scripted([1, 2, 3]))
         await run_handler(joy.game, fake_bot, make_group_event(), arg="4")
-        assert sent_texts(fake_bot) == ["小小卒觉得今天的宝藏埋藏在：1/2/3"]
+        assert "1/2/3" in only_text(fake_bot)
 
     async def test_argument_is_lowercased_and_split(
         self, fake_bot, make_group_event, monkeypatch
     ):
         """只看第一个词，后面的忽略"""
-        monkeypatch.setattr(random, "choice", lambda seq: seq[1])
+        pools: list[list[Any]] = []
+        monkeypatch.setattr(random, "choice", picking_spy(pools, index=1))
         await run_handler(joy.game, fake_bot, make_group_event(), arg="2 blah blah")
-        assert sent_texts(fake_bot) == ["小小卒觉得下一发是：虚弹"]
+        text = only_text(fake_bot)
+        assert pools[0][1] in text
+        assert "blah" not in text
 
 
 class TestJoyJwz:
@@ -526,30 +499,35 @@ class TestJoyJwz:
         assert sent_messages(bot) == []
 
     async def test_no_argument(self, bot, make_group_event):
+        """没参数就提前收场：回一条、而且不会走到贴 10068 的正常分支"""
         assert await run_handler(joy.jwz, bot, make_group_event()) is True
-        assert sent_texts(bot) == ["请输入一个参数！"]
+        assert only_text(bot)
+        assert emoji_likes(bot) == []
 
     async def test_single_argument_uses_random_duration(
         self, bot, make_group_event, monkeypatch
     ):
+        """只给一个词时时长是随机摇的：报出来的是「摇到的数 + 挑中的单位」"""
+        units: list[list[Any]] = []
         monkeypatch.setattr(random, "randint", lambda a, b: 3)
-        monkeypatch.setattr(random, "choice", lambda seq: seq[0])
+        monkeypatch.setattr(random, "choice", picking_spy(units))
         await run_handler(joy.jwz, bot, make_group_event(), arg="蔚蓝")
-        text = sent_texts(bot)[0]
-        assert text.startswith("我能在患有健忘症的情况下通关蔚蓝吗？")
-        assert "蔚蓝推出已经有3年了" in text
+        text = only_text(bot)
+        assert "蔚蓝" in text
+        assert f"3{units[0][0]}" in text
         assert emoji_likes(bot) == [(55, "10068")]
 
     async def test_second_argument_overrides_the_duration(
         self, bot, make_group_event, monkeypatch
     ):
-        """给了第二个参数就不用随机时长了"""
+        """给了第二个参数就用它当时长，随机摇出来的那个不该出现"""
+        units: list[list[Any]] = []
         monkeypatch.setattr(random, "randint", lambda a, b: 3)
-        monkeypatch.setattr(random, "choice", lambda seq: seq[0])
+        monkeypatch.setattr(random, "choice", picking_spy(units))
         await run_handler(joy.jwz, bot, make_group_event(), arg="蔚蓝 十万年")
-        text = sent_texts(bot)[0]
-        assert "蔚蓝推出已经有十万年了" in text
-        assert "3年" not in text
+        text = only_text(bot)
+        assert "十万年" in text
+        assert f"3{units[0][0]}" not in text
 
 
 class TestJoyToday:
@@ -557,18 +535,21 @@ class TestJoyToday:
 
     @pytest.mark.parametrize("arg", ["", "a", "a b", "a b c d"])
     async def test_wrong_argument_count(self, arg, fake_bot, make_group_event):
-        """必须正好 3 个词"""
+        """必须正好 3 个词：不够/多了都提前收场，不会走到贴 144 的正常分支"""
         assert await run_handler(joy.today, fake_bot, make_group_event(), arg=arg) is True
-        assert sent_texts(fake_bot) == ["请输入3个参数！"]
+        assert only_text(fake_bot)
+        assert emoji_likes(fake_bot) == []
 
     async def test_three_arguments(self, fake_bot, make_group_event):
+        """三个词都被套进模板"""
         fake_bot.api_results["send_msg"] = {"message_id": 88}
         # 这个 handler 末尾没有 finish()，是自然 return 的
         assert (
             await run_handler(joy.today, fake_bot, make_group_event(), arg="蔚蓝 小卒 生日")
             is False
         )
-        assert sent_texts(fake_bot)[0].startswith("今天是著名蔚蓝大神小卒生日的日子，")
+        text = only_text(fake_bot)
+        assert all(word in text for word in ("蔚蓝", "小卒", "生日"))
         assert emoji_likes(fake_bot) == [(88, "144")]
 
     async def test_overlong_argument(self, fake_bot, make_group_event):
@@ -579,18 +560,22 @@ class TestJoyToday:
 
 class TestJoyMisc:
     async def test_news_replies_with_the_changelog(self, fake_bot, make_group_event):
-        """*news 用的是 @news.handle()（带括号），handler 确实注册上了"""
+        """*news 用的是 @news.handle()（带括号），handler 确实注册上了
+
+        公告内容每次发版都要改，所以只钉「有 handler、真回了一条非空的」——
+        当初的 bug 是漏了括号导致 *news 把消息 block 掉却一个字都不回。
+        """
         assert joy.news.handlers, "*news 没注册 handler"
         assert await run_handler(joy.news, fake_bot, make_group_event()) is True
-        text = sent_texts(fake_bot)[0]
-        assert text.startswith("更新公告：移除了蓝莓系统因为我不想转移数据了；")
-        assert "*gdlevelsearch" in text
+        assert only_text(fake_bot).strip()
 
     async def test_test_command_echoes_the_api_return(self, fake_bot, make_group_event):
         """*1145141919810 先发一条，再把 send 的返回值原样发第二条"""
         fake_bot.api_results["send_msg"] = {"message_id": 12345}
         assert await run_handler(joy.test, fake_bot, make_group_event()) is True
-        assert sent_texts(fake_bot) == ["这是一个测试消息！", "{'message_id': 12345}"]
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 2
+        assert texts[1] == str({"message_id": 12345})
 
     def _poke(self, user_id: int, self_id: int = int(BOT_SELF_ID)) -> PokeNotifyEvent:
         return PokeNotifyEvent(
@@ -626,11 +611,16 @@ class TestJoyMisc:
 class TestRouletteConst:
     """const.sjmap：草莓酱地图名表"""
 
-    def test_table_shape(self):
-        assert len(roulette.const.sjmap) == 116
-        assert all(isinstance(name, str) and name for name in roulette.const.sjmap)
+    def test_table_is_a_usable_pool(self):
+        """只钉「这张表能拿来随机抽」：非空、全是非空字符串、没有重名。
 
-    def test_no_duplicates(self):
+        原来这里钉的是 `len(sjmap) == 116`，加一个地图名就得回来改数字，
+        而条数根本不是行为 —— 真正会出问题的是空串和重名。
+        """
+        assert roulette.const.sjmap, "地图表不能是空的，不然 random.choice 直接 IndexError"
+        assert all(
+            isinstance(name, str) and name.strip() for name in roulette.const.sjmap
+        )
         assert len(set(roulette.const.sjmap)) == len(roulette.const.sjmap)
 
     def test_star_import_exposes_the_submodule(self):
@@ -642,39 +632,41 @@ class TestRouletteConst:
 
 class TestRouletteCommands:
     async def test_roulette_is_a_tombstone(self, fake_bot, make_group_event):
+        """墓碑文案跟着模块里的常量走，改文案不用回来改测试"""
         assert await run_handler(roulette.roulette, fake_bot, make_group_event()) is True
-        text = sent_texts(fake_bot)[0]
-        assert text.startswith("你来到了那个轮盘原本所在的位置")
-        assert "*random" in text
-        assert "*map" in text
-        assert text == roulette.RETIRED_MSG
+        assert only_text(fake_bot) == roulette.RETIRED_MSG
 
     async def test_map_picks_from_sjmap(self, fake_bot, make_group_event, monkeypatch):
         monkeypatch.setattr(random, "choice", lambda seq: seq[0])
         assert await run_handler(roulette.get_map, fake_bot, make_group_event()) is True
-        assert sent_texts(fake_bot) == ["Your map is: " + roulette.const.sjmap[0]]
+        assert only_text(fake_bot).endswith(roulette.const.sjmap[0])
 
     async def test_map_with_seeded_random_stays_in_the_table(
         self, fake_bot, make_group_event, seeded_random
     ):
+        """随便播一个种子，报出来的名字都得是表里有的"""
         seeded_random(0)
         await run_handler(roulette.get_map, fake_bot, make_group_event())
-        text = sent_texts(fake_bot)[0]
-        assert text.startswith("Your map is: ")
-        assert text.removeprefix("Your map is: ") in roulette.const.sjmap
+        text = only_text(fake_bot)
+        assert any(text.endswith(name) for name in roulette.const.sjmap)
 
     async def test_random_without_arguments(self, fake_bot, make_group_event):
+        """一个词都没给时要回一条走人，而不是拿空表去 random.choice 抛 IndexError"""
         assert (
             await run_handler(roulette.rand_one, fake_bot, make_group_event()) is True
         )
-        assert sent_texts(fake_bot) == ["请输入至少一个参数！"]
+        assert only_text(fake_bot)
 
     async def test_random_picks_one_of_the_arguments(
         self, fake_bot, make_group_event, monkeypatch
     ):
+        """报出来的是被挑中的那个词，没被挑中的不许出现"""
         monkeypatch.setattr(random, "choice", lambda seq: seq[1])
-        await run_handler(roulette.rand_one, fake_bot, make_group_event(), arg="a b c")
-        assert sent_texts(fake_bot) == ["Your result is: b."]
+        await run_handler(roulette.rand_one, fake_bot, make_group_event(), arg="甲 乙 丙")
+        text = only_text(fake_bot)
+        assert "乙" in text
+        assert "甲" not in text
+        assert "丙" not in text
 
     async def test_random_keeps_original_case(
         self, fake_bot, make_group_event, monkeypatch
@@ -682,14 +674,16 @@ class TestRouletteCommands:
         """和 joy 那几条不一样，*random 没有 .lower()"""
         monkeypatch.setattr(random, "choice", lambda seq: seq[0])
         await run_handler(roulette.rand_one, fake_bot, make_group_event(), arg="ABC def")
-        assert sent_texts(fake_bot) == ["Your result is: ABC."]
+        text = only_text(fake_bot)
+        assert "ABC" in text
+        assert "abc" not in text
 
     async def test_random_with_one_argument(
         self, fake_bot, make_group_event, seeded_random
     ):
         seeded_random(0)
         await run_handler(roulette.rand_one, fake_bot, make_group_event(), arg="只有一个")
-        assert sent_texts(fake_bot) == ["Your result is: 只有一个."]
+        assert "只有一个" in only_text(fake_bot)
 
 
 # ==========================================================================
@@ -708,12 +702,23 @@ class TestZhuaDescriptions:
         """图库路径必须相对本文件，不能相对 cwd"""
         assert zhua.DATA_DIR == Path(zhua.__file__).resolve().parent / "data"
 
-    def test_duplicate_stem_is_resolved_by_insertion_order(self):
-        """"按钮卒" 有 .gif 和 .png 两份，*show 只会命中先插入的那个"""
-        stems = [name.rsplit(".", 1)[0] for name in zhua.descriptions]
-        assert stems.count("按钮卒") == 2
-        first = next(n for n in zhua.descriptions if n.rsplit(".", 1)[0] == "按钮卒")
-        assert first == "按钮卒.gif"
+    async def test_duplicate_stem_is_resolved_by_insertion_order(
+        self, fake_bot, make_group_event, monkeypatch
+    ):
+        """同名不同扩展名时，*show 命中的是 descriptions 里先插入的那个。
+
+        原来钉的是「按钮卒 正好有 2 份、第一份是 .gif」—— 加图、删图、
+        改扩展名都会把它弄红，可这些都不是行为。这里换成自己造两条重名记录，
+        钉的是「顺序遍历、取第一个匹配」这条规则本身。
+        """
+        monkeypatch.setattr(
+            zhua, "descriptions", {"重名卒.gif": "先插入的", "重名卒.png": "后插入的"}
+        )
+        await run_handler(zhua.show, fake_bot, make_group_event(), arg="重名卒")
+
+        message = sent_messages(fake_bot)[0]
+        assert image_files(message)[0].endswith("重名卒.gif")
+        assert "先插入的" in message.extract_plain_text()
 
 
 class TestZhuaCommand:
@@ -731,7 +736,6 @@ class TestZhuaCommand:
 
         message = sent_messages(fake_bot)[0]
         first_key = next(iter(zhua.descriptions))
-        assert "恭喜你抓到一个小卒！" in message.extract_plain_text()
         assert first_key.rsplit(".", 1)[0] in message.extract_plain_text()
         assert zhua.descriptions[first_key] in message.extract_plain_text()
         assert image_files(message)[0].endswith(first_key)
@@ -748,16 +752,19 @@ class TestZhuaCommand:
         """冷却里再抓就报还剩几秒；ttl 返回 -1 表示这个键没设过期时间"""
         store.set(f"zhua_cd_{DEFAULT_USER_ID}", "waiting")  # 没有 ex → ttl == -1
         assert await run_handler(zhua.zhua, fake_bot, make_group_event()) is True
-        assert sent_texts(fake_bot) == ["别抓啦，-1秒后再来吧"]
+        message = sent_messages(fake_bot)[0]
+        assert "-1" in message.extract_plain_text()
+        assert image_files(message) == [], "冷却里不该发图"
 
     async def test_cooldown_message_reports_remaining_seconds(
         self, store, fake_bot, make_group_event
     ):
         store.set(f"zhua_cd_{DEFAULT_USER_ID}", "waiting", ex=600)
         await run_handler(zhua.zhua, fake_bot, make_group_event())
-        match = re.fullmatch(r"别抓啦，(\d+)秒后再来吧", sent_texts(fake_bot)[0])
-        assert match is not None
-        assert 0 < int(match.group(1)) <= 600
+        # 报的是「还剩几秒」这个数，句子怎么写不管
+        numbers = re.findall(r"\d+", only_text(fake_bot))
+        assert numbers, "冷却提示里得带上剩余秒数"
+        assert 0 < int(numbers[0]) <= 600
 
     async def test_cooldown_is_per_user(
         self, store, fake_bot, make_group_event, monkeypatch
@@ -765,7 +772,8 @@ class TestZhuaCommand:
         store.set(f"zhua_cd_{DEFAULT_USER_ID}", "waiting", ex=600)
         monkeypatch.setattr(random, "choice", lambda seq: seq[0])
         await run_handler(zhua.zhua, fake_bot, make_group_event(user_id=999))
-        assert "恭喜你抓到一个小卒！" in sent_texts(fake_bot)[0]
+        # 换个人就照常发图，而不是那条冷却提示
+        assert image_files(sent_messages(fake_bot)[0])
 
     async def test_missing_image_library_degrades_silently(
         self, store, fake_bot, make_group_event, monkeypatch, tmp_path
@@ -785,46 +793,62 @@ class TestZhuaCommand:
 
 
 class TestZhuaShow:
-    """*show <名字>：按名字点播一张图"""
+    """*show <名字>：按名字点播一张图
+
+    这一组以前直接拿真图库里的「草地卒 / UwU卒 / 捏捏卒」当样本，
+    改个描述、换个扩展名、删张图都会把它们弄红 —— 可这些都不是 *show 的行为。
+    现在换成一张自己造的小图库，把匹配逻辑要考虑的几种形状摆齐，
+    钉的是匹配规则本身；真图库的形状由 TestZhuaDescriptions 管。
+    """
+
+    #: 普通名 / 名字里带大写 / 扩展名是大写
+    FAKE_LIB: ClassVar[dict[str, str]] = {
+        "草地卒.png": "最普通的小卒",
+        "UwU卒.png": "名字里带大写",
+        "捏捏卒.PNG": "扩展名是大写",
+    }
+
+    @pytest.fixture(autouse=True)
+    def fake_library(self, monkeypatch):
+        monkeypatch.setattr(zhua, "descriptions", self.FAKE_LIB)
 
     async def test_no_argument(self, fake_bot, make_group_event):
+        """没给名字时回一条提示、不发图"""
         assert await run_handler(zhua.show, fake_bot, make_group_event()) is True
-        assert sent_texts(fake_bot) == ["请输入一个名称！"]
+        assert only_text(fake_bot)
+        assert image_files(sent_messages(fake_bot)[0]) == []
 
-    async def test_exact_name(self, fake_bot, make_group_event):
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("草地卒", "草地卒.png"),  # 原样
+            ("UWU卒", "UwU卒.png"),  # 输入和表里的名字都 lower() 之后再比
+            ("捏捏卒", "捏捏卒.PNG"),  # 去扩展名用的是 rsplit(".", 1)，大写扩展名也认
+            ("草地卒 多余的词", "草地卒.png"),  # 只看第一个词
+        ],
+    )
+    async def test_name_matching(self, query, expected, fake_bot, make_group_event):
         assert (
-            await run_handler(zhua.show, fake_bot, make_group_event(), arg="草地卒")
-            is True
+            await run_handler(zhua.show, fake_bot, make_group_event(), arg=query) is True
         )
         message = sent_messages(fake_bot)[0]
-        assert image_files(message)[0].endswith("草地卒.png")
-        assert "最普通的小卒，没什么好说的。" in message.extract_plain_text()
+        assert image_files(message)[0].endswith(expected)
+        assert self.FAKE_LIB[expected] in message.extract_plain_text()
 
-    async def test_name_match_is_case_insensitive(self, fake_bot, make_group_event):
-        """输入会被 lower()，表里的名字也 lower() 之后再比，UwU卒 才匹配得上"""
-        await run_handler(zhua.show, fake_bot, make_group_event(), arg="UWU卒")
-        assert image_files(sent_messages(fake_bot)[0])[0].endswith("UwU卒.png")
-
-    async def test_name_with_uppercase_extension(self, fake_bot, make_group_event):
-        """"捏捏卒.PNG" 的扩展名是大写的，去扩展名用的是 rsplit(".", 1)"""
-        await run_handler(zhua.show, fake_bot, make_group_event(), arg="捏捏卒")
-        assert image_files(sent_messages(fake_bot)[0])[0].endswith("捏捏卒.PNG")
-
-    async def test_unknown_name(self, fake_bot, make_group_event):
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "根本没有这个",
+            "草地卒.png",  # 比的是去扩展名的 stem，所以带扩展名反而查不到
+        ],
+    )
+    async def test_unmatched_name_is_rejected(self, query, fake_bot, make_group_event):
+        """查不到就回一条、不发图（发出去一张裂图才是问题，回什么话不是）"""
         assert (
-            await run_handler(zhua.show, fake_bot, make_group_event(), arg="根本没有这个")
-            is True
+            await run_handler(zhua.show, fake_bot, make_group_event(), arg=query) is True
         )
-        assert sent_texts(fake_bot) == ["请输入一个正确的名称！"]
-
-    async def test_full_file_name_is_not_accepted(self, fake_bot, make_group_event):
-        """比的是去扩展名的 stem，所以带扩展名反而查不到"""
-        await run_handler(zhua.show, fake_bot, make_group_event(), arg="草地卒.png")
-        assert sent_texts(fake_bot) == ["请输入一个正确的名称！"]
-
-    async def test_only_the_first_word_is_used(self, fake_bot, make_group_event):
-        await run_handler(zhua.show, fake_bot, make_group_event(), arg="草地卒 多余的词")
-        assert image_files(sent_messages(fake_bot)[0])[0].endswith("草地卒.png")
+        assert only_text(fake_bot)
+        assert image_files(sent_messages(fake_bot)[0]) == []
 
 
 class TestZhuaTest:
@@ -840,7 +864,10 @@ class TestZhuaTest:
         monkeypatch.setattr(zhua, "DATA_DIR", folder)
 
         assert await run_handler(zhua.zhua_test, fake_bot, make_group_event()) is True
-        assert sent_texts(fake_bot) == ['[\'["a.png"] = ""\']']
+        # 行为是「只列文件、不列子目录」，dump 的排版怎么写不管
+        text = only_text(fake_bot)
+        assert "a.png" in text
+        assert "sub" not in text
 
     async def test_missing_folder_raises(
         self, fake_bot, make_group_event, monkeypatch, tmp_path
@@ -857,16 +884,15 @@ class TestZhuaTest:
 class TestSayHelpers:
     """say 里两个纯函数：拼 OneBot 语音消息的 payload"""
 
-    def test_group_payload(self):
-        assert say.json_group_audio(123, "/tmp/a.wav") == {
-            "group_id": 123,
+    @pytest.mark.parametrize(
+        ("builder", "target_key"),
+        [(say.json_group_audio, "group_id"), (say.json_private_audio, "user_id")],
+    )
+    def test_audio_payload(self, builder, target_key):
+        """两个函数只差收件人字段叫什么，消息体是同一套 record 段"""
+        assert builder(123, "/tmp/a.wav") == {
+            target_key: 123,
             "message": [{"type": "record", "data": {"file": "/tmp/a.wav"}}],
-        }
-
-    def test_private_payload(self):
-        assert say.json_private_audio(456, "/tmp/b.wav") == {
-            "user_id": 456,
-            "message": [{"type": "record", "data": {"file": "/tmp/b.wav"}}],
         }
 
 
@@ -942,21 +968,25 @@ class TestSay:
         assert sent_messages(fake_bot) == []
 
     async def test_empty_text(self, fake_bot, make_group_event):
+        """空文本回一条提示，不去跑 TTS"""
         assert await run_handler(say.say, fake_bot, make_group_event()) is True
-        assert sent_texts(fake_bot) == ["你得在say后面加点东西……"]
+        assert only_text(fake_bot)
+        assert "send_group_msg" not in fake_bot.called_apis
 
     async def test_whitespace_only_text_counts_as_empty(
         self, fake_bot, make_group_event
     ):
-        """`arg.extract_plain_text().strip()` 之后是空的就算空"""
+        """`arg.extract_plain_text().strip()` 之后是空的就算空 —— 同样不跑 TTS"""
         await run_handler(say.say, fake_bot, make_group_event(), arg="    ")
-        assert sent_texts(fake_bot) == ["你得在say后面加点东西……"]
+        assert only_text(fake_bot)
+        assert "send_group_msg" not in fake_bot.called_apis
 
     async def test_text_over_500_is_rejected(self, fake_bot, make_group_event):
         event = make_group_event(message_id=6)
         assert await run_handler(say.say, fake_bot, event, arg="a" * 501) is True
         assert emoji_likes(fake_bot) == [(6, "424")]
-        assert sent_texts(fake_bot) == ["请善待小小卒！"]
+        assert only_text(fake_bot)
+        assert "send_group_msg" not in fake_bot.called_apis
 
     async def test_text_of_exactly_500_is_allowed(
         self, fake_bot, make_group_event, monkeypatch
@@ -981,19 +1011,20 @@ class TestSay:
     ):
         """非 Apple Silicon 机器上 mlx_audio import 不了，退化成一条错误提示"""
         assert await run_handler(say.say, fake_bot, make_group_event(), arg="喵") is True
-        assert len(sent_texts(fake_bot)) == 1
-        assert sent_texts(fake_bot)[0].startswith("生成音频失败: ")
+        assert only_text(fake_bot)
         assert "send_group_msg" not in fake_bot.called_apis
 
     async def test_generation_error_is_reported(
         self, fake_bot, make_group_event, monkeypatch
     ):
+        """生成炸了的时候要把异常信息带出来，而不是闷声不响"""
+
         def boom(*_a, **_k):
             raise RuntimeError("模型炸了")
 
         monkeypatch.setattr(say, "sync_generate_audio", boom)
         await run_handler(say.say, fake_bot, make_group_event(), arg="喵")
-        assert sent_texts(fake_bot) == ["生成音频失败: 模型炸了"]
+        assert "模型炸了" in only_text(fake_bot)
 
     async def test_group_success_sends_a_record_and_deletes_the_file(
         self, fake_bot, make_group_event, fake_mlx_audio, tmp_path
@@ -1023,7 +1054,8 @@ class TestSay:
         await run_handler(say.say, fake_bot, make_group_event(), arg="喵喵")
         call = fake_mlx_audio["generate_audio"][0]
         assert call["text"] == "喵喵"
-        assert call["instruct"].startswith("体现稚嫩撒娇的少女声线")
+        # 默认音色指令的具体措辞是调参用的，只钉「确实传了一条非空的」
+        assert isinstance(call["instruct"], str) and call["instruct"].strip()
         assert call["join_audio"] is True
 
     async def test_model_is_loaded_once_and_cached(
@@ -1032,9 +1064,7 @@ class TestSay:
         """_MODEL 是模块级缓存，第二次调用不该再 load 一遍"""
         await run_handler(say.say, fake_bot, make_group_event(), arg="一")
         await run_handler(say.say, fake_bot, make_group_event(), arg="二")
-        assert fake_mlx_audio["load_model"] == [
-            "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
-        ]
+        assert len(fake_mlx_audio["load_model"]) == 1  # 换模型不该让这条红
         assert len(fake_mlx_audio["generate_audio"]) == 2
 
 
@@ -1062,27 +1092,27 @@ class TestSayInstructed:
         assert fake_mlx_audio["generate_audio"][0]["text"] == "正文"
 
     async def test_no_argument_explains_usage(self, fake_bot, make_group_event):
+        """没参数时回一条走人，不去跑 TTS"""
         event = make_group_event(user_id=MASTER_ID)
         assert await run_handler(say.say_instructed, fake_bot, event) is True
-        assert sent_texts(fake_bot) == [
-            "两个参数，第一个参数是指令参数，第二个参数是文本内容哦！"
-        ]
+        assert only_text(fake_bot)
+        assert "send_group_msg" not in fake_bot.called_apis
 
     async def test_single_word_is_treated_as_missing_text(
         self, fake_bot, make_group_event
     ):
-        """split(maxsplit=1) 只切出一段的话正文就是空的"""
+        """split(maxsplit=1) 只切出一段的话正文就是空的，走的是同一条收场路径"""
         event = make_group_event(user_id=MASTER_ID)
         await run_handler(say.say_instructed, fake_bot, event, arg="只有指令")
-        assert sent_texts(fake_bot) == [
-            "两个参数，第一个参数是指令参数，第二个参数是文本内容哦！"
-        ]
+        assert only_text(fake_bot)
+        assert "send_group_msg" not in fake_bot.called_apis
 
     async def test_text_over_1000_is_rejected(self, fake_bot, make_group_event):
         event = make_group_event(user_id=MASTER_ID, message_id=8)
         await run_handler(say.say_instructed, fake_bot, event, arg="指令 " + "b" * 1001)
         assert emoji_likes(fake_bot) == [(8, "424")]
-        assert sent_texts(fake_bot) == ["请善待小小卒！"]
+        assert only_text(fake_bot)
+        assert "send_group_msg" not in fake_bot.called_apis
 
     async def test_text_of_exactly_1000_is_allowed(
         self, fake_bot, make_group_event, fake_mlx_audio
@@ -1130,25 +1160,27 @@ class TestAiPureHelpers:
             ("a\tb\nc", "a b c"),
             ("a    b", "a b"),  # 连续空白压成一个
             ("", ""),
+            # 不是字符串的一律当空串处理，别让上下文里的脏数据把请求带崩
+            (None, ""),
+            (123, ""),
+            ([], ""),
+            ({}, ""),
         ],
     )
     def test_sanitize_text(self, raw, expected):
         assert ai.sanitize_text(raw) == expected
-
-    @pytest.mark.parametrize("value", [None, 123, [], {}])
-    def test_sanitize_text_rejects_non_strings(self, value):
-        assert ai.sanitize_text(value) == ""
 
     def test_remove_emoji(self):
         assert ai.remove_emoji("你好😀世界") == "你好世界"
         assert ai.remove_emoji("😀😀") == ""
         assert ai.remove_emoji("纯文本") == "纯文本"
 
-    def test_constants(self):
-        assert ai.MAX_TURNS == 5
+    def test_constants_match_what_the_tests_assume(self):
+        """本文件里硬编码的群号/主人号得和插件里的一致，不然下面几十条用例全在测空气"""
         assert ai.PROHIBITED_GROUP == [BANNED_GROUP]
         assert ai.MASTER_ID == MASTER_ID
-        assert ai.API_URL == "http://127.0.0.1:1234/v1/chat/completions"
+        # 改端口、改路径都行，指到外网就不行
+        assert ai.API_URL.startswith("http://127.0.0.1")
 
 
 @pytest.fixture
@@ -1172,23 +1204,27 @@ class TestAiGuards:
         assert ai_context == {}
 
     async def test_empty_input(self, ai_context, fake_bot, make_group_event):
+        """空输入回一条就走，不建会话、不发请求"""
         assert await run_handler(ai.ai_cmd, fake_bot, make_group_event()) is True
-        assert sent_texts(fake_bot) == ["请输入内容，例如：.ai 你好"]
+        assert only_text(fake_bot)
+        assert ai_context == {}
 
     async def test_emoji_only_input_is_empty_after_cleaning(
         self, ai_context, fake_bot, make_group_event
     ):
-        """先去 emoji 再 sanitize，纯 emoji 就变成空串了"""
+        """先去 emoji 再 sanitize，纯 emoji 就变成空串了，走的是同一条路"""
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="😀😀")
-        assert sent_texts(fake_bot) == ["请输入内容，例如：.ai 你好"]
+        assert only_text(fake_bot)
+        assert ai_context == {}
 
     async def test_master_can_clear_context(
         self, ai_context, fake_bot, make_group_event
     ):
+        """主人说 clear 就把上下文清干净并回一条（清没清干净是行为，回什么话不是）"""
         ai_context["g" + str(DEFAULT_GROUP_ID)] = [{"role": "user", "content": "旧的"}]
         event = make_group_event(user_id=MASTER_ID)
         assert await run_handler(ai.ai_cmd, fake_bot, event, arg="clear") is True
-        assert sent_texts(fake_bot) == ["上下文已清空"]
+        assert only_text(fake_bot)
         assert ai_context == {}
 
     async def test_chinese_clear_keyword(self, ai_context, fake_bot, make_group_event):
@@ -1409,12 +1445,13 @@ class TestAiResponseParsing:
     async def test_all_emoji_reply_becomes_empty(
         self, ai_context, fake_bot, make_group_event, stub_httpx, make_httpx_response
     ):
-        """全是 emoji 的回复被清空之后回一句“回复为空”，但上下文已经写进去了"""
+        """全是 emoji 的回复被清空之后仍要回一条非空消息（空消息 OneBot 会拒），
+        但上下文里存的还是模型原样的那串 emoji"""
         stub_httpx.post(
             API_ENDPOINT, make_httpx_response(200, json=chat_response("😀😀"))
         )
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
-        assert sent_texts(fake_bot) == ["回复为空"]
+        assert only_text(fake_bot)
         assert ai_context["g" + str(DEFAULT_GROUP_ID)][-1] == {
             "role": "assistant",
             "content": "😀😀",
@@ -1429,7 +1466,7 @@ class TestAiErrors:
         assert (
             await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好") is True
         )
-        assert sent_texts(fake_bot) == ["API请求失败: 500"]
+        assert "500" in only_text(fake_bot)  # 报出来的是状态码，措辞随便
         assert ai_context == {"g" + str(DEFAULT_GROUP_ID): []}
 
     async def test_connection_error_is_reported(
@@ -1437,7 +1474,7 @@ class TestAiErrors:
     ):
         stub_httpx.post(API_ENDPOINT, httpx.ConnectError("连不上"))
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
-        assert sent_texts(fake_bot) == ["请求失败: 连不上"]
+        assert "连不上" in only_text(fake_bot)  # 异常信息要带出来
 
     async def test_non_json_body_reports_the_wrong_error(
         self, ai_context, fake_bot, make_group_event, stub_httpx, make_httpx_response
@@ -1452,10 +1489,10 @@ class TestAiErrors:
         """
         stub_httpx.post(API_ENDPOINT, make_httpx_response(200, text="<html>not json"))
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
-        assert sent_texts(fake_bot) == [
-            "API返回非JSON响应: <html>not json",
-            "请求失败: FinishedException()",
-        ]
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 2, "这个 bug 的症状就是「连收两条」，修好了这条会红"
+        assert "<html>not json" in texts[0]
+        assert "FinishedException" in texts[1]
 
     async def test_unparseable_payload_reports_the_wrong_error(
         self, ai_context, fake_bot, make_group_event, stub_httpx, make_httpx_response
@@ -1465,10 +1502,10 @@ class TestAiErrors:
         """
         stub_httpx.post(API_ENDPOINT, make_httpx_response(200, json={"choices": []}))
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
-        assert sent_texts(fake_bot) == [
-            '无法解析 API 返回: {"choices": []}',
-            "请求失败: FinishedException()",
-        ]
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 2, "这个 bug 的症状就是「连收两条」，修好了这条会红"
+        assert '{"choices": []}' in texts[0]
+        assert "FinishedException" in texts[1]
 
     async def test_failed_turn_is_not_written_to_the_context(
         self, ai_context, fake_bot, make_group_event, stub_httpx, make_httpx_response
@@ -1505,10 +1542,10 @@ class TestGuessFormalize:
     def test_strips_and_lowercases(self, raw, expected):
         assert guess.formalize(raw) == expected
 
-    @pytest.mark.parametrize("char", ["/", "?", "（", "）", "、", "*"])
-    def test_characters_outside_the_table_survive(self, char):
-        """删除表是写死的一串，表外的符号原样保留"""
-        assert guess.formalize(f"a{char}b") == f"a{char}b"
+    def test_characters_outside_the_table_survive(self):
+        """删除表是写死的一串，表外的符号原样保留（挨个试一遍，不用一符号一个用例）"""
+        for char in ["/", "?", "（", "）", "、", "*"]:
+            assert guess.formalize(f"a{char}b") == f"a{char}b", char
 
     def test_is_idempotent(self):
         for raw in ["Loopy Lagoon", "Java's Crypt", "你好，世界！"]:
@@ -1519,49 +1556,49 @@ class TestGuessFormalize:
 class TestGuessTables:
     """import 期从 data.maps 生成的 aliases / accepted 两张表"""
 
-    def test_map_bank_shape(self):
+    def test_bank_shape_and_aliases_mirror_it(self):
+        """题库每条都得有那三个字段、答案不重样，aliases 是它的一比一镜像。
+
+        原来还钉了 `len(maps) == 122` —— 加一张图就得回来改数字，
+        而条数不是行为，重复答案和缺字段才是。
+        """
         from xiaozu_bot.plugins.guess.data import maps
 
-        assert len(maps) == 122
+        assert maps, "题库表不能是空的"
+        answers = [entry["answer"] for entry in maps]
+        assert len(set(answers)) == len(answers), "答案不能重样，重了 accepted 会互相覆盖"
+
         for entry in maps:
             assert set(entry) == {"file_path", "answer", "alias"}
             assert entry["answer"] and entry["alias"]
-
-    def test_answers_are_unique(self):
-        from xiaozu_bot.plugins.guess.data import maps
-
-        answers = [entry["answer"] for entry in maps]
-        assert len(set(answers)) == len(answers)
-
-    def test_aliases_table_mirrors_the_bank(self):
-        from xiaozu_bot.plugins.guess.data import maps
-
-        assert len(guess.aliases) == len(maps)
-        for entry in maps:
             assert guess.aliases[entry["answer"]] == entry["alias"]
+        assert len(guess.aliases) == len(maps)
 
-    def test_accepted_contains_the_normalized_full_answer(self):
-        """写全名（含中英文和空格）也要算对"""
-        for answer, tokens in guess.accepted.items():
-            assert guess.formalize(answer) in tokens
+    def test_accepted_holds_the_normalized_answer_and_every_alias(self):
+        """每条答案的「全名 + 所有别名」归一化之后都要在 accepted 里。
 
-    def test_accepted_normalizes_aliases(self):
-        """别名表里 VVVVVV 是大写的，必须归一化后才匹配得上"""
-        tokens = guess.accepted["潜在的一切 Potential for Anything"]
-        assert "vvvvvv" in tokens
-        assert "VVVVVV" not in tokens
+        这一条同时盖掉了以前三个单独的用例：写全名算对、别名里的大写
+        （VVVVVV）归一化之后才认得出来、同一个别名（崩坏）挂在两个答案下
+        互不干扰 —— 而且是遍历整张表，以后再加这种别名不用补用例。
+        """
+        from xiaozu_bot.plugins.guess.data import maps
 
-    def test_one_alias_may_serve_two_answers(self):
-        """"崩坏" 同时是崩坏天际线和崩碎之歌的别名 —— accepted 按答案分桶，互不干扰"""
-        assert "崩坏" in guess.accepted["崩坏天际线 Collapsing Skyline"]
-        assert "崩坏" in guess.accepted["崩碎之歌 Shattersong"]
+        for entry in maps:
+            tokens = guess.accepted[entry["answer"]]
+            assert guess.formalize(entry["answer"]) in tokens
+            for alias in entry["alias"]:
+                assert guess.formalize(alias) in tokens, (entry["answer"], alias)
+                # 存的一定是归一化后的形式，原样的大写别名不该混进来
+                if alias != guess.formalize(alias):
+                    assert alias not in tokens
 
 
 class TestGuessGetId:
-    def test_group_session_id_is_prefixed(self, make_group_event):
+    def test_session_id_is_group_prefixed_or_a_bare_user_id(
+        self, make_group_event, make_private_event
+    ):
+        """群会话带 g 前缀，私聊就是光秃秃的 QQ 号 —— 两个分支一起看，免得只对一半"""
         assert guess.getid(make_group_event()) == "g" + str(DEFAULT_GROUP_ID)
-
-    def test_private_session_id_is_the_bare_user_id(self, make_private_event):
         assert guess.getid(make_private_event()) == str(DEFAULT_USER_ID)
 
 
@@ -1754,7 +1791,10 @@ class TestGuessCanStart:
             fake_bot, event, lambda: guess.can_start(fake_bot, guess.guess_start, event)
         )
         assert finished is True
-        assert sent_texts(fake_bot) == ["请先输入*guess_giveup结束目前的题目！"]
+        # 行为是「挡住 + 回一条」，提示怎么写不管
+        assert only_text(fake_bot)
+        # 挡住了就不该把旧题的答案冲掉
+        assert store.hget(guess.ANSWER_KEY, "g" + str(DEFAULT_GROUP_ID)) == "假图 Fake Level"
 
     async def test_nothing_answer_does_not_block(
         self, guess_env, fake_bot, make_group_event
@@ -1834,13 +1874,15 @@ class TestGuessStart:
     async def test_sends_the_crop_with_a_prompt(
         self, guess_env, fake_bot, make_group_event, monkeypatch
     ):
+        """出题那条消息要带上裁好的图、@ 出题人，而且不能把答案漏出去"""
         _, _, pictures_dir = guess_env
         monkeypatch.setattr(random, "randint", lambda a, b: 0)
         monkeypatch.setattr(random, "choice", lambda seq: seq[0])
 
         await run_handler(guess.guess_start_ultra, fake_bot, make_group_event())
         message = sent_messages(fake_bot)[0]
-        assert "这个截图是出自哪张图呢？" in message.extract_plain_text()
+        assert message.extract_plain_text().strip()
+        assert "假图 Fake Level" not in message.extract_plain_text()
         assert image_files(message)[0].endswith(f"g{DEFAULT_GROUP_ID}.png")
         assert MessageSegment.at(DEFAULT_USER_ID) in message
 
@@ -1893,8 +1935,9 @@ class TestGuessStart:
 
         finished = await run_handler(guess.guess_start, fake_bot, make_group_event())
 
+        # 「收场了」才是这个回归要钉的性质，收场时说了什么无所谓
         assert finished is True
-        assert "题库是空的" in sent_texts(fake_bot)[0]
+        assert len(sent_texts(fake_bot)) == 1
         # 无放回：40 条每条恰好看一次，不多不少
         assert len(looked_at) == len(guess.maps) == 40
         assert len(set(looked_at)) == 40
@@ -1910,7 +1953,7 @@ class TestGuessStart:
         finished = await run_handler(guess.guess_start, fake_bot, make_group_event())
 
         assert finished is True
-        assert "题库是空的" in sent_texts(fake_bot)[0]
+        assert len(sent_texts(fake_bot)) == 1
 
     async def test_guess_test_also_finishes_on_empty_bank(
         self, guess_env, fake_bot, make_group_event, monkeypatch
@@ -1926,7 +1969,7 @@ class TestGuessStart:
         finished = await run_handler(guess.guess_test, fake_bot, make_group_event())
 
         assert finished is True
-        assert "题库是空的" in sent_texts(fake_bot)[0]
+        assert len(sent_texts(fake_bot)) == 1
         assert len(looked_at) == 40
 
     async def test_sparse_bank_never_falsely_reports_empty(self, guess_env, monkeypatch):
@@ -2015,10 +2058,12 @@ class TestGuessAnswer:
             guess.guess, fake_bot, make_group_event(), arg="别的图"
         )
         message = sent_messages(fake_bot)[0]
-        assert "你的猜测是错误的！你的题目是" in message.extract_plain_text()
+        # 重发的是题图，答案还不能露
         assert image_files(message)[0].endswith(f"g{DEFAULT_GROUP_ID}.png")
+        assert "假图 Fake Level" not in message.extract_plain_text()
 
     async def test_correct_full_answer(self, started, fake_bot, make_group_event):
+        """猜对的标志是「把答案念出来」+ 三处状态变更，贺词怎么写不管"""
         store, session, pictures_dir = started
         assert (
             await run_handler(
@@ -2026,24 +2071,27 @@ class TestGuessAnswer:
             )
             is True
         )
-        assert "你猜对了！答案是：假图 Fake Level。" in sent_texts(fake_bot)[0]
+        assert "假图 Fake Level" in sent_texts(fake_bot)[0]
         assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
         assert store.get(guess.TOTAL_TRIES_KEY) == 1
         assert store.get(guess.TOTAL_RIGHT_KEY) == 1
         assert (pictures_dir / f"{session}.png").exists()
 
     async def test_alias_is_accepted(self, started, fake_bot, make_group_event):
+        store, session, _ = started
         await run_handler(guess.guess, fake_bot, make_group_event(), arg="假图")
-        assert "你猜对了！" in sent_texts(fake_bot)[0]
+        assert "假图 Fake Level" in sent_texts(fake_bot)[0]
+        assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
 
     async def test_answer_is_normalized_before_comparing(
         self, started, fake_bot, make_group_event
     ):
         """大小写、空格、标点都会被 formalize 抹掉"""
+        store, session, _ = started
         await run_handler(
             guess.guess, fake_bot, make_group_event(), arg="  假图 FAKE-LEVEL!  "
         )
-        assert "你猜对了！" in sent_texts(fake_bot)[0]
+        assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
 
     async def test_uppercase_alias_from_the_real_bank_is_accepted(
         self, guess_env, fake_bot, make_group_event, tmp_path
@@ -2058,7 +2106,8 @@ class TestGuessAnswer:
         store.hset(guess.ANSWER_POSITION_KEY, session, "0 0 10 10")
 
         await run_handler(guess.guess, fake_bot, make_group_event(), arg="VVVVVV")
-        assert f"你猜对了！答案是：{answer}。" in sent_texts(fake_bot)[0]
+        assert answer in sent_texts(fake_bot)[0]
+        assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
 
     async def test_guessing_is_allowed_during_the_cooldown(
         self, started, fake_bot, make_group_event
@@ -2067,7 +2116,8 @@ class TestGuessAnswer:
         store, session, _ = started
         store.set(f"{guess.COOLDOWN_PREFIX}{session}", "x", ex=45)
         await run_handler(guess.guess, fake_bot, make_group_event(), arg="假图")
-        assert "你猜对了！" in sent_texts(fake_bot)[0]
+        assert "假图 Fake Level" in sent_texts(fake_bot)[0]
+        assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
 
 
 class TestGuessGiveUp:
@@ -2085,7 +2135,7 @@ class TestGuessGiveUp:
         store, session, pictures_dir = started
         assert await run_handler(guess.guess_giveup, fake_bot, make_group_event()) is True
         message = sent_messages(fake_bot)[0]
-        assert "你放弃了！答案是：假图 Fake Level。" in message.extract_plain_text()
+        assert "假图 Fake Level" in message.extract_plain_text()
         assert image_files(message)[0].endswith(f"{session}.png")
         assert (pictures_dir / f"{session}.png").exists()
         assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
@@ -2121,7 +2171,7 @@ class TestGuessMisc:
     ):
         """从来没人猜过的时候，两个计数器都是 None，直接被拼进了句子里"""
         assert await run_handler(guess.guess_count, fake_bot, make_group_event()) is True
-        assert sent_texts(fake_bot) == ["全服总共进行了None次猜测，猜对了None道题。"]
+        assert only_text(fake_bot).count("None") == 2
 
     async def test_count_reports_the_stored_numbers(
         self, guess_env, fake_bot, make_group_event
@@ -2130,7 +2180,8 @@ class TestGuessMisc:
         store.set(guess.TOTAL_TRIES_KEY, 17)
         store.set(guess.TOTAL_RIGHT_KEY, 5)
         await run_handler(guess.guess_count, fake_bot, make_group_event())
-        assert sent_texts(fake_bot) == ["全服总共进行了17次猜测，猜对了5道题。"]
+        # 报的是这两个数，句子怎么组织不管
+        assert re.findall(r"\d+", only_text(fake_bot)) == ["17", "5"]
 
     async def test_remove_cooldown(self, guess_env, fake_bot, make_group_event):
         store, _, _ = guess_env
@@ -2141,7 +2192,7 @@ class TestGuessMisc:
             await run_handler(guess.guess_removecooldown, fake_bot, make_group_event())
             is True
         )
-        assert sent_texts(fake_bot) == ["已经移除你（或你所在群）的生成题目cd！"]
+        assert only_text(fake_bot)
         # 实现是把 cd 改成 1 秒而不是删掉，ttl 会立刻落到 0（判定用的是 > 0）
         assert store.ttl(f"{guess.COOLDOWN_PREFIX}{session}") <= 0
 
@@ -2156,7 +2207,8 @@ class TestGuessMisc:
         api, data = fake_bot.calls[0]
         assert api == "send_private_msg"
         assert data["user_id"] == DEFAULT_USER_ID
-        assert data["message"][0]["data"]["text"] == f"{session}假图 Fake Level"
+        # 行为是「答案私聊给了提问的人、没发到群里」，这条私聊怎么措辞不管
+        assert "假图 Fake Level" in data["message"][0]["data"]["text"]
 
     # 生产代码里 Image.open() 从来不 close，gc 的时候会冒 ResourceWarning，
     # 这里只是把噪音压住，别的用例照常暴露

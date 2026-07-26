@@ -115,6 +115,50 @@ def make_level_payload(**over: Any) -> dict[str, Any]:
     return payload
 
 
+def make_submission_payload(**over: Any) -> dict[str, Any]:
+    """SubmissionDTO。上游改字段名时只改这一处，用例不用一条条跟着改。"""
+    payload = {
+        "ID": 7, "Rating": 21, "Enjoyment": 8.5, "RefreshRate": 240,
+        "Device": "PC", "Proof": "https://youtu.be/p", "IsSolo": False,
+        "Progress": 100, "Attempts": 1234, "DateAdded": "2026-01-02T03:04:05Z",
+        "UserID": 42, "User": {"Name": "someone"},
+        "SecondaryUser": {"Name": "partner"},
+    }
+    payload.update(over)
+    return payload
+
+
+# SubmissionDTO 的键 -> Submission 实例上的属性名。
+# User / SecondaryUser 是嵌套结构（只取里面的 Name），不在这张表里。
+SUBMISSION_FIELDS: dict[str, str] = {
+    "ID": "id",
+    "Rating": "rating",
+    "Enjoyment": "enjoyment",
+    "RefreshRate": "refresh_rate",
+    "Device": "device",
+    "Proof": "proof",
+    "IsSolo": "is_solo",
+    "Progress": "progress",
+    "Attempts": "attempts",
+    "DateAdded": "date_added",
+    "UserID": "user_id",
+}
+
+
+def make_submission_page_payload(
+    ids: tuple[int, ...] = (1, 2, 3), **over: Any
+) -> dict[str, Any]:
+    """/api/level/{id}/submissions 的一页，ids 决定这一页里有哪几条提交。"""
+    payload = {
+        "total": len(ids),
+        "limit": GDDL_SUBMISSION_LIMIT,
+        "page": 0,
+        "submissions": [make_submission_payload(ID=i) for i in ids],
+    }
+    payload.update(over)
+    return payload
+
+
 def make_nlw_row(level_id: int = 1, name: str = "Alpha", **over: Any) -> dict[str, Any]:
     """一行表格数据，四个源（NLW/IDS/LW/HDS）共用同一份字段。"""
     row = {
@@ -164,19 +208,15 @@ def png_bytes(size: tuple[int, int] = (60, 60), color: tuple[int, int, int, int]
 # gddlapi —— 常量
 # ==========================================================================
 class TestGddlConstants:
-    def test_submission_limit_matches_web_page(self) -> None:
-        """网页上一页 10 条，代码里的默认值必须跟着"""
+    def test_constants_match_the_web_api(self) -> None:
+        """这几个常量就是接口契约，改一个都要有人来改测试。
+
+        网页上一页 10 条；limit 只认 1-30（超了直接 400）；
+        Length 枚举里 6 = platformer；三张白名单是照着接口文档抄的。
+        """
         assert GDDL_SUBMISSION_LIMIT == 10
-
-    def test_limit_range_is_1_to_30(self) -> None:
-        """接口只认 1-30，超了直接 400"""
         assert (GDDL_LIMIT_MIN, GDDL_LIMIT_MAX) == (1, 30)
-
-    def test_plat_length_is_6(self) -> None:
-        """Length 枚举里 6 = platformer"""
         assert GDDL_PLAT_LENGTH == 6
-
-    def test_sort_and_filter_whitelists(self) -> None:
         assert gddlapi.SUBMISSION_SORTS == {
             "attempts", "dateAdded", "enjoyment", "rating",
             "progress", "refreshRate", "username",
@@ -200,17 +240,20 @@ class TestGddlModels:
         assert str(song) == "ID: 5\nName: N\nAuthor: A"
 
     def test_song_info_requires_all_three_keys(self) -> None:
-        with pytest.raises(KeyError):
-            SongInfo({"ID": 1, "Name": "n"})
+        """三个键全是硬取，缺任何一个都是 KeyError"""
+        for missing in ("ID", "Name", "Author"):
+            payload = make_song_payload()
+            del payload[missing]
+            with pytest.raises(KeyError, match=missing):
+                SongInfo(payload)
 
-    @pytest.mark.parametrize(
-        ("length", "expected"),
-        [(1, False), (4, False), (5, False), (GDDL_PLAT_LENGTH, True), (7, False)],
-    )
-    def test_level_meta_is_pemon_boundary(self, length: int, expected: bool) -> None:
+    def test_level_meta_is_pemon_boundary(self) -> None:
         """只有 Length == 6 才算 plat，5（XL）和 7（不存在的值）都不算"""
-        meta = LevelMeta(make_meta_payload(Length=length))
-        assert meta.is_pemon() is expected
+        for length, expected in [
+            (1, False), (4, False), (5, False), (GDDL_PLAT_LENGTH, True), (7, False),
+        ]:
+            meta = LevelMeta(make_meta_payload(Length=length))
+            assert meta.is_pemon() is expected, length
 
     def test_level_meta_drops_publisher_and_uploaded_at(self) -> None:
         """__init__ 压根没读 PublisherID / UploadedAt，实例上就不该有 PublisherID。
@@ -226,22 +269,22 @@ class TestGddlModels:
         assert meta.UploadedAt is None
         assert not hasattr(meta, "PublisherID")
 
-    def test_gddl_level_full_parse(self) -> None:
-        level = GDDLLevel(make_level_payload())
-        assert level.ID == 1000
-        assert level.Rating == 20.5
-        assert level.Enjoyment == 7.5
-        assert level.SubmissionCount == 15
-        assert level.Showcase == "dQw4w9WgXcQ"
-        assert level.Meta.Song.Name == "Stereo Madness"
-        assert level.Tags == []
+    def test_gddl_level_every_key_lands_on_the_attribute_of_the_same_name(self) -> None:
+        """LevelDTO 的键名和属性名一一对应；number|null 的字段要原样保留 null 而不是变 0。
 
-    def test_gddl_level_nullable_fields_stay_none(self) -> None:
-        """Rating / Enjoyment 这些是 number|null，null 要原样保留而不是变 0"""
-        level = GDDLLevel(make_level_payload(Rating=None, Enjoyment=None, Deviation=None))
-        assert level.Rating is None
-        assert level.Enjoyment is None
-        assert level.Deviation is None
+        照着 make_level_payload 的键走，DTO 加字段时这里自动跟着校验。
+        """
+        for payload in (
+            make_level_payload(),
+            make_level_payload(Rating=None, Enjoyment=None, Deviation=None),
+        ):
+            level = GDDLLevel(payload)
+            for key, value in payload.items():
+                if key == "Meta":  # 嵌套的 LevelMeta，下面单独看
+                    continue
+                assert getattr(level, key) == value, key
+            assert level.Meta.Song.Name == payload["Meta"]["Song"]["Name"]
+            assert level.Tags == []
 
     def test_gddl_level_tags_default_and_passthrough(self) -> None:
         tags = [{"Name": "Timings", "Count": 3}]
@@ -254,52 +297,48 @@ class TestGddlModels:
         assert GDDLLevel(make_level_payload(meta={"Length": 5})).is_pemon() is False
 
     def test_gddl_level_missing_key_raises(self) -> None:
-        """所有字段都是硬取，少一个就 KeyError（调用方得自己接住）"""
-        payload = make_level_payload()
-        del payload["Deviation"]
-        with pytest.raises(KeyError):
-            GDDLLevel(payload)
+        """所有字段都是硬取，少任何一个都是 KeyError（调用方得自己接住）"""
+        for missing in make_level_payload():
+            payload = make_level_payload()
+            del payload[missing]
+            with pytest.raises(KeyError):
+                GDDLLevel(payload)
 
 
 class TestSubmission:
-    def test_all_fields_optional(self) -> None:
+    def test_every_key_maps_to_its_attribute(self) -> None:
+        """SubmissionDTO 的键按 SUBMISSION_FIELDS 落到属性上，嵌套的 User 只取 Name。
+
+        IsSolo 在样例里是 False：`.get(key, True)` 的坑就在这，
+        显式的 False 必须留住，不能被默认值顶掉。
+        """
+        payload = make_submission_payload()
+        sub = Submission(payload)
+        for key, attr in SUBMISSION_FIELDS.items():
+            assert getattr(sub, attr) == payload[key], key
+        assert sub.is_solo is False
+        assert sub.user_name == payload["User"]["Name"]
+        assert sub.second_user_name == payload["SecondaryUser"]["Name"]
+
+    def test_empty_payload_is_all_none_except_is_solo(self) -> None:
         """Submission 全用 .get，空 dict 也能构造出来，is_solo 默认 True"""
         sub = Submission({})
-        assert sub.id is None
-        assert sub.rating is None
-        assert sub.enjoyment is None
+        for attr in SUBMISSION_FIELDS.values():
+            if attr == "is_solo":
+                continue
+            assert getattr(sub, attr) is None, attr
         assert sub.user_name is None
         assert sub.second_user_name is None
         assert sub.is_solo is True
 
-    def test_full_payload(self) -> None:
-        sub = Submission({
-            "ID": 7, "Rating": 21, "Enjoyment": 8.5, "RefreshRate": 240,
-            "Device": "PC", "Proof": "https://youtu.be/p", "IsSolo": False,
-            "Progress": 100, "Attempts": 1234, "DateAdded": "2026-01-02T03:04:05Z",
-            "UserID": 42, "User": {"Name": "someone"},
-            "SecondaryUser": {"Name": "partner"},
-        })
-        assert sub.id == 7
-        assert (sub.rating, sub.enjoyment) == (21, 8.5)
-        assert sub.refresh_rate == 240
-        assert sub.is_solo is False
-        assert (sub.progress, sub.attempts) == (100, 1234)
-        assert (sub.user_id, sub.user_name) == (42, "someone")
-        assert sub.second_user_name == "partner"
-
     def test_null_user_objects_do_not_explode(self) -> None:
         """User / SecondaryUser 是 null 的时候要退化成空 dict，不能 AttributeError"""
-        sub = Submission({"User": None, "SecondaryUser": None})
+        sub = Submission(make_submission_payload(User=None, SecondaryUser=None))
         assert sub.user_name is None
         assert sub.second_user_name is None
 
-    def test_is_solo_false_is_kept(self) -> None:
-        """.get(key, True) 的坑：显式 False 必须留住，不能被默认值顶掉"""
-        assert Submission({"IsSolo": False}).is_solo is False
-
     def test_to_dict_is_a_copy(self) -> None:
-        sub = Submission({"ID": 1})
+        sub = Submission(make_submission_payload(ID=1))
         dumped = sub.to_dict()
         dumped["id"] = 999
         assert sub.id == 1
@@ -315,16 +354,13 @@ class TestSubmissionPage:
         assert page.total_pages == 1
 
     def test_parses_submissions(self) -> None:
-        page = SubmissionPage({
-            "total": 3, "limit": 10, "page": 0,
-            "submissions": [{"ID": 1}, {"ID": 2}, {"ID": 3}],
-        })
+        page = SubmissionPage(make_submission_page_payload())
         assert [s.id for s in page.submissions] == [1, 2, 3]
         assert all(isinstance(s, Submission) for s in page.submissions)
 
-    @pytest.mark.parametrize(
-        ("total", "limit", "expected"),
-        [
+    def test_total_pages_boundaries(self) -> None:
+        """向上取整，且至少 1 页。整除的边界两侧都要对。"""
+        for total, limit, expected in [
             (0, 10, 1),     # 没有提交也至少算一页
             (1, 10, 1),
             (9, 10, 1),     # 最后一页不满
@@ -335,21 +371,18 @@ class TestSubmissionPage:
             (5, 1, 5),
             (30, 30, 1),
             (31, 30, 2),
-        ],
-    )
-    def test_total_pages_boundaries(self, total: int, limit: int, expected: int) -> None:
-        """向上取整，且至少 1 页。整除的边界两侧都要对。"""
-        page = SubmissionPage({"total": total, "limit": limit})
-        assert page.total_pages == expected
+        ]:
+            page = SubmissionPage({"total": total, "limit": limit})
+            assert page.total_pages == expected, (total, limit)
 
-    @pytest.mark.parametrize("limit", [0, -1, -30])
-    def test_total_pages_guards_against_bad_limit(self, limit: int) -> None:
+    def test_total_pages_guards_against_bad_limit(self) -> None:
         """limit <= 0 直接返回 1，不能除零也不能出负数页"""
-        assert SubmissionPage({"total": 100, "limit": limit}).total_pages == 1
+        for limit in (0, -1, -30):
+            assert SubmissionPage({"total": 100, "limit": limit}).total_pages == 1, limit
 
     def test_page_number_is_taken_as_is(self) -> None:
         """page 是接口回什么就是什么（0 起），这里不做任何换算"""
-        assert SubmissionPage({"page": 3}).page == 3
+        assert SubmissionPage(make_submission_page_payload(page=3)).page == 3
 
 
 # ==========================================================================
@@ -359,8 +392,7 @@ class TestGddlGetSubmissions:
     def test_happy_path(self, stub_requests: Any, make_response: Any) -> None:
         stub_requests.get(
             "https://gdladder.com/api/level/1000/submissions",
-            make_response(json_data={"total": 2, "limit": 10, "page": 0,
-                                     "submissions": [{"ID": 1}, {"ID": 2}]}),
+            make_response(json_data=make_submission_page_payload(ids=(1, 2))),
         )
         page = Gddl.getsubmissions(1000)
         assert page is not None
@@ -466,7 +498,7 @@ class TestGddlGetSubmissions:
     ) -> None:
         """0 条提交要返回一个空的 SubmissionPage，而不是 None"""
         stub_requests.get(
-            "/submissions", make_response(json_data={"total": 0, "submissions": []})
+            "/submissions", make_response(json_data=make_submission_page_payload(ids=()))
         )
         page = Gddl.getsubmissions(1)
         assert isinstance(page, SubmissionPage)
@@ -723,39 +755,46 @@ def nlw_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
             dct.update(backup)
 
 
+# 四个子类各自往实例上贴的 source 标记。加一个源就在这里加一行。
+NLW_SOURCES: list[tuple[type, str]] = [
+    (NLWlevel, "NLW"), (IDSlevel, "IDS"), (LWlevel, "LW"), (HDSlevel, "HDS"),
+]
+# Level.__init__ 里硬取（不是 .get）的键
+NLW_REQUIRED_KEYS = ("name", "creator", "video")
+
+
 class TestNlwModels:
     def test_base_level_required_vs_optional_keys(self) -> None:
         """name / creator / video 是硬取的，其余走 .get"""
-        level = Level({"name": "N", "creator": "C", "video": "V"})
-        assert (level.name, level.creator, level.video) == ("N", "C", "V")
+        row = make_nlw_row()
+        level = Level({key: row[key] for key in NLW_REQUIRED_KEYS})
+        assert (level.name, level.creator, level.video) == (
+            row["name"], row["creator"], row["video"],
+        )
         assert level.length is None
         assert level.checkpoints is None
         assert level.id is None
         assert level.description is None
 
-    @pytest.mark.parametrize("missing", ["name", "creator", "video"])
-    def test_base_level_missing_required_key_raises(self, missing: str) -> None:
-        row = {"name": "N", "creator": "C", "video": "V"}
-        del row[missing]
-        with pytest.raises(KeyError):
-            Level(row)
+    def test_base_level_missing_required_key_raises(self) -> None:
+        for missing in NLW_REQUIRED_KEYS:
+            row = make_nlw_row()
+            del row[missing]
+            with pytest.raises(KeyError):
+                Level(row)
 
-    @pytest.mark.parametrize(
-        ("cls", "source"),
-        [(NLWlevel, "NLW"), (IDSlevel, "IDS"), (LWlevel, "LW"), (HDSlevel, "HDS")],
-    )
-    def test_subclasses_tag_their_source(self, cls: type, source: str) -> None:
-        level = cls(make_nlw_row(tier="Fuck", skillset="wave"))
-        assert level.source == source
-        assert level.tier == "Fuck"
-        assert level.skillset == "wave"
+    def test_subclasses_tag_their_source(self) -> None:
+        for cls, source in NLW_SOURCES:
+            level = cls(make_nlw_row(tier="Fuck", skillset="wave"))
+            assert level.source == source
+            assert level.tier == "Fuck"
+            assert level.skillset == "wave"
 
     def test_nlw_and_lw_carry_enjoyment(self) -> None:
         assert NLWlevel(make_nlw_row(enjoyment=62.0)).enjoyment == 62.0
         assert LWlevel(make_nlw_row(enjoyment=None)).enjoyment is None
 
-    @pytest.mark.parametrize("cls", [IDSlevel, HDSlevel])
-    def test_ids_hds_do_not_read_enjoyment(self, cls: type) -> None:
+    def test_ids_hds_do_not_read_enjoyment(self) -> None:
         """IDS/HDS 表没有 enjoyment 这一列，缺了也要能构造。
 
         注意 IDS/HDS 实例上**压根没有** enjoyment 这个属性（既没在 __init__ 里赋值，
@@ -763,18 +802,19 @@ class TestNlwModels:
         四个子类在这点上不一致（NLW 有类默认值、LW 只在 __init__ 里赋值），
         看着像是漏了，只是目前没有调用方直接读它，所以没炸。
         """
-        row = make_nlw_row()
-        del row["enjoyment"]
-        level = cls(row)
-        assert not hasattr(level, "enjoyment")
-        assert level.tier == "1"
+        for cls in (IDSlevel, HDSlevel):
+            row = make_nlw_row()
+            del row["enjoyment"]
+            level = cls(row)
+            assert not hasattr(level, "enjoyment"), cls
+            assert level.tier == "1"
 
-    @pytest.mark.parametrize("cls", [NLWlevel, LWlevel])
-    def test_nlw_lw_require_enjoyment(self, cls: type) -> None:
-        row = make_nlw_row()
-        del row["enjoyment"]
-        with pytest.raises(KeyError):
-            cls(row)
+    def test_nlw_lw_require_enjoyment(self) -> None:
+        for cls in (NLWlevel, LWlevel):
+            row = make_nlw_row()
+            del row["enjoyment"]
+            with pytest.raises(KeyError):
+                cls(row)
 
     def test_to_dict_is_a_copy(self) -> None:
         level = NLWlevel(make_nlw_row())
@@ -1002,16 +1042,17 @@ def write_plat(tmp_path: Path) -> Any:
 
 
 class TestPlatInfoFromDict:
-    def test_basic_parse(self) -> None:
-        info = PlatInfo.from_dict(make_plat_row())
-        assert info.id == "111"
-        assert info.name == "Plat A"
-        assert info.tier == "9 - CRUEL"
-        assert info.tpl == "100"
-        assert info.pemonlist == "41"
-        assert info.enjoyment == 8.5
-        assert info.tags == ["Deathless", "Precision"]
-        assert info.is_main is True
+    def test_clean_row_round_trips_unchanged(self) -> None:
+        """一行「干净」数据进去再出来，13 个键原样不动。
+
+        断言的是整张字典，不是一个字段一句 assert：
+        plat 表加一列时只要改 make_plat_row 一处，这里自动跟着校验。
+        """
+        dumped = PlatInfo.from_dict(make_plat_row()).to_dict()
+        assert dumped == make_plat_row()
+        # is_main 是从 derived_from 算出来的，不进 to_dict
+        assert "is_main" not in dumped
+        assert PlatInfo.from_dict(make_plat_row()).is_main is True
 
     def test_values_are_stringified_and_stripped(self) -> None:
         info = PlatInfo.from_dict(make_plat_row(level_id=222, name="  Spaced  ", weight=100))
@@ -1026,44 +1067,39 @@ class TestPlatInfoFromDict:
         assert info.video is None
         assert info.section is None
 
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [(8.5, 8.5), ("7", 7.0), ("7.25", 7.25), (0, 0.0), (None, None),
-         ("", None), ("n/a", None), ([], None)],
-    )
-    def test_enjoyment_coercion(self, raw: Any, expected: Optional[float]) -> None:
+    def test_enjoyment_coercion(self) -> None:
         """能转 float 就转，转不动就 None（不能抛，也不能留下字符串）"""
-        info = PlatInfo.from_dict(make_plat_row(enjoyment=raw))
-        assert info.enjoyment == expected
+        for raw, expected in [
+            (8.5, 8.5), ("7", 7.0), ("7.25", 7.25), (0, 0.0), (None, None),
+            ("", None), ("n/a", None), ([], None),
+        ]:
+            assert PlatInfo.from_dict(make_plat_row(enjoyment=raw)).enjoyment == expected, raw
 
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [
+    def test_tags_normalization(self) -> None:
+        for raw, expected in [
             (["A", "B"], ["A", "B"]),
             ([" A ", "B "], ["A", "B"]),
-            (["---"], []),              # 表格里的占位符，等于没有 tag
+            (["---"], []),                 # 表格里的占位符，等于没有 tag
             (["---", "A"], ["---", "A"]),  # 只有整列就是 ["---"] 才当空
             ([], []),
             (["A", None, "B"], ["A", "B"]),
             ("notalist", []),
             (None, []),
-        ],
-    )
-    def test_tags_normalization(self, raw: Any, expected: list[str]) -> None:
-        assert PlatInfo.from_dict(make_plat_row(tags=raw)).tags == expected
+        ]:
+            assert PlatInfo.from_dict(make_plat_row(tags=raw)).tags == expected, raw
 
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [(["X"], ["X"]), ([" X "], ["X"]), ([None], []), ("nope", []), (None, [])],
-    )
-    def test_derived_levels_normalization(self, raw: Any, expected: list[str]) -> None:
-        assert PlatInfo.from_dict(make_plat_row(derived_levels=raw)).derived_levels == expected
+    def test_derived_levels_normalization(self) -> None:
+        for raw, expected in [
+            (["X"], ["X"]), ([" X "], ["X"]), ([None], []), ("nope", []), (None, []),
+        ]:
+            info = PlatInfo.from_dict(make_plat_row(derived_levels=raw))
+            assert info.derived_levels == expected, raw
 
-    @pytest.mark.parametrize("field", ["tpl", "pemonlist"])
-    def test_dash_placeholder_becomes_none(self, field: str) -> None:
+    def test_dash_placeholder_becomes_none(self) -> None:
         """表格里的 "-" 表示没排名，要变成 None"""
-        info = PlatInfo.from_dict(make_plat_row(**{field: "-"}))
-        assert getattr(info, field) is None
+        for field in ("tpl", "pemonlist"):
+            info = PlatInfo.from_dict(make_plat_row(**{field: "-"}))
+            assert getattr(info, field) is None, field
 
     def test_dash_placeholder_mutates_the_input_dict(self) -> None:
         """注意：from_dict 会就地改调用方传进来的 dict（tpl/pemonlist 的 "-"）。
@@ -1096,61 +1132,34 @@ class TestPlatInfoFromDict:
         assert info.name == ""
         assert info.is_main is True
 
-    def test_to_dict_roundtrip(self) -> None:
-        row = make_plat_row()
-        info = PlatInfo.from_dict(row)
-        dumped = info.to_dict()
-        assert dumped["id"] == "111"
-        assert set(dumped) == {
-            "id", "name", "tier", "tpl", "pemonlist", "creator", "tags",
-            "enjoyment", "video", "weight", "section", "derived_from", "derived_levels",
-        }
-        # is_main 是算出来的，不进 to_dict
-        assert "is_main" not in dumped
-
 
 class TestPlatData:
-    def test_load_splits_main_and_derived(self, write_plat: Any) -> None:
+    def test_derived_entries_go_into_by_name_but_not_by_id(self, write_plat: Any) -> None:
+        """一次加载里派生条目的全部去向：entries 收、main/derived 分开、
+        by_id 只收 main（所以用派生 id 查不到），by_name 两种都收。
+        """
         path = write_plat([
             make_plat_row("1", "Main"),
-            make_plat_row("2", "Main (Derived)", derived_from="Main"),
+            make_plat_row("2", "Derived", derived_from="Main"),
         ])
         data = PlatData(cache_file=str(path))
         assert [e.id for e in data.entries] == ["1", "2"]
         assert [e.id for e in data.main_entries] == ["1"]
         assert [e.id for e in data.derived_entries] == ["2"]
-
-    def test_by_id_only_contains_main_entries(self, write_plat: Any) -> None:
-        """派生关卡不进 by_id —— 用派生关卡的 id 查是查不到的"""
-        path = write_plat([
-            make_plat_row("1", "Main"),
-            make_plat_row("2", "Derived", derived_from="Main"),
-        ])
-        data = PlatData(cache_file=str(path))
         assert set(data.by_id) == {"1"}
         assert data.getlevelbyid("2") is None
-
-    def test_by_name_contains_derived_entries_too(self, write_plat: Any) -> None:
-        path = write_plat([
-            make_plat_row("1", "Main"),
-            make_plat_row("2", "Derived", derived_from="Main"),
-        ])
-        data = PlatData(cache_file=str(path))
-        assert data.getlevelbyname("derived") is not None
         assert data.getlevelbyname("derived").id == "2"
 
-    def test_duplicate_id_first_wins(self, write_plat: Any) -> None:
+    def test_duplicate_id_or_name_first_wins(self, write_plat: Any) -> None:
         path = write_plat([
             make_plat_row("1", "First"),
             make_plat_row("1", "Second"),
+            make_plat_row("2", "Dup"),
+            make_plat_row("3", "Dup"),
         ])
         data = PlatData(cache_file=str(path))
         assert data.getlevelbyid("1").name == "First"
-
-    def test_duplicate_name_first_wins(self, write_plat: Any) -> None:
-        path = write_plat([make_plat_row("1", "Dup"), make_plat_row("2", "Dup")])
-        data = PlatData(cache_file=str(path))
-        assert data.getlevelbyname("dup").id == "1"
+        assert data.getlevelbyname("dup").id == "2"
 
     def test_name_registered_under_both_exact_and_lowercase(self, write_plat: Any) -> None:
         path = write_plat([make_plat_row("1", "MiXeD")])
@@ -1167,41 +1176,31 @@ class TestPlatData:
         assert data.getlevelbyname("abc").id == "1"
         assert set(data.by_name) == {"ABC", "abc"}
 
-    def test_entries_without_id_are_dropped(self, write_plat: Any) -> None:
-        path = write_plat([make_plat_row("1", "Kept"), make_plat_row("", "NoId")])
+    def test_bad_rows_are_dropped(self, write_plat: Any) -> None:
+        """没有 id 的、以及压根不是 dict 的行都要跳过，好行照常进表"""
+        path = write_plat([
+            make_plat_row("1", "Kept"), make_plat_row("", "NoId"), "junk", 42, None,
+        ])
         data = PlatData(cache_file=str(path))
         assert [e.name for e in data.entries] == ["Kept"]
 
-    def test_non_dict_rows_are_skipped(self, write_plat: Any) -> None:
-        path = write_plat([make_plat_row("1", "Kept"), "junk", 42, None])
-        data = PlatData(cache_file=str(path))
-        assert [e.name for e in data.entries] == ["Kept"]
+    def test_unusable_cache_file_gives_empty_data(self, tmp_path: Path) -> None:
+        """文件不在 / 不是 json / 没有 levels 键，三种都当空数据，不能抛"""
+        broken = tmp_path / "broken.json"
+        broken.write_text("{oops", encoding="utf-8")
+        nolevels = tmp_path / "nolevels.json"
+        nolevels.write_text(json.dumps({"timestamp": 0}), encoding="utf-8")
+        for path in (tmp_path / "does_not_exist.json", broken, nolevels):
+            data = PlatData(cache_file=str(path))
+            assert data.entries == [], path
+            assert data.by_id == {}, path
+            assert data.getlevelbyid("1") is None, path
 
-    def test_missing_file_gives_empty_data(self, tmp_path: Path) -> None:
-        data = PlatData(cache_file=str(tmp_path / "does_not_exist.json"))
-        assert data.entries == []
-        assert data.by_id == {}
-        assert data.getlevelbyid("1") is None
-
-    def test_broken_json_gives_empty_data(self, tmp_path: Path) -> None:
-        path = tmp_path / "broken.json"
-        path.write_text("{oops", encoding="utf-8")
-        assert PlatData(cache_file=str(path)).entries == []
-
-    def test_missing_levels_key(self, tmp_path: Path) -> None:
-        path = tmp_path / "nolevels.json"
-        path.write_text(json.dumps({"timestamp": 0}), encoding="utf-8")
-        assert PlatData(cache_file=str(path)).entries == []
-
-    def test_getlevelbyid_strips_and_stringifies(self, write_plat: Any) -> None:
-        path = write_plat([make_plat_row("12345", "X")])
+    def test_lookups_strip_stringify_and_lowercase(self, write_plat: Any) -> None:
+        path = write_plat([make_plat_row("12345", "Some Level")])
         data = PlatData(cache_file=str(path))
         assert data.getlevelbyid("  12345  ") is not None
         assert data.getlevelbyid(12345) is not None  # 内部 str() 过
-
-    def test_getlevelbyname_strips_and_lowercases(self, write_plat: Any) -> None:
-        path = write_plat([make_plat_row("1", "Some Level")])
-        data = PlatData(cache_file=str(path))
         assert data.getlevelbyname("  SOME LEVEL ") is not None
         assert data.getlevelbyname("some level") is not None
         assert data.getlevelbyname("other") is None
@@ -1424,7 +1423,9 @@ class TestDailyDemonPure:
         assert dailydemon.FILTERS == {
             "minRating": 1, "maxRating": 9, "minEnjoyment": 7, "minSubmissionCount": 10,
         }
-        assert dailydemon.describe_conditions() == "tier 1-9、enjoyment 7+、提交数 10+"
+        # describe_conditions 只是给回复用的说明文案，怎么措辞不算行为，
+        # 只要求它能出一句非空的话（调用方会直接拼进消息里）
+        assert dailydemon.describe_conditions().strip()
 
     def test_keep_seconds_is_two_days(self) -> None:
         assert dailydemon.KEEP_SECONDS == 2 * 24 * 3600
@@ -1458,13 +1459,14 @@ class TestDailyDemonStorage:
         dailydemon.remember(2)
         assert r.get(dailydemon.RECENT_KEY) == [1, 3, 2]
 
-    def test_remember_keeps_only_last_30(self, patch_storage: Any) -> None:
+    def test_remember_keeps_only_the_last_batch(self, patch_storage: Any) -> None:
+        """满了之后只留最近 RECENT_KEEP 条（调这个常量不用回来改用例）"""
         r = patch_storage(dailydemon, initial={
             dailydemon.RECENT_KEY: list(range(dailydemon.RECENT_KEEP)),
         })
         dailydemon.remember(1000)
         kept = r.get(dailydemon.RECENT_KEY)
-        assert len(kept) == dailydemon.RECENT_KEEP == 30
+        assert len(kept) == dailydemon.RECENT_KEEP
         assert kept[-1] == 1000
         assert kept[0] == 1  # 最老的那个（0）被挤掉了
 
@@ -1522,7 +1524,10 @@ class TestDailyDemonFlow:
     def test_search_failure(self, patch_storage: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         patch_storage(dailydemon)
         monkeypatch.setattr(dailydemon, "Gddl", FakeGddl(search_payload=None))
-        assert dailydemon.get_daily_demon(FIXED_DAY) == (None, 0, "GDDL 那边没响应，等会再试试")
+        got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
+        # 出错这条路的行为是「没关卡 + 带一句非空错误」，错误话术怎么写不算行为
+        assert (got, total) == (None, 0)
+        assert err
 
     @pytest.mark.parametrize("payload", [{}, {"total": 0}])
     def test_zero_total(
@@ -1533,7 +1538,7 @@ class TestDailyDemonFlow:
         got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
         assert got is None
         assert total == 0
-        assert "没有符合条件的关卡" in err
+        assert err
 
     def test_search_uses_the_fixed_filters(
         self, patch_storage: Any, monkeypatch: pytest.MonkeyPatch
@@ -1601,9 +1606,9 @@ class TestDailyDemonFlow:
         got, _total, err = dailydemon.get_daily_demon(FIXED_DAY)
         assert got is repeated
         assert err == ""
-        assert len(fake.index_calls) == dailydemon.MAX_REROLL == 5
+        assert len(fake.index_calls) == dailydemon.MAX_REROLL
         # total=1 的时候每次 randrange(1) 都是 0
-        assert fake.index_calls == [0] * 5
+        assert fake.index_calls == [0] * dailydemon.MAX_REROLL
 
     def test_all_lookups_fail(
         self, patch_storage: Any, monkeypatch: pytest.MonkeyPatch
@@ -1614,7 +1619,7 @@ class TestDailyDemonFlow:
         got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
         assert got is None
         assert total == 500
-        assert err == "取今日关卡失败，等会再试试"
+        assert err  # 失败要带一句话回去，具体措辞不算行为
         assert len(fake.index_calls) == dailydemon.MAX_REROLL
         # 失败就不该往存储里写
         assert r.get("dailydemon_2026-07-26") is None
@@ -1695,55 +1700,40 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 class TestIconForms:
     def test_nine_gamemodes_in_a_fixed_order(self) -> None:
+        """这张表的顺序就是拼图上格子的顺序，改了图就变样"""
         assert [f.key for f in icons.FORMS] == [
             "cube", "ship", "ball", "ufo", "wave",
             "robot", "spider", "swing", "jetpack",
         ]
+        # 帮助文案就是把这张表 join 起来，不用再写死一遍
+        assert icons.form_names() == " / ".join(f.key for f in icons.FORMS)
 
-    def test_api_type_equals_key(self) -> None:
-        assert all(f.api_type == f.key for f in icons.FORMS)
-
-    def test_every_form_attr_is_a_real_gduser_field(self) -> None:
-        """Form.attr 得对得上 GDUser 的字段名，拼错了只会静默取默认值 1"""
+    def test_forms_table_is_self_consistent(self) -> None:
+        """FORMS 表内部得自洽：api_type == key、FORM_BY_KEY 不多不少、
+        attr 对得上 GDUser 的字段名（拼错了只会静默取默认值 1）。
+        """
         gduser_fields = {attr for attr, _ in GDUser.FIELD_MAP.values()}
         for form in icons.FORMS:
+            assert form.api_type == form.key, form
             assert form.attr in gduser_fields, form
-
-    def test_form_by_key_is_complete(self) -> None:
         assert set(icons.FORM_BY_KEY) == {f.key for f in icons.FORMS}
 
-    @pytest.mark.parametrize(
-        ("name", "expected"),
-        [
-            ("cube", "cube"), ("CUBE", "cube"), ("CuBe", "cube"),
-            ("bird", "ufo"), ("ufo", "ufo"), ("UFO", "ufo"), ("飞碟", "ufo"),
-            ("dart", "wave"), ("wave", "wave"), ("波", "wave"),
-            ("方块", "cube"), ("船", "ship"), ("球", "ball"),
-            ("机器人", "robot"), ("蜘蛛", "spider"),
-            ("秋千", "swing"), ("喷气背包", "jetpack"),
-            ("jetpack", "jetpack"),
-        ],
-    )
-    def test_resolve_form(self, name: str, expected: str) -> None:
-        form = icons.resolve_form(name)
-        assert form is not None
-        assert form.key == expected
+    def test_resolve_form_accepts_every_key_and_alias(self) -> None:
+        """FORMS 的每个 key、ALIASES 的每个别名都要能解析出来，且大小写不敏感。
 
-    @pytest.mark.parametrize("name", ["", "nope", "cubes", "cu be", "立方体"])
-    def test_resolve_form_unknown(self, name: str) -> None:
-        assert icons.resolve_form(name) is None
-
-    def test_default_form_resolves(self) -> None:
-        assert icons.resolve_form(icons.DEFAULT_FORM) is icons.FORM_BY_KEY["cube"]
-
-    def test_form_names(self) -> None:
-        assert icons.form_names() == (
-            "cube / ship / ball / ufo / wave / robot / spider / swing / jetpack"
-        )
-
-    def test_every_alias_target_exists(self) -> None:
+        直接对着生产里的两张表走，加 gamemode / 加别名时用例自动跟着涨。
+        """
+        for form in icons.FORMS:
+            assert icons.resolve_form(form.key) is form, form
+            assert icons.resolve_form(form.key.upper()) is form, form
         for alias, target in icons.ALIASES.items():
             assert target in icons.FORM_BY_KEY, alias
+            assert icons.resolve_form(alias) is icons.FORM_BY_KEY[target], alias
+        assert icons.resolve_form(icons.DEFAULT_FORM) is icons.FORM_BY_KEY["cube"]
+
+    def test_resolve_form_unknown(self) -> None:
+        for name in ("", "nope", "cubes", "cu be", "立方体"):
+            assert icons.resolve_form(name) is None, name
 
 
 class TestIconFetch:
@@ -1796,7 +1786,7 @@ class TestIconFetch:
         stub_httpx.get("gdicon.oat.zone/icon.png", httpx.Response(500))
         img = await icons.fetch_one(make_gduser(), icons.FORM_BY_KEY["cube"])
         assert img is None
-        assert len(stub_httpx.requests) == icons.ICON_RETRIES == 2
+        assert len(stub_httpx.requests) == icons.ICON_RETRIES
         assert no_sleep == [0.5]  # 只在两次之间睡一次
 
     async def test_transport_exception_is_swallowed(
@@ -1885,25 +1875,34 @@ class TestIconFetch:
         assert all(img is not None for key, img in by_key.items() if key != "spider")
 
 
-class TestIconCompose:
-    @pytest.mark.parametrize(
-        ("count", "rows"),
-        [(0, 0), (1, 1), (3, 1), (4, 2), (6, 2), (7, 3), (9, 3), (10, 4)],
+def sheet_size(rows: int) -> tuple[int, int]:
+    """按 icons 的几何常量算出 rows 行时画布该有多大。
+
+    写成公式而不是 (432, 486) 这种字面量：调 CELL / PAD 时不用回来数像素。
+    """
+    return (
+        icons.PAD * 2 + icons.CELL * icons.GRID_COLS,
+        icons.PAD * 2 + icons.TITLE_H + icons.CELL * rows,
     )
-    def test_canvas_geometry(self, count: int, rows: int) -> None:
+
+
+class TestIconCompose:
+    # Pillow 合图 + 字体加载，是这个文件里最慢的一块，平时可以 -m "not slow" 跳过
+    pytestmark = pytest.mark.slow
+
+    def test_canvas_geometry(self) -> None:
         """宽度固定三列，高度按行数长；行数是向上取整"""
-        items = [(icons.FORMS[i % 9], None) for i in range(count)]
-        sheet = icons.compose_sheet(make_gduser(), items)
-        assert sheet.mode == "RGBA"
-        assert sheet.size == (
-            icons.PAD * 2 + icons.CELL * icons.GRID_COLS,
-            icons.PAD * 2 + icons.TITLE_H + icons.CELL * rows,
-        )
+        for count, rows in [(0, 0), (1, 1), (3, 1), (4, 2), (6, 2), (7, 3), (9, 3), (10, 4)]:
+            items = [(icons.FORMS[i % len(icons.FORMS)], None) for i in range(count)]
+            sheet = icons.compose_sheet(make_gduser(), items)
+            assert sheet.mode == "RGBA", count
+            assert sheet.size == sheet_size(rows), count
 
     def test_nine_icons_sheet(self) -> None:
+        """九个格子真的贴上图之后，画布还是三行"""
         items = [(f, Image.new("RGBA", (60, 60), (0, 128, 255, 255))) for f in icons.FORMS]
         sheet = icons.compose_sheet(make_gduser(), items)
-        assert sheet.size == (432, 486)
+        assert sheet.size == sheet_size(3)
 
     def test_missing_icons_are_skipped(self) -> None:
         items: list[tuple[icons.Form, Optional[Image.Image]]] = [
@@ -1912,32 +1911,31 @@ class TestIconCompose:
             (icons.FORMS[2], None),
         ]
         sheet = icons.compose_sheet(make_gduser(), items)
-        assert sheet.size == (432, 222)
+        assert sheet.size == sheet_size(1)
 
     def test_nameless_user_gets_placeholder(self) -> None:
         """user_name 是 None 时标题画 "?"，不能抛"""
         sheet = icons.compose_sheet(make_gduser(user_name=None), [])
-        assert sheet.size == (432, 90)
+        assert sheet.size == sheet_size(0)
 
     def test_oversized_icons_are_scaled_down(self) -> None:
         big = Image.new("RGBA", (512, 512), (1, 2, 3, 255))
         sheet = icons.compose_sheet(make_gduser(), [(icons.FORMS[0], big)])
-        assert sheet.size == (432, 222)
+        assert sheet.size == sheet_size(1)
 
-    @pytest.mark.parametrize(
-        ("size", "expected"),
-        [
-            ((60, 60), (60, 60)),        # 比框小，原样返回
-            ((112, 112), (112, 112)),    # 正好等于框，也不动
-            ((224, 224), (112, 112)),
-            ((224, 112), (112, 56)),     # 非正方形按长边缩
-            ((112, 224), (56, 112)),
-            ((10000, 1), (112, 1)),      # 极端比例，高度被 max(1, ...) 兜住
-        ],
-    )
-    def test_fit_scaling(self, size: tuple[int, int], expected: tuple[int, int]) -> None:
-        fitted = icons._fit(Image.new("RGBA", size), icons.ICON_BOX)
-        assert fitted.size == expected
+    def test_fit_scaling(self) -> None:
+        """等比缩到 ICON_BOX 框内；边长都是从 ICON_BOX 算的，改常量不用改用例"""
+        box = icons.ICON_BOX
+        for size, expected in [
+            ((60, 60), (60, 60)),                    # 比框小，原样返回
+            ((box, box), (box, box)),                # 正好等于框，也不动
+            ((box * 2, box * 2), (box, box)),
+            ((box * 2, box), (box, box // 2)),       # 非正方形按长边缩
+            ((box, box * 2), (box // 2, box)),
+            ((10000, 1), (box, 1)),                  # 极端比例，高度被 max(1, ...) 兜住
+        ]:
+            fitted = icons._fit(Image.new("RGBA", size), box)
+            assert fitted.size == expected, size
 
     def test_fit_returns_the_same_object_when_no_scaling_needed(self) -> None:
         """不需要缩放时直接返回原对象（不复制）"""

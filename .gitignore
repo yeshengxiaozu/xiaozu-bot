@@ -31,6 +31,10 @@ MANIFEST
 .env
 .env.*
 .venv/
+# 带后缀的虚拟环境也要盖住：MAINTAINING.md 里教的是
+# `py -3.13 -m venv .venv313` 这种按版本建的临时环境，
+# 只写 .venv/ 的话它们会全部暴露在 git status 里。
+.venv*/
 venv/
 ENV/
 env/
@@ -259,9 +263,12 @@ xiaozu_bot/plugins/gdlevelsearch/data/*.tmp
 # updater 跑一半的中间产物，跑完才会搬进上面那层
 xiaozu_bot/plugins/gdlevelsearch/data/.staging/
 
-# JsonRedis 的存储文件：都是运行时数据（余额、人品、奖池等），不进仓库
-xiaozu_bot/plugins/zhua/data/
-xiaozu_bot/plugins/jrrp/data/
-xiaozu_bot/plugins/roulette/data/
-xiaozu_bot/plugins/zhua_api/data/
-xiaozu_bot/plugins/game/data/
+# 所有插件的 data/ 一律不进仓库。
+# 这里面是运行时数据（人品、游戏局面、题库、关卡缓存……），而且每个插件在
+# **模块级**就 `r = JsonRedis(plugin_storage(__file__))`，也就是说光 import
+# 就会把 data/storage.json 连目录一起建出来。
+#
+# 以前这里是一个插件一行（zhua/ jrrp/ roulette/ game/ ...）。别再那样写：
+# 那样每加一个新插件，CI 的「干净检出守卫」都会在它第一次 push 时红一次，
+# 直到你想起来回来补一行。用通配符一次性覆盖掉这一整类。
+xiaozu_bot/plugins/*/data/

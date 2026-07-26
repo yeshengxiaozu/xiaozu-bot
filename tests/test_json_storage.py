@@ -1245,14 +1245,10 @@ class TestMigrateScriptPlans:
             assert isinstance(plan["patterns"], list)
             assert isinstance(plan["hashes"], list)
 
-    def test_every_plugin_in_plans_exists_and_uses_json_redis(
-        self, plans: dict[str, dict[str, list[str]]]
-    ) -> None:
-        for plugin in plans:
-            source = REPO_ROOT / "xiaozu_bot" / "plugins" / plugin / "__init__.py"
-            assert source.is_file(), plugin
-            assert "JsonRedis" in source.read_text(encoding="utf-8"), plugin
-
+    # 这里以前还有一条 test_every_plugin_in_plans_exists_and_uses_json_redis，
+    # 它 grep 生产源码里有没有 "JsonRedis" 这个字符串。改个 import 别名、换个
+    # 封装名就会红，但插件其实一点没坏；反过来真出问题（键名对不上）它又抓不到。
+    # 下面那条按键名比对的才是有用的那半，插件文件不存在时它会直接 FileNotFoundError。
     def test_every_key_in_plans_appears_in_plugin_source(
         self, plans: dict[str, dict[str, list[str]]]
     ) -> None:

@@ -38,6 +38,10 @@ from xiaozu_bot.plugins.gdlevelsearch.draw import (
 )
 from xiaozu_bot.plugins.gdlevelsearch.platapi import PlatInfo
 
+# 整个文件都要 Pillow 合图 + 加载字体文件，63 个用例约 2.2s，是全套里最慢的一块。
+# 平时改别的插件可以 `-m "not slow"` 跳过；CI 和发版前照跑不误。
+pytestmark = pytest.mark.slow
+
 # ==========================================================================
 # 公共工具
 # ==========================================================================

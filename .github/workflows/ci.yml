@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # 每周一 04:00 UTC（北京时间周一中午 12 点）跑一次全版本矩阵。
+  # 平时每次 push 只测 3.10 和 3.13 两头（见下面 matrix 那段的解释），
+  # 中间版本的漂移交给这个定时任务，不必让每次 push 都为它买单。
+  schedule:
+    - cron: "0 4 * * 1"
 
 # 最小权限：这个工作流只需要把代码读出来。
 # 不写回仓库、不发包、不碰 issue / PR / packages，所以只留 contents: read。
@@ -42,39 +47,37 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       # ruff 钉死版本：不钉的话哪天 ruff 出新规则，一次没改代码的 push 也会变红。
-      # 想升级就改这里，改完顺手看一眼新增了多少条。
+      # 版本写在 requirements-lint.txt 里而不是直接写在这行命令里 ——
+      # dependabot 只会去解析依赖清单文件，写在 `run:` 里它根本看不见，
+      # 那样这个仓库唯一一个会过期的版本钉恰恰是没人盯的。
       - name: 装 ruff
-        run: python -m pip install "ruff==0.16.0"
+        run: python -m pip install -r requirements-lint.txt
 
       # ------------------------------------------------------------------
-      # continue-on-error: true 是**故意**的，不是忘了删。
+      # lint 这个 job **永远不会让 CI 变红**（下面那步没有 `exit 1` 的路径）。
+      # 它只打一份分类统计到日志里，用来看存量是不是在往下掉。
       #
-      # 现状（ruff 0.16.0，跑 `ruff check .`）：全仓库 4628 条违规，
-      # 其中 xiaozu_bot/ 1596 条、tests/ 2949 条、scripts/ 83 条、bot.py 0 条。
-      # 数量前几名：ANN001 1049、Q000 557、ANN201 472、N802 413、
-      # PLC2401 412（中文标识符）、E501 338、UP045 289、PLR2004 260。
-      # 这些全是历史遗留，不是这次 CI 引入的。
+      # 为什么不贴 annotation：以前这里跑的是 `ruff check --output-format=github .`，
+      # 会把结果贴到 PR 的 diff 上。但 GitHub 每步最多只显示 10 条 annotation，
+      # 而存量有一千多条，于是每个 PR 都会贴十条跟你这次改动毫无关系的提示。
+      # 贴几次之后你就学会了无视 annotation 这个通道 —— 等哪天真有要紧的东西
+      # 出现在那儿，你也不会看了。所以宁可不贴。
       #
-      # 直接设成阻塞 = CI 第一天就是红的，谁都不会再看它；
-      # 为了让它变绿去批量改 xiaozu_bot/ 又是完全不相干的一次大改动。
-      # 所以先让它跑起来、把结果以 annotation 的形式贴在 PR 的 diff 上，
-      # 等哪天存量清干净了（比如按目录一块块收，或者先给 tests/ 单独放宽规则），
-      # 再把这行 continue-on-error 删掉，变成真正的门禁。
+      # 存量现状（ruff 0.16.0）：1225 条，xiaozu_bot/ 740、tests/ 415、scripts/ 70。
+      # （之前是 4712 条，pyproject 里关掉 PLC2401 / ANN001 / ANN201 / Q000 /
+      #  N802 / E501 这几类「这个仓库的既定风格」之后降到这个数。）
+      # 里面 590 条 ruff --fix 能自动改，大头是 UP045 303 条（Optional[X] 写法）。
       #
-      # `ruff format --check` 这次**没加**：现在跑的话 61 个文件会被判定需要重排，
-      # 纯噪音，等格式统一之后再单独加一步。
+      # 什么时候可以把它变成真门禁：等 `ruff check .` 降到两位数，
+      # 把下面这步换成 `ruff check .`（去掉 --statistics，让非零退出码生效）即可。
       #
-      # 也**没加** pyright：这个仓库基本没写类型标注（光 ANN001 就 1049 条），
-      # 现在上类型检查只会刷出几千条读都读不完的报错。等标注补得差不多了再说。
+      # `ruff format --check` 和 pyright 都**没加**：前者现在会判定 61 个文件需要
+      # 重排，后者在一个基本没写类型标注的仓库上只会刷出读不完的报错。
       # ------------------------------------------------------------------
-      - name: ruff check（存量违规清干净之前不阻塞）
-        continue-on-error: true
-        run: ruff check --output-format=github .
-
-      # 同样不阻塞，只是把分类统计打进日志，方便盯着存量往下掉。
-      - name: ruff 违规统计
-        continue-on-error: true
-        run: ruff check --statistics .
+      - name: ruff 违规统计（只看趋势，不阻塞）
+        run: |
+          ruff check --statistics . || true
+          echo "—— 以上只是存量统计，这一步不会让 CI 变红 ——"
 
   # ==========================================================================
   # 测试
@@ -92,13 +95,23 @@ jobs:
       # 还是只有某个版本的问题。
       fail-fast: false
       matrix:
-        # pyproject 写的是 requires-python = ">=3.10, <4.0"。
+        # **只测两头**：3.10 是 pyproject 里 requires-python = ">=3.10" 承诺的下限，
+        # 3.13 是 bot 实际跑的版本。中间的 3.11 / 3.12 是插值，每次 push 都测它们
+        # 收益极低 —— 这套测试全是打了桩的单元测试，版本差异只可能出在字典序、
+        # match 语句、标准库废弃这类地方，而两头都覆盖到了。
+        #
+        # 这里以前写的是 ["3.10", "3.11", "3.12"]，也就是**唯独没测生产用的版本**。
+        # 3.13 是后来才实测的：nonebot2 2.5.0 + Pillow 12.3.0 下 2092 个用例全绿。
+        #
         # 依赖里最挑版本的是 nonebot-plugin-htmlkit（带二进制扩展的预发布版），
         # 它 0.1.0rc5 在 PyPI 上有 cp310-abi3 和 cp312-abi3 两组 manylinux_2_34
-        # x86_64 wheel；abi3 向上兼容，所以 3.10 / 3.11 用 cp310-abi3，
-        # 3.12 用 cp312-abi3，三个版本在 ubuntu-latest（glibc 2.39）上都有现成
-        # 的轮子，不会退化成本地编译 Rust。
-        python-version: ["3.10", "3.11", "3.12"]
+        # x86_64 wheel；abi3 向上兼容，所以 3.10 拿 cp310-abi3、3.13 拿 cp312-abi3，
+        # 两个都有现成轮子，不会退化成本地编译 Rust。
+        #
+        # 定时任务（每周一）跑全矩阵，把中间版本也带上。
+        # 注意这一行必须是单行的纯量：表达式要整体求值成数组，
+        # 写成 >- 折叠块的话 YAML 先把它变成字符串，矩阵就展不开了。
+        python-version: ${{ github.event_name == 'schedule' && fromJSON('["3.10", "3.11", "3.12", "3.13"]') || fromJSON('["3.10", "3.13"]') }}
 
     steps:
       - uses: actions/checkout@v5
@@ -139,11 +152,16 @@ jobs:
       #    现在 get_variance() 改成 ImageStat 了，装最新的 Pillow 就行 ——
       #    CI 装的依赖集必须和用户实际装到的一样，否则测了个寂寞。
       # ------------------------------------------------------------------
+      # 6. 测试工具**钉死版本**，理由和上面 ruff 那条一模一样：
+      #    pytest-asyncio 在小版本之间改过 ini 选项名（0.23 那次、0.24 引入
+      #    asyncio_default_fixture_loop_scope、1.0 删掉 event_loop fixture），
+      #    不钉的话哪天它再改一次，一个你什么都没推的日子 CI 就红了。
+      #    升级就改这里，改完本地先跑一遍。
       - name: 装依赖
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[migrate]" \
-            pytest pytest-asyncio pytest-cov
+            pytest==9.1.1 pytest-asyncio==1.4.0 pytest-cov==7.1.0
 
       - name: 记一下实际装了什么版本
         run: python -m pip list
@@ -168,18 +186,23 @@ jobs:
       # 而不是等到某次 commit 不小心把 storage.json 混进去。
       # ------------------------------------------------------------------
       - name: 干净检出守卫（import 期文件副作用）
+        # 只在生产用的那个版本上跑。fail-fast: false + 多版本矩阵的话，
+        # 同一个问题会被原样报三遍，看着像三个 bug。
+        if: matrix.python-version == '3.13'
         run: |
-          echo "::group::检出后、import 前"
-          existing="$(find xiaozu_bot/plugins -type d -name data 2>/dev/null || true)"
-          if [ -n "$existing" ]; then
-            echo "$existing"
-            echo "::error::全新检出里不该存在任何 data/ 目录，说明它们被误提交进 git 了"
+          # 收集的输出以前是 `> /dev/null`。别再那样写：pytest 的收集错误
+          # （某个插件 import 不动、pydantic 校验挂了之类）是打在 stdout 上的，
+          # 丢进 /dev/null 之后这一步只剩一句 "Process completed with exit code 2"，
+          # 整个 run 里没有任何线索，只能自己在本地重跑一遍收集才知道发生了什么。
+          if ! python -m pytest tests --collect-only -q > collect.log 2>&1; then
+            echo "::group::收集失败的完整输出"
+            cat collect.log
+            echo "::endgroup::"
+            echo "::error::pytest 收集阶段就失败了 —— 通常是某个插件 import 不动，往上翻 traceback"
+            rm -f collect.log
             exit 1
           fi
-          echo "（没有 data/ 目录，符合预期）"
-          echo "::endgroup::"
-
-          python -m pytest tests --collect-only -q > /dev/null
+          rm -f collect.log
 
           echo "::group::import 之后新建出来的 data/ 目录"
           find xiaozu_bot/plugins -type d -name data 2>/dev/null || true
@@ -192,38 +215,27 @@ jobs:
           fi
           echo "工作区干净。"
 
-      # coverage.xml 和 htmlcov/ 都已经在 .gitignore 里，所以下一步的
-      # 「测试有没有往工作区写东西」还能继续用 git status 判断。
+      # coverage.xml 在 .gitignore 里，所以下一步的「测试有没有往工作区写东西」
+      # 还能继续用 git status 判断。
+      #
+      # 这里以前还生成 htmlcov/ 并且把它和 coverage.xml 一起传成 artifact，
+      # 已经删掉了：一个人维护的仓库不会有人去 run 页面下 zip 再解压看网页版，
+      # 而 --cov-report=term-missing 已经把覆盖率和没覆盖到的行号直接打在日志里了。
       - name: 跑测试
         run: |
           python -m pytest tests \
             --cov=xiaozu_bot \
             --cov-report=term-missing \
-            --cov-report=xml \
-            --cov-report=html
+            --cov-report=xml
 
       # 仓库的测试约定是「只许往 pytest 的 tmp_path 写」。这一步把它变成硬约束：
-      # 有用例把文件落进了工作区（且没被 .gitignore 挡住）就直接红。
+      # 工作区里冒出没被 .gitignore 挡住的新文件就直接红。
       - name: 测试不许污染工作区
+        if: matrix.python-version == '3.13'
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             git status --porcelain
-            echo "::error::测试往仓库工作区写了东西，请改成写 tmp_path"
+            echo "::error::工作区出现了没被 .gitignore 覆盖的新文件（上面是清单）。如果是测试写的，改成写 tmp_path；如果是新加的 pytest 报告参数，把产物加进 .gitignore"
             exit 1
           fi
           echo "工作区干净。"
-
-      # 只传成品，不接 Codecov 之类的第三方 —— 那需要仓库还没配的 token。
-      # 想看覆盖率就到这次 run 的 Artifacts 里把 zip 下下来，
-      # htmlcov/index.html 直接用浏览器打开。
-      - name: 上传覆盖率报告
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          # upload-artifact v4 不允许重名，所以带上 Python 版本
-          name: coverage-py${{ matrix.python-version }}
-          path: |
-            coverage.xml
-            htmlcov/
-          retention-days: 14
-          if-no-files-found: warn

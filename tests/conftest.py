@@ -14,6 +14,7 @@ conftest.py 是在收集 test 模块之前 import 的，所以上面这些写在
 
 from __future__ import annotations
 
+import contextlib
 import http.client as _http_client
 import ipaddress
 import json as _json
@@ -201,8 +202,16 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
         httpx.AsyncHTTPTransport, "handle_async_request", _blocked_httpx
     )
 
-    # http.client 这层不看环回：本机代理就在环回上，放行等于没拦。
+    # http.client 这层**不看环回**：本机代理就在环回上，放行等于没拦。
+    # （实测过：开发机上 HTTP_PROXY=http://127.0.0.1:7897 时，只在 socket 层拦、
+    #  放行环回的话，urlopen("http://example.com/") 会经代理真的出网拿回 200。）
     # HTTPSConnection.connect 是自己覆写过的，必须单独打一遍。
+    #
+    # 副作用，将来踩到的话看这里：**真的想连本机 HTTP 服务的用例也会被这一层拦掉** ——
+    # 比如起个 pytest-httpserver、或者拿 uvicorn/ASGI 真跑一次 nonebot.get_asgi()。
+    # 那种情况下报错里那句「请把调用方桩掉」是不对的建议。
+    # 要放行的话在那个用例里单独把这两行 setattr 撤掉（monkeypatch 的 undo 是按
+    # 用例回滚的），别去改这个 fixture —— 它现在的严格程度是有原因的。
     monkeypatch.setattr(_http_client.HTTPConnection, "connect", _blocked_http_client)
     monkeypatch.setattr(_http_client.HTTPSConnection, "connect", _blocked_http_client)
 
@@ -375,17 +384,32 @@ class RequestsRouter:
         return self.add(url, response, method="POST", **kw)
 
     def _dispatch(self, method: str, url: str, **kwargs: Any) -> Any:
+        """挑一条登记过的路由。
+
+        匹配顺序：先精确相等，再按**登记串从长到短**做子串匹配。
+        顺序很要紧，别改回「按登记顺序扫一遍」：那样先登记的短串会把后登记的
+        长串吃掉 —— 比如先登记了 ".../aredl/levels"、后登记 ".../aredl/levels/123"，
+        请求 .../levels/123 会命中第一条，静默返回错的那份 payload，
+        既不报错也不警告，只有断言莫名其妙对不上。
+        """
         call = {"method": method.upper(), "url": url, **kwargs}
         self.calls.append(call)
-        for route_method, route_url, response in self.routes:
-            if route_method is not None and route_method != method.upper():
-                continue
-            if route_url == url or route_url in url:
-                if isinstance(response, BaseException):
-                    raise response
-                if callable(response) and not isinstance(response, FakeResponse):
-                    return response(**call)
-                return response
+
+        def _usable(route_method: Optional[str]) -> bool:
+            return route_method is None or route_method == method.upper()
+
+        exact = [r for r in self.routes if _usable(r[0]) and r[1] == url]
+        partial = sorted(
+            (r for r in self.routes if _usable(r[0]) and r[1] != url and r[1] in url),
+            key=lambda r: len(r[1]),
+            reverse=True,
+        )
+        for _, _, response in [*exact, *partial]:
+            if isinstance(response, BaseException):
+                raise response
+            if callable(response) and not isinstance(response, FakeResponse):
+                return response(**call)
+            return response
         raise NetworkBlocked(f"没登记过的请求：{method.upper()} {url}")
 
     @property
@@ -395,8 +419,13 @@ class RequestsRouter:
 
 
 @pytest.fixture
-def stub_requests(monkeypatch: pytest.MonkeyPatch) -> RequestsRouter:
+def stub_requests(monkeypatch: pytest.MonkeyPatch, no_network: None) -> RequestsRouter:
     """把 requests 的 get/post/request 和 Session 上的同名方法换成可编程的桩。
+
+    显式依赖 no_network 是**必须的**，不是装饰：这个 fixture 会覆盖掉
+    no_network 打在同一批属性上的补丁，所以必须保证 no_network 先跑完。
+    以前不写也能work，靠的是「autouse fixture 恰好排在同作用域的非 autouse 前面」
+    这个实现细节 —— 那不是契约，写出来才是。
 
     仓库里各处都是 `import requests` 再 `requests.get(...)`，共用同一个模块对象，
     所以在这里补一次就等于全仓库都补上了。
@@ -465,17 +494,29 @@ class HttpxRouter:
         return self.add(url, response, method="POST", **kw)
 
     def handle(self, request: httpx.Request) -> httpx.Response:
+        """匹配规则和 RequestsRouter._dispatch 一样：先精确，再长串优先。
+
+        理由见那边的注释 —— 按登记顺序扫的话，先登记的短 URL 会静默吃掉
+        后登记的长 URL 的请求。
+        """
         self.requests.append(request)
         url = str(request.url)
-        for route_method, route_url, response in self.routes:
-            if route_method is not None and route_method != request.method.upper():
-                continue
-            if route_url == url or route_url in url:
-                if isinstance(response, BaseException):
-                    raise response
-                result = response(request) if callable(response) else response
-                result.request = request
-                return result
+
+        def _usable(route_method: Optional[str]) -> bool:
+            return route_method is None or route_method == request.method.upper()
+
+        exact = [r for r in self.routes if _usable(r[0]) and r[1] == url]
+        partial = sorted(
+            (r for r in self.routes if _usable(r[0]) and r[1] != url and r[1] in url),
+            key=lambda r: len(r[1]),
+            reverse=True,
+        )
+        for _, _, response in [*exact, *partial]:
+            if isinstance(response, BaseException):
+                raise response
+            result = response(request) if callable(response) else response
+            result.request = request
+            return result
         raise NetworkBlocked(f"没登记过的 httpx 请求：{request.method} {url}")
 
     @property
@@ -485,8 +526,10 @@ class HttpxRouter:
 
 
 @pytest.fixture
-def stub_httpx(monkeypatch: pytest.MonkeyPatch) -> HttpxRouter:
+def stub_httpx(monkeypatch: pytest.MonkeyPatch, no_network: None) -> HttpxRouter:
     """把 httpx 默认的同步/异步 transport 换成可编程的桩。
+
+    和 stub_requests 一样显式依赖 no_network，理由见那边。
 
     ai 插件和 draw.py / icons.py 都是在函数里现 new `httpx.AsyncClient()`，
     没法从外面塞 transport，所以只能补 transport 类上的方法。
@@ -745,3 +788,126 @@ def seeded_random() -> Any:
 def repo_root() -> Path:
     """仓库根目录的 Path，读示例数据文件的时候用。"""
     return REPO_ROOT
+
+
+# ==========================================================================
+# 直接驱动 matcher handler 的工具
+#
+# 插件的处理函数都是 nonebot 的 matcher handler，最后一句几乎都是
+# `await xxx.finish(...)`。`Matcher.finish` 是 classmethod，内部从
+# `current_bot` / `current_event` 两个 ContextVar 拿 bot 和事件，
+# 调完 `bot.send(...)` 再抛 `FinishedException`。
+#
+# 所以这里的做法是：**不打桩 finish/send，而是把 ContextVar 设成 FakeBot 和
+# 真事件，直接 await handler 本体，再捕获 FinishedException**。这样连 OneBot
+# 适配器里 at_sender 拼 @ 段、message_type 推断那一圈都是真跑的。
+#
+# 这几个函数原来定义在 tests/test_small_plugins.py 里，别的测试文件靠
+# `from tests.test_small_plugins import ...` 拿过去用 —— 那样 test_small_plugins.py
+# 就删不掉了，而「不想要的测试可以整个文件删掉」是这套测试的基本约定
+# （见 MAINTAINING.md 第 5 节）。放在 conftest 里就没这个问题。
+#
+# 另外注意：nonebot 要是改了内部 API，全仓库的 handler 测试都是从这里进去的，
+# 改这一处就能让几百个用例一起恢复。
+# ==========================================================================
+
+
+def _as_message(value: Union[None, str, "Message"]) -> "Message":
+    from nonebot.adapters.onebot.v11 import Message
+
+    if value is None:
+        return Message("")
+    return value if isinstance(value, Message) else Message(value)
+
+
+@contextlib.contextmanager
+def matcher_context(bot: "FakeBot", event: Any) -> Any:
+    """把 nonebot 的 current_bot / current_event 临时设成给定的 bot 和事件。
+
+    `Matcher.send` 就是从这两个 ContextVar 里取东西的，不设的话直接 LookupError。
+    """
+    from nonebot.matcher import current_bot, current_event
+
+    token_bot = current_bot.set(bot)
+    token_event = current_event.set(event)
+    try:
+        yield
+    finally:
+        current_bot.reset(token_bot)
+        current_event.reset(token_event)
+
+
+async def run_handler(
+    matcher: Any,
+    bot: "FakeBot",
+    event: Any = None,
+    *,
+    arg: Union[None, str, "Message"] = None,
+    index: int = 0,
+) -> bool:
+    """直接调用某个 matcher 的第 index 个 handler。
+
+    返回 True 表示 handler 以 `finish()` 收尾（抛了 FinishedException），
+    返回 False 表示它自己 return 掉了。发出去的东西都在 `bot.calls` 里。
+
+    handler 的形参默认值是 `CommandArg()` 这类依赖注入对象，直接调必须显式把
+    `arg=Message(...)` 传进去，否则 `str(arg)` 拿到的是依赖对象本身 ——
+    下面按签名挑参数就是干这个的。
+    """
+    import inspect
+
+    from nonebot.exception import FinishedException
+
+    handler = matcher.handlers[index].call
+    message = _as_message(arg)
+    pool: dict[str, Any] = {
+        "bot": bot,
+        "event": event,
+        "matcher": matcher,
+        "arg": message,
+        "args": message,
+    }
+    signature = inspect.signature(handler)
+    kwargs = {
+        name: value for name, value in pool.items() if name in signature.parameters
+    }
+    with matcher_context(bot, event):
+        try:
+            await handler(**kwargs)
+        except FinishedException:
+            return True
+    return False
+
+
+async def run_coro(bot: "FakeBot", event: Any, factory: Callable[[], Any]) -> bool:
+    """跑一个不是 handler 的协程（比如 guess.can_start），语义同 run_handler。"""
+    from nonebot.exception import FinishedException
+
+    with matcher_context(bot, event):
+        try:
+            await factory()
+        except FinishedException:
+            return True
+    return False
+
+
+def sent_messages(bot: "FakeBot") -> list[Any]:
+    """FakeBot 收到的所有 send_msg 调用里的消息体"""
+    return [data["message"] for api, data in bot.calls if api == "send_msg"]
+
+
+def sent_texts(bot: "FakeBot") -> list[str]:
+    """FakeBot 发出去的纯文本（@ 段之类会被 extract_plain_text 滤掉）"""
+    return [msg.extract_plain_text().strip() for msg in sent_messages(bot)]
+
+
+def only_text(bot: "FakeBot") -> str:
+    """断言「只发了一条消息」，并把那条消息的纯文本还回来。
+
+    比 `assert sent_texts(bot) == ["一整句原文"]` 松一档：
+    多发一条消息照样红（发几条是行为），但把回复改几个字不会红（措辞不是行为）。
+    用法是 `assert "57" in only_text(bot)` —— 断言的是「回了 57」这件事。
+    """
+    texts = sent_texts(bot)
+    assert len(texts) == 1, f"应该只发一条消息，实际发了 {len(texts)} 条：{texts}"
+    return texts[0]

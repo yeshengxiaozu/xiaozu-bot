@@ -94,6 +94,9 @@ python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没�
 
 ## 测试与 CI
 
+> 日常维护看 **[MAINTAINING.md](MAINTAINING.md)** —— CI 红了怎么查、
+> 改了什么会红几个用例、哪些测试可以直接删、哪些永远别删，都在那里。
+
 本地跑测试（在仓库根目录）：
 
 ```bash

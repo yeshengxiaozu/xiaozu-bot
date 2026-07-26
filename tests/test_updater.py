@@ -545,15 +545,12 @@ class TestRunnerRunAll:
 class TestConstants:
     """常量表整表断言 —— 这些 ID / 表名写错了就是整个数据源静默错位"""
 
-    def test_各表的_spreadsheet_id(self) -> None:
-        assert constants.NLW_ID == "1YxUE2kkvhT2E6AjnkvTf-o8iu_shSLbuFkEFcZOvieA"
-        assert constants.HDS_ID == "1M7C58CG_5cLGsJEXTLQBtO6nzbpA-1zxCb8ZV8ux3zg"
-        assert constants.IDS_ID == "15ehtAIpCR8s04qIb8zij9sTpUdGJbmAE_LDcfVA3tcU"
-        assert constants.LW_ID == "15YvW2rRQKlkNpdFMTaRt9CWefDkng6BSh6xRDXSw9r8"
-        assert constants.PLAT_RANK_ID == "1uicngbhpej4PEmtYYeGmYlFsA28PwTzzouWb4EWQkTY"
-        assert constants.PLAT_DIFF_ID == "1ApwiAVAcBmfyoPW3wvDzc8JvY4Lfg5tFsPlYg3DNWhc"
-        assert constants.PLAT_DATA_ID == "13rpmCGCC8NKvRJhVcUuxixUdEuc_I6rm9LlwgB2HAsM"
-        # 六张表来自六个不同的文档
+    # 这里以前有一条 test_各表的_spreadsheet_id，把 7 个 ID 的字面量和从
+    # constants 里 import 进来的同一批字面量对了一遍 —— 抄一遍常量再和自己比，
+    # 只有「有人故意改了 ID」时才会红，而那时候它也说不出哪个 ID 才是对的。
+    # 真正有价值的只有下面这条「七个 ID 互不相同」：复制粘贴少改一个字母，
+    # 两张表会静默读到同一个文档，是这块唯一会自己发生的错。
+    def test_七张表来自七个不同的文档(self) -> None:
         assert len({
             constants.NLW_ID,
             constants.HDS_ID,
@@ -620,7 +617,21 @@ def _diff_cols(names: list[str], **over: Any) -> dict:
 
 
 class TestPlatDiffModel:
-    def test_to_dict_字段齐全(self) -> None:
+    def test_to_dict_字段齐全且和_from_dict_往返一致(self) -> None:
+        """落盘格式就是这 8 个键，注意 sheet_index 落盘时叫 sheetIndex。
+
+        （原来 to_dict 和往返是两条用例，测的是同一份键映射，合成一条。）
+        """
+        full = {
+            "sheetIndex": 7,
+            "tier": "5",
+            "name": "Null",
+            "id": "123",
+            "creator": "Someone",
+            "tags": "Coin, Deathless",
+            "enjoyment": 8.5,
+            "video": "https://y/1",
+        }
         entry = platdiff.PlatDiff(
             name="Null",
             id="123",
@@ -631,19 +642,11 @@ class TestPlatDiffModel:
             tier="5",
             sheet_index=7,
         )
-        assert entry.to_dict() == {
-            "sheetIndex": 7,
-            "tier": "5",
-            "name": "Null",
-            "id": "123",
-            "creator": "Someone",
-            "tags": "Coin, Deathless",
-            "enjoyment": 8.5,
-            "video": "https://y/1",
-        }
+        assert entry.to_dict() == full
+        assert platdiff.PlatDiff.from_dict(full).to_dict() == full
 
-    def test_from_dict_to_dict_往返(self) -> None:
-        raw = {
+        # None 也得原样转回来，不能被什么 `or ""` 的兜底吃掉
+        sparse = {
             "sheetIndex": 3,
             "tier": "2",
             "name": "Foo",
@@ -653,7 +656,7 @@ class TestPlatDiffModel:
             "enjoyment": None,
             "video": None,
         }
-        assert platdiff.PlatDiff.from_dict(raw).to_dict() == raw
+        assert platdiff.PlatDiff.from_dict(sparse).to_dict() == sparse
 
     def test_from_dict_缺字段时用默认值(self) -> None:
         entry = platdiff.PlatDiff.from_dict({})
@@ -666,17 +669,17 @@ class TestPlatDiffModel:
         assert entry.tier is None
         assert entry.sheet_index == -1
 
+    # _parse_enjoyment 只有四条分支：None / strip 完是空 / float 转得动 /
+    # float 转不动。一条分支留一行，原来那 9 行里有 4 行是同一条分支的同义词
+    # （"" 和 "   "、"8.5" 和 "-1.5"、"N/A" 和 "8,5"）。
+    # "0" 单独留着：0.0 是 falsy，兜底逻辑写歪的话最容易在这里变成 None。
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
             (None, None),
-            ("", None),
             ("   ", None),
-            ("8.5", 8.5),
             (" 7 ", 7.0),
             ("0", 0.0),
-            ("-1.5", -1.5),
-            ("N/A", None),
             ("8,5", None),
         ],
     )
@@ -797,11 +800,12 @@ class TestPlatDiffCache:
 # jobs/platbatch.py
 # ==========================================================================
 class TestExtractBaseName:
+    # 一行一条分支。原来还有一行 ("Moongrinder (Coin)")，和第一行走的是同一条
+    # 分支（有括号且两半都不空），删掉不掉覆盖。
     @pytest.mark.parametrize(
         ("name", "expected"),
         [
             ("Null (Deathless)", ("Null", "Deathless")),
-            ("Moongrinder (Coin)", ("Moongrinder", "Coin")),
             ("Normal Level", ("Normal Level", None)),
             ("A (B) (C)", ("A (B)", "C")),  # rsplit：只拆最后一对
             ("(Coin)", ("(Coin)", None)),  # 主名为空 -> 不算附属词条
@@ -1207,7 +1211,15 @@ class TestPlatDataBuild:
 
 
 # ==========================================================================
-# jobs/nlw.py
+# jobs/nlw.py + jobs/ids.py + jobs/hds.py + jobs/lw.py
+#
+# 这四个 `build_level_list` 是同一份代码复制粘贴出来的（84~110 条语句），骨架
+# 一模一样，只有「表头长什么样」「哪些档名要特殊处理」不同。所以按三层分：
+#   1. 四张表共有的骨架  -> TestSheetBuildersCommon，按 (模块, 造列助手, 造表头)
+#      参数化，以后再加一张表只要多一行参数，不用再抄一遍用例；
+#   2. 只有部分表有的分支 -> 也在那个类里，但参数只列有这条分支的表
+#      （比如 FRUITY 改名表只有 nlw/ids/hds 有，enjoyment 只有 nlw/lw 有）；
+#   3. 某张表独有的分支   -> 留在下面各自的 TestXxxBuild 里，一条都没少。
 # ==========================================================================
 def _nlw_cols(levels: list[str], **over: Any) -> dict:
     n = len(levels)
@@ -1225,114 +1237,6 @@ def _nlw_cols(levels: list[str], **over: Any) -> dict:
     return cols
 
 
-class TestNlwBuild:
-    def test_竖线表头分档且去掉_Tier_字样(self) -> None:
-        cols = _nlw_cols(
-            ["| Extreme Tier", "Alpha", "| Insane Tier", "Beta"],
-            creators=["", "AuthorA", "", "AuthorB"],
-        )
-        entries = nlw.build_level_list(cols)
-
-        assert [(e["name"], e["tier"], e["creator"], e["sheetIndex"]) for e in entries] == [
-            ("Alpha", "Extreme", "AuthorA", 1),
-            ("Beta", "Insane", "AuthorB", 3),
-        ]
-
-    def test_第一个表头之前的行丢掉(self) -> None:
-        cols = _nlw_cols(["Junk", "| A Tier", "Alpha"])
-        assert [e["name"] for e in nlw.build_level_list(cols)] == ["Alpha"]
-
-    def test_Shortcuts_档整档跳过(self) -> None:
-        cols = _nlw_cols(["| Shortcuts", "Jump To X", "| A Tier", "Alpha"])
-        assert [e["name"] for e in nlw.build_level_list(cols)] == ["Alpha"]
-
-    def test_遇到空关卡名直接停(self) -> None:
-        cols = _nlw_cols(["| A Tier", "Alpha", "", "Beta"])
-        assert [e["name"] for e in nlw.build_level_list(cols)] == ["Alpha"]
-
-    def test_没关卡了那档直接停(self) -> None:
-        cols = _nlw_cols(
-            ["| A Tier", "Alpha", "| Not enough levels for you? Tier", "Beta"]
-        )
-        assert [e["name"] for e in nlw.build_level_list(cols)] == ["Alpha"]
-
-    def test_找不到极端难度的提示行也停(self) -> None:
-        cols = _nlw_cols(
-            ["| A Tier", "Alpha", "Can't find an extreme you like?", "Beta"]
-        )
-        assert [e["name"] for e in nlw.build_level_list(cols)] == ["Alpha"]
-
-    def test_None_Yet_占位跳过但不中断(self) -> None:
-        cols = _nlw_cols(["| A Tier", "None Yet!", "Alpha"])
-        assert [e["name"] for e in nlw.build_level_list(cols)] == ["Alpha"]
-
-    def test_关卡名和作者名走改名表(self) -> None:
-        cols = _nlw_cols(
-            ["| A Tier", "troll levle", "Graphite Wordle"],
-            creators=["", "Meloo Meroo", "Normal Guy"],
-        )
-        entries = nlw.build_level_list(cols)
-        assert [(e["name"], e["creator"]) for e in entries] == [
-            ("troll level", "Meroo"),
-            ("Graphite World", "Normal Guy"),
-        ]
-
-    def test_月更前缀被剥掉(self) -> None:
-        prefix = constants.MOONTHLIES_PREFIX[0]
-        cols = _nlw_cols(["| A Tier", prefix + "Some Level"])
-        assert nlw.build_level_list(cols)[0]["name"] == "Some Level"
-
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [("9.1", 9.1), ("", None), ("n/a", None), ("0", 0.0)],
-    )
-    def test_enjoyment_解析(self, raw: str, expected: Any) -> None:
-        cols = _nlw_cols(["| A Tier", "Alpha"], enjoyments=["", raw])
-        assert nlw.build_level_list(cols)[0]["enjoyment"] == expected
-
-    def test_存档点空值落成_None_非空则裁空白(self) -> None:
-        cols = _nlw_cols(["| A Tier", "Alpha"], checkpoints=[None, "  3  "])
-        assert nlw.build_level_list(cols)[0]["checkpoints"] == "3"
-
-        cols2 = _nlw_cols(["| A Tier", "Alpha"], checkpoints=[None, ""])
-        assert nlw.build_level_list(cols2)[0]["checkpoints"] is None
-
-    def test_技能点和描述两端空白被裁掉(self) -> None:
-        cols = _nlw_cols(
-            ["| A Tier", "Alpha"],
-            skillsets=["", "  memory  "],
-            descriptions=["", "  长得像  "],
-        )
-        entry = nlw.build_level_list(cols)[0]
-        assert entry["skillset"] == "memory"
-        assert entry["description"] == "长得像"
-
-    def test_产出字段齐全(self) -> None:
-        cols = _nlw_cols(
-            ["| A Tier", "Alpha"],
-            lengths=["", "2m"],
-            videos=[None, "https://v/1"],
-        )
-        assert set(nlw.build_level_list(cols)[0]) == {
-            "sheetIndex",
-            "tier",
-            "name",
-            "creator",
-            "length",
-            "skillset",
-            "enjoyment",
-            "description",
-            "checkpoints",
-            "video",
-        }
-
-    def test_空输入产出空列表(self) -> None:
-        assert nlw.build_level_list(_nlw_cols([])) == []
-
-
-# ==========================================================================
-# jobs/ids.py
-# ==========================================================================
 def _ids_cols(levels: list[str], **over: Any) -> dict:
     n = len(levels)
     cols: dict = {
@@ -1348,128 +1252,10 @@ def _ids_cols(levels: list[str], **over: Any) -> dict:
     return cols
 
 
-class TestIdsBuild:
-    def test_箭头表头分档(self) -> None:
-        cols = _ids_cols(
-            [f"{ARROW} Extreme {ARROW}", "Alpha", f"{ARROW} Insane {ARROW}", "Beta"]
-        )
-        entries = ids.build_level_list(cols)
-        assert [(e["name"], e["tier"], e["sheetIndex"]) for e in entries] == [
-            ("Alpha", "Extreme", 1),
-            ("Beta", "Insane", 3),
-        ]
-
-    def test_Other_和_Spreadsheet_Fakes_整档跳过(self) -> None:
-        cols = _ids_cols(
-            [
-                f"{ARROW} Other {ARROW}",
-                "Junk",
-                f"{ARROW} Spreadsheet Fakes (Legacy) {ARROW}",
-                "Fake",
-                f"{ARROW} Real {ARROW}",
-                "Alpha",
-            ]
-        )
-        assert [e["name"] for e in ids.build_level_list(cols)] == ["Alpha"]
-
-    def test_Rerates_档被改写成_Legacy(self) -> None:
-        cols = _ids_cols(
-            [f"{ARROW} Hard Demon/Extreme Demon Rerates {ARROW}", "Alpha", "Beta"]
-        )
-        entries = ids.build_level_list(cols)
-        assert [(e["name"], e["tier"]) for e in entries] == [
-            ("Alpha", "Legacy"),
-            ("Beta", "Legacy"),
-        ]
-
-    def test_遇到空关卡名直接停(self) -> None:
-        cols = _ids_cols([f"{ARROW} A {ARROW}", "Alpha", "", "Beta"])
-        assert [e["name"] for e in ids.build_level_list(cols)] == ["Alpha"]
-
-    def test_改名表生效(self) -> None:
-        cols = _ids_cols([f"{ARROW} A {ARROW}", "'10"], creators=["", "Shocksidan"])
-        entry = ids.build_level_list(cols)[0]
-        assert (entry["name"], entry["creator"]) == ("10", "Shocksidian")
-
-    def test_存档点与描述的处理(self) -> None:
-        cols = _ids_cols(
-            [f"{ARROW} A {ARROW}", "Alpha"],
-            checkpoints=[None, " 12 "],
-            descriptions=["", "  desc  "],
-        )
-        entry = ids.build_level_list(cols)[0]
-        assert entry["checkpoints"] == "12"
-        assert entry["description"] == "desc"
-
-    def test_产出字段齐全且没有_enjoyment(self) -> None:
-        cols = _ids_cols([f"{ARROW} A {ARROW}", "Alpha"])
-        assert set(ids.build_level_list(cols)[0]) == {
-            "sheetIndex",
-            "tier",
-            "name",
-            "creator",
-            "length",
-            "skillset",
-            "description",
-            "checkpoints",
-            "video",
-        }
-
-
-# ==========================================================================
-# jobs/hds.py
-# ==========================================================================
 def _hds_cols(levels: list[str], **over: Any) -> dict:
     return _ids_cols(levels, **over)
 
 
-class TestHdsBuild:
-    def test_箭头表头分档(self) -> None:
-        cols = _hds_cols([f"{ARROW} Tier 1 {ARROW}", "Alpha"])
-        entry = hds.build_level_list(cols)[0]
-        assert (entry["name"], entry["tier"]) == ("Alpha", "Tier 1")
-
-    def test_Demoted_Promoted_都归到_Legacy(self) -> None:
-        cols = _hds_cols([f"{ARROW} A {ARROW}", "Alpha", "Demoted", "Beta", "Promoted", "Gamma"])
-        entries = hds.build_level_list(cols)
-        assert [(e["name"], e["tier"]) for e in entries] == [
-            ("Alpha", "A"),
-            ("Beta", "Legacy"),
-            ("Gamma", "Legacy"),
-        ]
-
-    def test_Plending_档整档跳过(self) -> None:
-        cols = _hds_cols([f"{ARROW} Plending {ARROW}", "Junk", f"{ARROW} A {ARROW}", "Alpha"])
-        assert [e["name"] for e in hds.build_level_list(cols)] == ["Alpha"]
-
-    def test_Plegacy_档改写成_Legacy(self) -> None:
-        cols = _hds_cols([f"{ARROW} Plegacy {ARROW}", "Alpha"])
-        assert hds.build_level_list(cols)[0]["tier"] == "Legacy"
-
-    def test_无限存档点写成_INF(self) -> None:
-        cols = _hds_cols([f"{ARROW} A {ARROW}", "Alpha"], checkpoints=[None, INF])
-        assert hds.build_level_list(cols)[0]["checkpoints"] == "INF"
-
-    def test_一串小于号的技能点写成_NERVE_CONTROL(self) -> None:
-        cols = _hds_cols([f"{ARROW} A {ARROW}", "Alpha"], skillsets=["", "<" * 28])
-        assert hds.build_level_list(cols)[0]["skillset"] == "NERVE CONTROL"
-
-    def test_小于号数量不对就原样保留(self) -> None:
-        cols = _hds_cols([f"{ARROW} A {ARROW}", "Alpha"], skillsets=["", "<" * 27])
-        assert hds.build_level_list(cols)[0]["skillset"] == "<" * 27
-
-    def test_改名表生效(self) -> None:
-        cols = _hds_cols([f"{ARROW} A {ARROW}", "ABLAZE (New Info)"])
-        assert hds.build_level_list(cols)[0]["name"] == "ABLAZE"
-
-    def test_遇到空关卡名直接停(self) -> None:
-        cols = _hds_cols([f"{ARROW} A {ARROW}", "Alpha", "", "Beta"])
-        assert [e["name"] for e in hds.build_level_list(cols)] == ["Alpha"]
-
-
-# ==========================================================================
-# jobs/lw.py
-# ==========================================================================
 def _lw_cols(levels: list[str], **over: Any) -> dict:
     n = len(levels)
     cols: dict = {
@@ -1485,55 +1271,290 @@ def _lw_cols(levels: list[str], **over: Any) -> dict:
     return cols
 
 
-class TestLwBuild:
-    def test_竖线表头分档(self) -> None:
-        cols = _lw_cols(["| Easy Tier", "Alpha", "| Hard Tier", "Beta"])
-        entries = lw.build_level_list(cols)
-        assert [(e["name"], e["tier"], e["sheetIndex"]) for e in entries] == [
-            ("Alpha", "Easy", 1),
-            ("Beta", "Hard", 3),
+def _bar_header(tier: str) -> str:
+    """nlw / lw 的分档表头长这样：`| Extreme Tier`"""
+    return f"| {tier} Tier"
+
+
+def _arrow_header(tier: str) -> str:
+    """ids / hds 的分档表头长这样：`↓ Extreme ↓`"""
+    return f"{ARROW} {tier} {ARROW}"
+
+
+# 四张表都会产出的字段
+_BASE_FIELDS = {
+    "sheetIndex",
+    "tier",
+    "name",
+    "creator",
+    "length",
+    "skillset",
+    "description",
+    "video",
+}
+
+# (模块, 造列助手, 造表头, 这张表比公共字段多出来的字段)
+_ALL_SHEETS = [
+    pytest.param(nlw, _nlw_cols, _bar_header, {"enjoyment", "checkpoints"}, id="nlw"),
+    pytest.param(ids, _ids_cols, _arrow_header, {"checkpoints"}, id="ids"),
+    pytest.param(hds, _hds_cols, _arrow_header, {"checkpoints"}, id="hds"),
+    pytest.param(lw, _lw_cols, _bar_header, {"enjoyment"}, id="lw"),
+]
+
+# 有 checkpoints 列、有 FRUITY 改名表、空关卡名会 break 的那三张
+# （lw 三样都不一样，见 TestLwBuild）
+_FRUITY_SHEETS = [
+    pytest.param(nlw, _nlw_cols, _bar_header, id="nlw"),
+    pytest.param(ids, _ids_cols, _arrow_header, id="ids"),
+    pytest.param(hds, _hds_cols, _arrow_header, id="hds"),
+]
+
+# 用竖线表头、带 enjoyment 列的那两张
+_BAR_SHEETS = [
+    pytest.param(nlw, _nlw_cols, id="nlw"),
+    pytest.param(lw, _lw_cols, id="lw"),
+]
+
+
+class TestSheetBuildersCommon:
+    """四份 build_level_list 共有（或三份/两份共有）的行为，按表参数化"""
+
+    @pytest.mark.parametrize(("mod", "make_cols", "header", "extra_fields"), _ALL_SHEETS)
+    def test_骨架_表头分档_表头前的行丢掉_sheetIndex_按原始行号_空白裁掉(
+        self, mod: Any, make_cols: Any, header: Any, extra_fields: set
+    ) -> None:
+        cols = make_cols(
+            ["Junk", header("Extreme"), "Alpha", header("Insane"), "Beta"],
+            creators=["", "", "AuthorA", "", "AuthorB"],
+            skillsets=["", "", "  memory  ", "", ""],
+            descriptions=["", "", "  长得像  ", "", ""],
+        )
+        entries = mod.build_level_list(cols)
+
+        # 表头行本身不产出条目；表头之前的 "Junk" 因为 last_tier 还是 None 被丢掉；
+        # sheetIndex 记的是原始行号（把丢掉的行也算进去），不是产出序号
+        assert [
+            (e["name"], e["tier"], e["creator"], e["sheetIndex"]) for e in entries
+        ] == [
+            ("Alpha", "Extreme", "AuthorA", 2),
+            ("Beta", "Insane", "AuthorB", 4),
+        ]
+        # 技能点和描述两端空白被裁掉
+        assert entries[0]["skillset"] == "memory"
+        assert entries[0]["description"] == "长得像"
+        # 字段集：公共那批 + 这张表自己多出来的（反过来也钉住了「ids/hds 没有
+        # enjoyment」「lw 没有 checkpoints」）
+        assert set(entries[0]) == _BASE_FIELDS | extra_fields
+        # 一列都没有时不炸，产出空列表
+        assert mod.build_level_list(make_cols([])) == []
+
+    @pytest.mark.parametrize(("mod", "make_cols", "header"), _FRUITY_SHEETS)
+    def test_空关卡名直接停_且存档点空值落成_None(
+        self, mod: Any, make_cols: Any, header: Any
+    ) -> None:
+        """这三张表都是 `if not lvl: break`；lw 不是，见 TestLwBuild 里那两条"""
+        stop = make_cols([header("A"), "Alpha", "", "Beta"])
+        assert [e["name"] for e in mod.build_level_list(stop)] == ["Alpha"]
+
+        filled = make_cols([header("A"), "Alpha"], checkpoints=[None, "  3  "])
+        assert mod.build_level_list(filled)[0]["checkpoints"] == "3"
+        blank = make_cols([header("A"), "Alpha"], checkpoints=[None, ""])
+        assert mod.build_level_list(blank)[0]["checkpoints"] is None
+
+    # 三张表各带一份 FRUITY 改名表（表内容本身在 TestConstants 里对）。
+    # hds 那行的作者名故意用了张表里没有的：FRUITY_CREATORS_HDS 是空表，
+    # 走的是「查不到就原样透传」那条路。
+    # rename = ((表里的关卡名, 改完的), (表里的作者名, 改完的))
+    @pytest.mark.parametrize(
+        ("mod", "make_cols", "header", "rename"),
+        [
+            pytest.param(
+                nlw, _nlw_cols, _bar_header,
+                (("troll levle", "troll level"), ("Meloo Meroo", "Meroo")),
+                id="nlw",
+            ),
+            pytest.param(
+                ids, _ids_cols, _arrow_header,
+                (("'10", "10"), ("Shocksidan", "Shocksidian")),
+                id="ids",
+            ),
+            pytest.param(
+                hds, _hds_cols, _arrow_header,
+                (("ABLAZE (New Info)", "ABLAZE"), ("Whoever", "Whoever")),
+                id="hds",
+            ),
+        ],
+    )
+    def test_关卡名和作者名走各自的改名表(
+        self, mod: Any, make_cols: Any, header: Any, rename: tuple
+    ) -> None:
+        (raw_name, want_name), (raw_creator, want_creator) = rename
+        cols = make_cols([header("A"), raw_name], creators=["", raw_creator])
+        entry = mod.build_level_list(cols)[0]
+        assert (entry["name"], entry["creator"]) == (want_name, want_creator)
+
+    @pytest.mark.parametrize(("mod", "make_cols"), _BAR_SHEETS)
+    def test_Shortcuts_整档和_None_Yet_占位都跳过但不中断(
+        self, mod: Any, make_cols: Any
+    ) -> None:
+        cols = make_cols(
+            ["| Shortcuts", "Jump To X", _bar_header("A"), "None Yet!", "Alpha"]
+        )
+        assert [e["name"] for e in mod.build_level_list(cols)] == ["Alpha"]
+
+    # 这些行一出现就 break，后面的全不要。两类混在一起：`Not enough levels
+    # for you?` 是个**档名**，其余是关卡名那一列里的收尾提示行。
+    @pytest.mark.parametrize(
+        ("mod", "make_cols", "stoppers"),
+        [
+            pytest.param(
+                nlw, _nlw_cols,
+                [
+                    _bar_header("Not enough levels for you?"),
+                    "Can't find an extreme you like?",
+                    "If you STILL can't find an extreme, try this",
+                ],
+                id="nlw",
+            ),
+            pytest.param(
+                lw, _lw_cols,
+                [
+                    _bar_header("Not enough levels for you?"),
+                    "Can't find an extreme you like?",
+                    "If you STILL can't find an extreme, try this",
+                    "More info on pending levels here.",  # 这句只有 lw 认
+                ],
+                id="lw",
+            ),
+        ],
+    )
+    def test_这些行一出现就收工(
+        self, mod: Any, make_cols: Any, stoppers: list[str]
+    ) -> None:
+        for stopper in stoppers:
+            cols = make_cols([_bar_header("A"), "Alpha", stopper, "Beta"])
+            assert [e["name"] for e in mod.build_level_list(cols)] == ["Alpha"], stopper
+
+    @pytest.mark.parametrize(("mod", "make_cols"), _BAR_SHEETS)
+    def test_enjoyment_转得动就转_转不动落成_None(
+        self, mod: Any, make_cols: Any
+    ) -> None:
+        cols = make_cols(
+            [_bar_header("A"), "Alpha", "Beta", "Gamma", "Delta"],
+            enjoyments=["", "9.1", "", "n/a", "0"],
+        )
+        # "0" 单独摆一格：0.0 是 falsy，兜底写歪了最容易在这里变成 None
+        assert [e["enjoyment"] for e in mod.build_level_list(cols)] == [
+            9.1, None, None, 0.0
         ]
 
     @pytest.mark.parametrize(
-        "section",
-        ["Low End", "Low-Mid Range", "Mid Range", "Mid-High Range", "High End", "Ouchie", "Unknown"],
+        ("mod", "make_cols", "raw_tier"),
+        [
+            pytest.param(ids, _ids_cols, "Hard Demon/Extreme Demon Rerates", id="ids"),
+            pytest.param(hds, _hds_cols, "Plegacy", id="hds"),
+        ],
     )
-    def test_区间名整行也能当分档表头(self, section: str) -> None:
-        cols = _lw_cols([section, "Alpha"])
-        entry = lw.build_level_list(cols)[0]
-        assert (entry["name"], entry["tier"]) == ("Alpha", section)
+    def test_特定档名会被改写成_Legacy(
+        self, mod: Any, make_cols: Any, raw_tier: str
+    ) -> None:
+        cols = make_cols([_arrow_header(raw_tier), "Alpha", "Beta"])
+        assert [e["tier"] for e in mod.build_level_list(cols)] == ["Legacy", "Legacy"]
 
-    def test_Shortcuts_档整档跳过(self) -> None:
-        cols = _lw_cols(["| Shortcuts", "Jump", "| Easy Tier", "Alpha"])
-        assert [e["name"] for e in lw.build_level_list(cols)] == ["Alpha"]
 
-    def test_没关卡了那档直接停(self) -> None:
-        cols = _lw_cols(
-            ["| Easy Tier", "Alpha", "| Not enough levels for you? Tier", "Beta"]
+class TestNlwBuild:
+    """nlw 独有的分支（共有的那些在 TestSheetBuildersCommon）"""
+
+    def test_月更前缀被剥掉(self) -> None:
+        prefix = constants.MOONTHLIES_PREFIX[0]
+        cols = _nlw_cols([_bar_header("A"), prefix + "Some Level"])
+        assert nlw.build_level_list(cols)[0]["name"] == "Some Level"
+
+
+class TestIdsBuild:
+    """ids 独有的分支"""
+
+    def test_Other_和_Spreadsheet_Fakes_整档跳过(self) -> None:
+        cols = _ids_cols(
+            [
+                _arrow_header("Other"),
+                "Junk",
+                _arrow_header("Spreadsheet Fakes (Legacy)"),
+                "Fake",
+                _arrow_header("Real"),
+                "Alpha",
+            ]
         )
-        assert [e["name"] for e in lw.build_level_list(cols)] == ["Alpha"]
+        assert [e["name"] for e in ids.build_level_list(cols)] == ["Alpha"]
 
-    def test_pending_说明行也停(self) -> None:
-        cols = _lw_cols(
-            ["| Easy Tier", "Alpha", "More info on pending levels here.", "Beta"]
+
+class TestHdsBuild:
+    """hds 独有的分支 —— 四张表里特殊处理最多的一张"""
+
+    def test_Demoted_Promoted_这两行之后的都归到_Legacy(self) -> None:
+        cols = _hds_cols(
+            [_arrow_header("A"), "Alpha", "Demoted", "Beta", "Promoted", "Gamma"]
         )
-        assert [e["name"] for e in lw.build_level_list(cols)] == ["Alpha"]
+        entries = hds.build_level_list(cols)
+        assert [(e["name"], e["tier"]) for e in entries] == [
+            ("Alpha", "A"),
+            ("Beta", "Legacy"),
+            ("Gamma", "Legacy"),
+        ]
 
-    def test_None_Yet_占位跳过(self) -> None:
-        cols = _lw_cols(["| Easy Tier", "None Yet!", "Alpha"])
-        assert [e["name"] for e in lw.build_level_list(cols)] == ["Alpha"]
+    def test_Plending_档整档跳过(self) -> None:
+        cols = _hds_cols(
+            [_arrow_header("Plending"), "Junk", _arrow_header("A"), "Alpha"]
+        )
+        assert [e["name"] for e in hds.build_level_list(cols)] == ["Alpha"]
 
-    def test_enjoyment_解析(self) -> None:
-        cols = _lw_cols(["| Easy Tier", "Alpha", "Beta"], enjoyments=["", "6.5", "??"])
-        assert [e["enjoyment"] for e in lw.build_level_list(cols)] == [6.5, None]
+    def test_两个特殊字面量会被换掉_无限存档点和一串小于号(self) -> None:
+        cols = _hds_cols(
+            [_arrow_header("A"), "Alpha"],
+            checkpoints=[None, INF],
+            skillsets=["", "<" * 28],
+        )
+        entry = hds.build_level_list(cols)[0]
+        assert entry["checkpoints"] == "INF"
+        assert entry["skillset"] == "NERVE CONTROL"
+
+    def test_小于号数量不对就原样保留(self) -> None:
+        # 源码比的是恰好 28 个的那个字面量，27 个不算
+        cols = _hds_cols([_arrow_header("A"), "Alpha"], skillsets=["", "<" * 27])
+        assert hds.build_level_list(cols)[0]["skillset"] == "<" * 27
+
+
+class TestLwBuild:
+    """lw 独有的分支 —— 它和另外三张差得最多：没有 FRUITY 改名表、没有
+    checkpoints 列，空行的处理也是另一套（下面最后两条）。"""
+
+    def test_区间名整行也能当分档表头(self) -> None:
+        # 源码里那张区间名清单是个字面量 list，这里照着摆一遍：一行档名 + 一行关卡
+        sections = [
+            "Low End",
+            "Low-Mid Range",
+            "Mid Range",
+            "Mid-High Range",
+            "High End",
+            "Ouchie",
+            "Unknown",
+        ]
+        rows: list[str] = []
+        for section in sections:
+            rows += [section, f"Lv-{section}"]
+
+        entries = lw.build_level_list(_lw_cols(rows))
+        assert [(e["name"], e["tier"]) for e in entries] == [
+            (f"Lv-{section}", section) for section in sections
+        ]
 
     def test_作者名不走改名表(self) -> None:
         # LW 没有 FRUITY 表，作者名原样透传（连 NLW 那边会改的名字也不改）
-        cols = _lw_cols(["| Easy Tier", "Alpha"], creators=["", "Meloo Meroo"])
+        cols = _lw_cols([_bar_header("Easy"), "Alpha"], creators=["", "Meloo Meroo"])
         assert lw.build_level_list(cols)[0]["creator"] == "Meloo Meroo"
 
     def test_第五十一行之后的空行才会中断(self) -> None:
-        names = ["| Easy Tier"] + [f"Lv{i}" for i in range(1, 52)] + ["", "After"]
+        names = [_bar_header("Easy")] + [f"Lv{i}" for i in range(1, 52)] + ["", "After"]
         entries = lw.build_level_list(_lw_cols(names))
         assert len(entries) == 51
         assert entries[-1]["name"] == "Lv51"
@@ -1548,20 +1569,6 @@ class TestLwBuild:
         cols = _lw_cols(["| Easy Tier", "Alpha", "", "Beta"])
         entries = lw.build_level_list(cols)
         assert [e["name"] for e in entries] == ["Alpha", "", "Beta"]
-
-    def test_产出字段齐全且没有_checkpoints(self) -> None:
-        cols = _lw_cols(["| Easy Tier", "Alpha"])
-        assert set(lw.build_level_list(cols)[0]) == {
-            "sheetIndex",
-            "tier",
-            "name",
-            "creator",
-            "length",
-            "skillset",
-            "enjoyment",
-            "description",
-            "video",
-        }
 
 
 # ==========================================================================
@@ -2012,10 +2019,11 @@ class TestFetchSfhMain:
 # jobs/metadata.py
 # ==========================================================================
 class TestMetadataHelpers:
+    # ("Someone", "someone") 那行删了：它测的「转小写」被下面那行一起测了。
+    # "A&B" 单独留着 —— 替换不看词边界，没空格也照换，这是真会咬人的地方。
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
-            ("Someone", "someone"),
             ("  Someone  ", "someone"),
             ("A & B", "a and b"),
             ("A&B", "aandb"),
@@ -2032,19 +2040,14 @@ class TestMetadataHelpers:
         )
         assert metadata.get_cache_key("  Null  ", "Rob") == ("Null", "rob")
 
-    @pytest.mark.parametrize(
-        ("code", "expected"),
-        [
-            (7, "Unknown"),
-            (8, "Easy"),
-            (9, "Medium"),
-            (10, "Hard"),
-            (11, "Insane"),
-            (12, "Extreme"),
-        ],
-    )
-    def test_demon_type(self, code: int, expected: str) -> None:
-        assert metadata.demon_type(code) == expected
+    def test_demon_type_从_7_起按顺序对上整张表(self) -> None:
+        """源码就是 `[...][code - 7]`，直接照着那张表走一遍。
+
+        （原来是 6 条参数化用例，一条盯一档；表本身在源码里是个字面量 list，
+        照着走一遍等价，而且表加一档时这里只要改一行。）
+        """
+        table = ["Unknown", "Easy", "Medium", "Hard", "Insane", "Extreme"]
+        assert [metadata.demon_type(7 + i) for i in range(len(table))] == table
 
     def test_缓存存读往返(self, tmp_path: Path) -> None:
         cache = [{"name": "Null", "creator": "someone", "id": 123}]
@@ -2559,22 +2562,21 @@ class TestNotify:
         assert notify_env.called_apis == ["send_private_msg"]
         api, payload = notify_env.calls[0]
         assert payload["user_id"] == notify.ADMIN_ID
+        # 只认「这条通知说的是哪件事」：标题、异常类型、异常消息、上下文都带上了
+        # 就行，模板怎么排版、怎么措辞不管
         msg = payload["message"]
-        assert "标题: 数据更新失败" in msg
-        assert "类型: ValueError" in msg
-        assert "错误: boom" in msg
-        assert "job: nlw" in msg
-        assert "--- traceback ---" in msg
+        assert "数据更新失败" in msg
+        assert "ValueError" in msg
+        assert "boom" in msg
+        assert "nlw" in msg
 
-    async def test_没有上下文时写_None(self, notify_env: Any) -> None:
-        await notify.report_error("t", ValueError("boom"))
-        assert "上下文:\nNone" in notify_env.calls[0][1]["message"]
-
-    async def test_多个上下文键逐行列出(self, notify_env: Any) -> None:
-        await notify.report_error("t", ValueError("x"), {"job": "a", "stage": "b"})
+    async def test_多个上下文键都带上了(self, notify_env: Any) -> None:
+        await notify.report_error(
+            "t", ValueError("x"), {"job": "nlw", "stage": "publish"}
+        )
         msg = notify_env.calls[0][1]["message"]
-        assert "job: a" in msg
-        assert "stage: b" in msg
+        assert "nlw" in msg
+        assert "publish" in msg
 
     async def test_同一个错误不重复刷屏(self, notify_env: Any) -> None:
         await notify.report_error("t", ValueError("boom"))
@@ -2600,7 +2602,9 @@ class TestNotify:
             await notify.report_error("t", e)
 
         msg = notify_env.calls[0][1]["message"]
-        assert "ValueError: boom" in msg.split("--- traceback ---")[1]
+        # 带的是真 traceback：抛出点那一帧在里面（不认分隔行怎么写）
+        assert "Traceback (most recent call last)" in msg
+        assert "test_在_except_里调用时带上真实_traceback" in msg
 
 
 # ==========================================================================

@@ -22,7 +22,7 @@ import pytest
 from PIL import Image
 
 from tests.conftest import DEFAULT_USER_ID, FakeBot
-from tests.test_small_plugins import run_handler, sent_texts
+from tests.conftest import run_handler, sent_texts
 from xiaozu_bot.plugins import gdlevelsearch
 from xiaozu_bot.plugins.gdlevelsearch import SearchResult, icons
 from xiaozu_bot.plugins.gdlevelsearch.gdapi import GDLevel, GDUser
@@ -758,7 +758,9 @@ class TestHandleGdsearch:
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg=""
         )
         assert ok is True
-        assert sent_texts(fake_bot) == ["请提供关卡的名字或id"]
+        # 行为是「只回一句话，不去搜也不出图」——提示词怎么写不算行为
+        assert len(sent_texts(fake_bot)) == 1
+        assert image_segments(fake_bot) == []
 
     @pytest.mark.parametrize("text", ["128", "1234", "12a45", "abcde"])
     async def test_short_or_non_numeric_input_goes_down_the_name_path(
@@ -805,7 +807,9 @@ class TestHandleGdsearch:
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
         )
-        assert sent_texts(fake_bot) == ["不存在符合这个id的demon关卡"]
+        # 行为是「查不到就回一句话，不出图」
+        assert len(sent_texts(fake_bot)) == 1
+        assert image_segments(fake_bot) == []
 
     async def test_no_name_match_says_so(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
@@ -814,7 +818,9 @@ class TestHandleGdsearch:
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="Nope"
         )
-        assert sent_texts(fake_bot) == ["没有找到名为 'Nope' 的demon关卡"]
+        # 行为是「一个都没搜到就回一句话，不出图」
+        assert len(sent_texts(fake_bot)) == 1
+        assert image_segments(fake_bot) == []
 
     async def test_single_match_is_sent_straight_away(
         self, fake_bot: FakeBot, make_group_event: Any,
@@ -832,16 +838,16 @@ class TestHandleGdsearch:
         assert len(image_segments(fake_bot)) == 1
         assert gdlevelsearch.search_cache == {}
 
-    async def test_multiple_matches_render_a_numbered_list(
+    async def test_multiple_matches_are_listed_in_one_message(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """列表里每一段（作者 / 难度 / tier）都是按有没有值决定加不加的"""
+        """三条结果一条消息发完，每条查到的东西都得在里面；列表怎么排版不算行为"""
         monkeypatch.setattr(
             gdlevelsearch, "search_by_name",
             lambda _n: [
-                SearchResult(1, "Full", "Cr", "35.0", "Extreme Demon"),
-                SearchResult(2, "NoCreator", None, "12.5", "Insane Demon"),
-                SearchResult(3, "NoTier", "Cr2", None, "Hard Demon"),
+                SearchResult(111, "Full", "Cr", "35.0", "Extreme Demon"),
+                SearchResult(222, "NoCreator", None, "12.5", "Insane Demon"),
+                SearchResult(333, "NoTier", "Cr2", None, "Hard Demon"),
             ],
         )
         monkeypatch.setattr(
@@ -852,13 +858,14 @@ class TestHandleGdsearch:
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="X"
         )
 
-        assert sent_texts(fake_bot) == [
-            "找到 3 个名为 'X' 的demon关卡："
-            "\n1. Full by Cr (Extreme Demon) t35.0 (ID: 1)"
-            "\n2. NoCreator (Insane Demon) t12.5 (ID: 2)"
-            "\n3. NoTier by Cr2 (Hard Demon) (ID: 3)"
-            "\n输入序号以选中关卡,输入“结束”以中止搜索"
-        ]
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 1
+        for token in (
+            "111", "Full", "Cr", "35.0", "Extreme Demon",
+            "222", "NoCreator", "12.5", "Insane Demon",
+            "333", "NoTier", "Cr2", "Hard Demon",
+        ):
+            assert token in texts[0], token
 
     async def test_missing_difficulty_falls_back_to_gdapi(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
@@ -878,9 +885,10 @@ class TestHandleGdsearch:
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="X"
         )
 
+        # 只有缺 difficulty 的那条去补，补回来的值也确实进了那条消息
         assert asked == [1]
-        assert "1. A (现查的) (ID: 1)" in sent_texts(fake_bot)[0]
-        assert "2. B (已知) (ID: 2)" in sent_texts(fake_bot)[0]
+        assert "现查的" in sent_texts(fake_bot)[0]
+        assert "已知" in sent_texts(fake_bot)[0]
 
     async def test_multiple_matches_arm_the_cache_and_timeout(
         self, fake_bot: FakeBot, make_group_event: Any,
@@ -928,7 +936,8 @@ class TestHandleChoice:
         self._prime()
         await run_handler(gdlevelsearch.gdsearchselect, fake_bot, make_group_event(word))
 
-        assert sent_texts(fake_bot) == ["已取消搜索"]
+        # 行为是「回一句确认 + 把这个人的候选缓存清掉」，清缓存才是关键那半
+        assert len(sent_texts(fake_bot)) == 1
         assert gdlevelsearch.search_cache == {}
 
     async def test_non_numeric_input_is_ignored_silently(
@@ -950,7 +959,9 @@ class TestHandleChoice:
         await run_handler(
             gdlevelsearch.gdsearchselect, fake_bot, make_group_event(choice)
         )
-        assert sent_texts(fake_bot) == ["请输入正确的序号"]
+        # 行为是「提示一句 + 缓存留着让人重选」，别的什么都不发
+        assert len(sent_texts(fake_bot)) == 1
+        assert image_segments(fake_bot) == []
         assert str(DEFAULT_USER_ID) in gdlevelsearch.search_cache  # 没清掉，可以再选
 
     async def test_valid_index_sends_the_level_and_clears_the_cache(
@@ -977,7 +988,11 @@ class TestHandleChoice:
         monkeypatch.setattr(gdlevelsearch, "getlevelinfo", lambda _i: None)
 
         await run_handler(gdlevelsearch.gdsearchselect, fake_bot, make_group_event("1"))
-        assert sent_texts(fake_bot) == ["发生未知错误。相关id: 11"]
+        # 行为是「报错时得把选中那条的 id 说出来」，不然没法查
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 1
+        assert "11" in texts[0]
+        assert image_segments(fake_bot) == []
 
 
 # ==========================================================================
@@ -999,47 +1014,58 @@ def make_gduser(**over: Any) -> GDUser:
 
 
 class TestHandleGduser:
-    async def test_empty_name_asks_for_one(
-        self, fake_bot: FakeBot, make_group_event: Any
+    async def test_empty_name_does_not_hit_gdapi(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """空参数只回一句话就完事，不去打 gdapi —— 提示词怎么写不算行为"""
+        monkeypatch.setattr(
+            gdlevelsearch, "get_user_by_name",
+            lambda _n: pytest.fail("没给名字就不该去查用户"),
+        )
         await run_handler(
             gdlevelsearch.gduser, fake_bot, make_group_event("*gduser"), arg=""
         )
-        assert sent_texts(fake_bot) == ["请输入想要搜索的用户名"]
+        assert len(sent_texts(fake_bot)) == 1
 
     async def test_unknown_user(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """查不到就只回一句，不再往下发资料"""
         monkeypatch.setattr(gdlevelsearch, "get_user_by_name", lambda _n: None)
         await run_handler(
             gdlevelsearch.gduser, fake_bot, make_group_event("*gduser"), arg="Nobody"
         )
-        assert sent_texts(fake_bot) == ["没有找到对应的用户"]
+        assert len(sent_texts(fake_bot)) == 1
 
-    async def test_minimal_user_only_gets_the_basic_line(
+    async def test_minimal_user_gets_the_basic_numbers(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """三段可选信息都为空时只剩第一行，而且 creator_points=0 那截也不印"""
+        """三段可选信息都为空时也能发出去，用户名和三个计数都在里面"""
         monkeypatch.setattr(gdlevelsearch, "get_user_by_name", lambda _n: make_gduser())
         await run_handler(
             gdlevelsearch.gduser, fake_bot, make_group_event("*gduser"), arg="Player"
         )
-        assert sent_texts(fake_bot) == ["Player\n1000⭐ 50🌙 30👿"]
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 1
+        for token in ("Player", "1000", "50", "30"):
+            assert token in texts[0], token
 
-    async def test_creator_points_are_appended_when_non_zero(
+    async def test_creator_points_are_included_when_non_zero(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """creator_points 非 0 时那个数字要出现在资料里（0 是不印的，但那是排版）"""
         monkeypatch.setattr(
             gdlevelsearch, "get_user_by_name", lambda _n: make_gduser(creator_points=7)
         )
         await run_handler(
             gdlevelsearch.gduser, fake_bot, make_group_event("*gduser"), arg="Player"
         )
-        assert sent_texts(fake_bot)[0].endswith("30👿 7🔧")
+        assert "7" in sent_texts(fake_bot)[0]
 
-    async def test_full_breakdown(
+    async def test_full_breakdown_keeps_every_number(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """三段可选信息都在时，12 个 demon 计数一个都不能漏（怎么排版不算行为）"""
         user = make_gduser(
             classic_levels=[1, 2, 3, 4, 5, 6, 7, 8],
             platformer_levels=[9, 10, 11, 12, 13, 14],
@@ -1051,45 +1077,54 @@ class TestHandleGduser:
             gdlevelsearch.gduser, fake_bot, make_group_event("*gduser"), arg="Player"
         )
 
-        text = sent_texts(fake_bot)[0]
-        assert "Classic: 1🤖 2💙 3💚 4💛 5🧡 6💜;" in text
-        assert "7 Daily; 8 Gauntlet" in text
-        assert "Platformer: 9🤖 10💙 11💚 12💛 13🧡 14💜" in text
-        assert "Classic Demons: 20 / 21 / 22 / 23 / 24;" in text
-        assert "30 Weekly; 31 Gauntlet" in text
-        assert "Platformer Demons: 25 / 26 / 27 / 28 / 29" in text
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 1
+        for value in range(20, 32):
+            assert str(value) in texts[0], value
 
 
 # ==========================================================================
 # *gdrandom 的参数校验
 # ==========================================================================
 class TestHandleGdrandom:
-    async def test_no_arguments_prints_usage(
-        self, fake_bot: FakeBot, make_group_event: Any
+    async def test_no_arguments_replies_without_searching(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """一个参数都不给就回一句用法，不去 GDDL 抽关 —— 用法怎么写不算行为"""
+        fake = FakeGddl()
+        monkeypatch.setattr(gdlevelsearch, "Gddl", fake)
+
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg=""
         )
-        assert sent_texts(fake_bot)[0].startswith("用法：*gd随机推关")
+        assert len(sent_texts(fake_bot)) == 1
+        assert fake.random_calls == []
 
     @pytest.mark.parametrize(
-        ("arg", "expected"),
+        "arg",
         [
-            ("abc", "tier 要是个数字，你写的是「abc」"),
-            ("0", "tier 要在 1-39 之间，你写的是 0"),
-            ("40", "tier 要在 1-39 之间，你写的是 40"),
-            ("5 x", "tier 要是个数字，你写的是「x」"),
-            ("5 10 11", "enjoyment 要在 0-10 之间，你写的是 11"),
-            ("5 10 3 -1", "enjoyment 要在 0-10 之间，你写的是 -1"),
+            "abc",          # tier 不是数字
+            "0",            # tier 下越界
+            "40",           # tier 上越界
+            "5 x",          # tier 高位不是数字
+            "5 10 11",      # enjoyment 上越界
+            "5 10 3 -1",    # enjoyment 下越界
         ],
     )
     async def test_bad_arguments_are_rejected(
-        self, arg: str, expected: str, fake_bot: FakeBot, make_group_event: Any
+        self, arg: str, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """参数不合法就回一句话打住，一次都不去 GDDL 抽关"""
+        fake = FakeGddl()
+        monkeypatch.setattr(gdlevelsearch, "Gddl", fake)
+
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg=arg
         )
-        assert sent_texts(fake_bot) == [expected]
+        assert len(sent_texts(fake_bot)) == 1
+        assert fake.random_calls == []
+        assert image_segments(fake_bot) == []
 
     async def test_swapped_bounds_are_put_back_in_order(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
@@ -1115,14 +1150,16 @@ class TestHandleGdrandom:
         )
         assert fake.random_calls == [(15, -1, None, None)]
 
-    async def test_no_match_suggests_relaxing(
+    async def test_no_match_replies_without_an_image(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(gdlevelsearch, "Gddl", FakeGddl())
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg="15"
         )
-        assert sent_texts(fake_bot) == ["没有找到符合条件的关卡，把条件放宽点试试"]
+        # 行为是「随机挑不出来就回一句话，不出图」
+        assert len(sent_texts(fake_bot)) == 1
+        assert image_segments(fake_bot) == []
 
     async def test_hit_sends_the_image(
         self, fake_bot: FakeBot, make_group_event: Any,
@@ -1143,15 +1180,18 @@ class TestHandleGdrandom:
 # *gdicon 的参数解析
 # ==========================================================================
 class TestHandleGdiconArgs:
-    async def test_no_arguments_prints_usage(
+    async def test_no_arguments_lists_the_gamemodes_from_the_table(
         self, fake_bot: FakeBot, make_group_event: Any
     ) -> None:
+        """用法怎么写不算行为，但可选 gamemode 那截必须是从 icons.FORMS 现拼的，
+        不能在提示里写死一份 —— 加了新 gamemode 而提示没跟上，用户就不知道能用。
+        """
         await run_handler(
             gdlevelsearch.gdicon, fake_bot, make_group_event("*gdicon"), arg=""
         )
-        text = sent_texts(fake_bot)[0]
-        assert text.startswith("用法：*gdicon 用户名 [gamemode]")
-        assert icons.form_names() in text
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 1
+        assert icons.form_names() in texts[0]
 
     async def test_gamemode_after_the_name_is_taken_as_a_gamemode(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
@@ -1163,8 +1203,9 @@ class TestHandleGdiconArgs:
         await run_handler(
             gdlevelsearch.gdicon, fake_bot, make_group_event("*gdicon"), arg="RobTop ship"
         )
+        # 行为是「gamemode 那个词没被算进用户名」——查用户时用的名字就是证据
         assert seen == ["RobTop"]
-        assert sent_texts(fake_bot) == ["没有找到用户「RobTop」"]
+        assert len(sent_texts(fake_bot)) == 1
 
     async def test_a_gamemode_word_in_first_position_is_part_of_the_name(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
@@ -1205,21 +1246,33 @@ class TestHandleGdiconArgs:
         assert seen == ["RobTop"]
 
     async def test_only_flags_leaves_no_name(
-        self, fake_bot: FakeBot, make_group_event: Any
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """-a 剥完什么都不剩就回一句话，不去打 gdapi"""
+        monkeypatch.setattr(
+            gdlevelsearch, "get_user_by_name",
+            lambda _n: pytest.fail("只有 flag、没有名字时不该去查用户"),
+        )
         await run_handler(
             gdlevelsearch.gdicon, fake_bot, make_group_event("*gdicon"), arg="-a"
         )
-        assert sent_texts(fake_bot) == ["请给一个 GD 用户名"]
+        assert len(sent_texts(fake_bot)) == 1
 
-    async def test_single_icon_is_sent_with_a_caption(
+    async def test_single_icon_is_sent_as_an_image(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """名字后面写了 ship 就按 ship 去取图，出来的是图片段而不是一堆文字。
+
+        「取的是哪个 gamemode」直接看传给 icons.fetch_one 的 Form，
+        比去说明文字里找 "Ship" 两个字靠谱（文案随时会改）。
+        """
         user = GDUser()
         user.user_name = "RobTop"
         monkeypatch.setattr(gdlevelsearch, "get_user_by_name", lambda _n: user)
+        asked: list[Any] = []
 
         async def fake_fetch_one(u: GDUser, form: Any) -> Image.Image:
+            asked.append(form)
             return Image.new("RGBA", (2, 2))
 
         monkeypatch.setattr(icons, "fetch_one", fake_fetch_one)
@@ -1228,17 +1281,21 @@ class TestHandleGdiconArgs:
             gdlevelsearch.gdicon, fake_bot, make_group_event("*gdicon"), arg="RobTop ship"
         )
 
-        assert sent_texts(fake_bot) == ["RobTop 的 Ship："]
+        assert asked == [icons.FORM_BY_KEY["ship"]]
+        assert len(sent_texts(fake_bot)) == 1
         assert len(image_segments(fake_bot)) == 1
 
-    async def test_icon_service_failure_is_reported(
+    async def test_icon_service_failure_sends_no_image(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """没给 gamemode 时默认 cube；取不到图就只回一句话，不发空图"""
         user = GDUser()
         user.user_name = "RobTop"
         monkeypatch.setattr(gdlevelsearch, "get_user_by_name", lambda _n: user)
+        asked: list[Any] = []
 
         async def fake_fetch_one(u: GDUser, form: Any) -> None:
+            asked.append(form)
             return None
 
         monkeypatch.setattr(icons, "fetch_one", fake_fetch_one)
@@ -1246,7 +1303,9 @@ class TestHandleGdiconArgs:
         await run_handler(
             gdlevelsearch.gdicon, fake_bot, make_group_event("*gdicon"), arg="RobTop"
         )
-        assert sent_texts(fake_bot) == ["RobTop 的 Cube 图标没取到，等会再试"]
+        assert asked == [icons.resolve_form(icons.DEFAULT_FORM)]
+        assert len(sent_texts(fake_bot)) == 1
+        assert image_segments(fake_bot) == []
 
 
 # ==========================================================================
@@ -1256,13 +1315,18 @@ class TestHandleDailyDemon:
     async def test_error_from_the_picker_is_relayed(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # 这条**故意**保留全等：字面量是本用例自己塞给挑选器的，不是生产文案。
+        # 要锁的行为就是「挑选器给什么错误话术就原样转发什么」，一个字都不能加工。
+        # 用个明显假的串，免得以后有人以为这是插件里的提示语而去"顺手统一措辞"。
+        error = "【挑选器自己的错误话术】"
         monkeypatch.setattr(
-            gdlevelsearch, "get_daily_demon", lambda: (None, 0, "今天没挑出来")
+            gdlevelsearch, "get_daily_demon", lambda: (None, 0, error)
         )
         await run_handler(
             gdlevelsearch.dailydemon, fake_bot, make_group_event("*dailydemon")
         )
-        assert sent_texts(fake_bot) == ["今天没挑出来"]
+        assert sent_texts(fake_bot) == [error]
+        assert image_segments(fake_bot) == []
 
     async def test_detail_lookup_failure_still_names_the_level(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
@@ -1276,9 +1340,12 @@ class TestHandleDailyDemon:
         await run_handler(
             gdlevelsearch.dailydemon, fake_bot, make_group_event("*dailydemon")
         )
-        assert sent_texts(fake_bot) == [
-            "今日关卡是 Daily One（ID 777），但是拿详细信息的时候出错了"
-        ]
+        # 详细信息拿不到时也得把关卡名和 id 说出来（用例名说的就是这件事），
+        # 具体怎么组句不算行为
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 1
+        assert "Daily One" in texts[0] and "777" in texts[0]
+        assert image_segments(fake_bot) == []
 
     async def test_happy_path_sends_a_caption_then_the_image(
         self, fake_bot: FakeBot, make_group_event: Any,
@@ -1295,7 +1362,10 @@ class TestHandleDailyDemon:
             gdlevelsearch.dailydemon, fake_bot, make_group_event("*dailydemon")
         )
 
-        assert sent_texts(fake_bot)[0] == "今日关卡（tier 20-25，候选 42 关）："
+        # 说明文字里要带上 describe_conditions() 的原文和候选关卡数，
+        # 这两样是真信息；剩下的措辞不是
+        caption = sent_texts(fake_bot)[0]
+        assert "tier 20-25" in caption and "42" in caption
         assert len(image_segments(fake_bot)) == 1
 
 

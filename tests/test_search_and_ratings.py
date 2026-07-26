@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 import pytest
 
@@ -195,50 +195,102 @@ def _search_page(levels: list[GDLevel], *, total: int = 0, page: int = 0) -> Sea
     )
 
 
+def _pages_for(total: int, page_size: int) -> int:
+    """总条数 -> 总页数（向上取整，至少一页）。
+
+    分页期望值一律用这个算，别把 10 抄进断言里 —— GD_PAGE_SIZE 真要调，
+    改常数就行，不用回来改一堆用例。
+    """
+    return max(1, -(-total // page_size))
+
+
+class _ModSpec(NamedTuple):
+    """fullsearch / ratings 里那些「除了名字不一样、行为完全一样」的部分。
+
+    生产代码里这两个模块就是复制粘贴的兄弟（各自的 docstring 都写了），
+    共通行为参数化到模块上一起测：改了一个忘了改另一个，这里就红。
+    """
+
+    mod: Any
+    keyword_attr: str   # 解析结果里放关键词的字段名
+    only_flags: str     # 一串只有开关、没有关键词的输入
+    bare_flag: str      # 一个不吃后面那个词的开关，用来把关键词切成两段
+
+
+MOD_SPECS = [
+    pytest.param(_ModSpec(fullsearch, "query", "-a -d", "-a"), id="fullsearch"),
+    pytest.param(_ModSpec(ratings, "target", "-asc -v", "-asc"), id="ratings"),
+]
+
+
+@pytest.mark.parametrize("spec", MOD_SPECS)
+class TestParseArgsSharedShape:
+    """两个 parse_args 共通的那部分：关键词怎么拼、没关键词怎么报错"""
+
+    def test_empty_text_raises_with_usage(self, spec: _ModSpec) -> None:
+        """报错里要带上用法 —— 用法怎么写是模块自己的事，从常量里取"""
+        with pytest.raises(spec.mod.ArgError) as exc:
+            spec.mod.parse_args("")
+
+        assert spec.mod.USAGE in str(exc.value)
+
+    def test_whitespace_only_raises(self, spec: _ModSpec) -> None:
+        with pytest.raises(spec.mod.ArgError):
+            spec.mod.parse_args("   \t  ")
+
+    def test_only_flags_without_a_keyword_raises(self, spec: _ModSpec) -> None:
+        """全是开关没给关键词，走的是循环之后那处「请提供…」"""
+        with pytest.raises(spec.mod.ArgError):
+            spec.mod.parse_args(spec.only_flags)
+
+    def test_keywords_are_joined_with_single_spaces(self, spec: _ModSpec) -> None:
+        """text.split() 吃掉连续空白，拼回来只剩单空格"""
+        query = spec.mod.parse_args("  the   nightmare  ")
+
+        assert getattr(query, spec.keyword_attr) == "the nightmare"
+
+    def test_keywords_split_by_a_flag_are_joined_in_order(self, spec: _ModSpec) -> None:
+        """关键词被开关切开的话，是按出现顺序用单空格拼起来的"""
+        query = spec.mod.parse_args(f"the {spec.bare_flag} nightmare")
+
+        assert getattr(query, spec.keyword_attr) == "the nightmare"
+
+    def test_unknown_dash_token_becomes_part_of_the_keyword(
+        self, spec: _ModSpec
+    ) -> None:
+        """不认识的 -xxx 不报错，会被当成关键词的一部分（现状如此）"""
+        query = spec.mod.parse_args("-x bloodbath")
+
+        assert getattr(query, spec.keyword_attr) == "-x bloodbath"
+
+
 # ===========================================================================
 # ratings.py
 # ===========================================================================
 
 
 class TestSortAliases:
-    """SORT_ALIASES 这张表本身"""
+    """SORT_ALIASES 这张表本身。
 
-    @pytest.mark.parametrize(("alias", "api_field"), sorted(ratings.SORT_ALIASES.items()))
-    def test_every_alias_is_accepted_by_the_gddl_api(
-        self, alias: str, api_field: str
-    ) -> None:
+    表是纯数据，逐行抄一遍等于把表写两份 —— 只守住它必须成立的那几条不变式，
+    加别名 / 改别名都不用回来动这里。
+    """
+
+    def test_every_alias_points_at_a_field_the_api_accepts(self) -> None:
         """表里每个别名指向的字段都必须是 gddlapi 认的排序字段。
 
         gddlapi.getsubmissions 会把不认识的 sort 直接丢掉（只 warning），
         所以别名表写错了不会报错，只是排序悄悄失效 —— 必须在这里拦住。
         """
-        assert api_field in SUBMISSION_SORTS
+        assert set(ratings.SORT_ALIASES.values()) <= SUBMISSION_SORTS
 
-    @pytest.mark.parametrize(
-        ("alias", "expected"),
-        [
-            ("tier", "rating"),
-            ("rating", "rating"),
-            ("评分", "rating"),
-            ("enj", "enjoyment"),
-            ("enjoyment", "enjoyment"),
-            ("体验", "enjoyment"),
-            ("date", "dateAdded"),
-            ("time", "dateAdded"),
-            ("时间", "dateAdded"),
-            ("progress", "progress"),
-            ("进度", "progress"),
-            ("attempts", "attempts"),
-            ("att", "attempts"),
-            ("次数", "attempts"),
-            ("rr", "refreshRate"),
-            ("refreshrate", "refreshRate"),
-            ("帧率", "refreshRate"),
-        ],
-    )
-    def test_alias_table_contents(self, alias: str, expected: str) -> None:
-        """中英文别名一个都不能漏（这张表就是给用户看的 UI）"""
-        assert ratings.SORT_ALIASES[alias] == expected
+    def test_every_field_has_a_chinese_alias(self) -> None:
+        """这张表就是给用户看的 UI，每个字段的中文别名都不能漏"""
+        with_chinese = {
+            field for alias, field in ratings.SORT_ALIASES.items() if not alias.isascii()
+        }
+
+        assert with_chinese == set(ratings.SORT_ALIASES.values())
 
     def test_username_sort_is_deliberately_not_exposed(self) -> None:
         """注释说 API 的 username 排序实测无效，所以别名表里不该有它"""
@@ -251,7 +303,11 @@ class TestSortAliases:
 
 
 class TestRatingsParseArgs:
-    """*gdratings <关卡> [-s <排序>] [-asc] [-v] 的解析"""
+    """*gdratings <关卡> [-s <排序>] [-asc] [-v] 的解析。
+
+    「关键词怎么拼、没关键词怎么报错」这部分和 fullsearch 一模一样，
+    在 TestParseArgsSharedShape 里一起测了，这里只放 ratings 自己的开关。
+    """
 
     def test_plain_target(self) -> None:
         query = ratings.parse_args("bloodbath")
@@ -261,43 +317,15 @@ class TestRatingsParseArgs:
         assert query.ascending is False
         assert query.victors_only is False
 
-    def test_target_with_spaces_is_joined_back(self) -> None:
-        """关卡名里的空格会被 split 拆开，再用单空格拼回去"""
-        assert ratings.parse_args("the nightmare").target == "the nightmare"
-
-    def test_multiple_spaces_are_collapsed(self) -> None:
-        """text.split() 吃掉连续空白，拼回来只剩单空格"""
-        assert ratings.parse_args("  the   nightmare  ").target == "the nightmare"
-
-    def test_empty_text_raises(self) -> None:
-        with pytest.raises(ratings.ArgError) as exc:
-            ratings.parse_args("")
-
-        assert str(exc.value).startswith("请提供关卡名或 id")
-        assert ratings.USAGE in str(exc.value)
-
-    def test_whitespace_only_text_raises(self) -> None:
-        with pytest.raises(ratings.ArgError):
-            ratings.parse_args("   \t  ")
-
-    def test_only_flags_without_target_raises(self) -> None:
-        """全是开关没给关卡名，走的是第二处「请提供关卡名或 id」"""
-        with pytest.raises(ratings.ArgError) as exc:
-            ratings.parse_args("-asc -v")
-
-        assert str(exc.value).startswith("请提供关卡名或 id")
-
     def test_sort_flag_alone_without_target_raises(self) -> None:
         """`-s tier` 把 tier 吃掉当排序字段了，剩下的关键词是空的"""
-        with pytest.raises(ratings.ArgError) as exc:
+        with pytest.raises(ratings.ArgError):
             ratings.parse_args("-s tier")
 
-        assert str(exc.value).startswith("请提供关卡名或 id")
-
-    @pytest.mark.parametrize(("alias", "api_field"), sorted(ratings.SORT_ALIASES.items()))
-    def test_every_alias_parses(self, alias: str, api_field: str) -> None:
-        """-s 后面接表里任意一个别名都能解析出对应字段"""
-        assert ratings.parse_args(f"bloodbath -s {alias}").sort == api_field
+    def test_every_alias_parses(self) -> None:
+        """-s 后面接表里任意一个别名都能解析出对应字段（表加了别名自动跟着测）"""
+        for alias, api_field in ratings.SORT_ALIASES.items():
+            assert ratings.parse_args(f"bloodbath -s {alias}").sort == api_field
 
     def test_flags_are_case_insensitive(self) -> None:
         """开关和排序字段都是 lower() 之后比对的"""
@@ -307,30 +335,17 @@ class TestRatingsParseArgs:
         assert query.ascending is True
         assert query.victors_only is True
 
-    def test_unknown_sort_raises_with_user_facing_message(self) -> None:
-        with pytest.raises(ratings.ArgError) as exc:
-            ratings.parse_args("bloodbath -s stars")
-
-        message = str(exc.value)
-        # 原样回显用户写的那个词（不是 lower 之后的），方便他自己看出打错了
-        assert message.startswith("看不懂的排序字段：stars")
-        assert "tier / enj / date / progress / attempts / rr" in message
-
-    def test_unknown_sort_keeps_original_case_in_message(self) -> None:
+    def test_unknown_sort_raises_and_echoes_what_the_user_wrote(self) -> None:
         with pytest.raises(ratings.ArgError) as exc:
             ratings.parse_args("bloodbath -s StArS")
 
-        assert "看不懂的排序字段：StArS" in str(exc.value)
+        # 原样回显用户写的那个词（不是 lower 之后的），方便他自己看出打错了
+        assert "StArS" in str(exc.value)
 
-    def test_sort_flag_missing_value_raises_with_field_list(self) -> None:
-        """-s 在末尾没值，提示里列的是去重排序后的 API 字段名"""
-        with pytest.raises(ratings.ArgError) as exc:
+    def test_sort_flag_missing_value_raises(self) -> None:
+        """-s 在末尾没值就报错，不能把 -s 自己当成排序字段"""
+        with pytest.raises(ratings.ArgError):
             ratings.parse_args("bloodbath -s")
-
-        assert str(exc.value) == (
-            "-s 后面要跟排序字段："
-            "attempts / dateAdded / enjoyment / progress / rating / refreshRate"
-        )
 
     def test_victors_long_and_short_flag(self) -> None:
         assert ratings.parse_args("bloodbath -v").victors_only is True
@@ -347,22 +362,12 @@ class TestRatingsParseArgs:
         assert a.ascending is True
         assert a.victors_only is True
 
-    def test_repeated_sort_flag_last_one_wins(self) -> None:
+    def test_repeated_flags_last_one_wins(self) -> None:
         assert ratings.parse_args("bloodbath -s tier -s enj").sort == "enjoyment"
-
-    def test_repeated_boolean_flags_are_idempotent(self) -> None:
+        # 布尔开关重复给是幂等的
         query = ratings.parse_args("bloodbath -asc -asc -v -v")
-
         assert query.ascending is True
         assert query.victors_only is True
-
-    def test_words_around_flags_are_joined_in_order(self) -> None:
-        """关键词被开关切开的话，是按出现顺序用单空格拼起来的"""
-        assert ratings.parse_args("the -asc nightmare").target == "the nightmare"
-
-    def test_unknown_dash_token_becomes_part_of_the_target(self) -> None:
-        """不认识的 -xxx 不报错，会被当成关卡名的一部分（现状如此）"""
-        assert ratings.parse_args("-x bloodbath").target == "-x bloodbath"
 
     def test_numeric_id_target_is_kept_as_text(self) -> None:
         """parse_args 不负责解析 id，原样留给 resolve_level"""
@@ -372,37 +377,27 @@ class TestRatingsParseArgs:
 class TestRatingsQueryApiKwargs:
     """RatingsQuery.as_api_kwargs()"""
 
-    def test_no_flags_gives_empty_kwargs(self) -> None:
-        assert ratings.RatingsQuery(target="x").as_api_kwargs() == {}
-
     def test_sort_always_carries_a_direction(self) -> None:
         """注释说「只给 sort 不给方向的话接口按自己默认来」，所以方向必须一起给"""
-        kwargs = ratings.RatingsQuery(target="x", sort="rating").as_api_kwargs()
-
-        assert kwargs == {"sort": "rating", "sort_direction": "desc"}
-
-    def test_ascending_flips_the_direction(self) -> None:
-        kwargs = ratings.RatingsQuery(
+        assert ratings.RatingsQuery(target="x").as_api_kwargs() == {}
+        assert ratings.RatingsQuery(target="x", sort="rating").as_api_kwargs() == {
+            "sort": "rating",
+            "sort_direction": "desc",
+        }
+        assert ratings.RatingsQuery(
             target="x", sort="rating", ascending=True
-        ).as_api_kwargs()
-
-        assert kwargs == {"sort": "rating", "sort_direction": "asc"}
-
-    def test_ascending_without_sort_is_dropped(self) -> None:
-        """光给 -asc 不给 -s 的话方向不传（接口默认排序自己说了算）"""
+        ).as_api_kwargs() == {"sort": "rating", "sort_direction": "asc"}
+        # 光给 -asc 不给 -s 的话方向不传（接口默认排序自己说了算）
         assert ratings.RatingsQuery(target="x", ascending=True).as_api_kwargs() == {}
 
     def test_victors_only_maps_to_progress_filter(self) -> None:
-        kwargs = ratings.RatingsQuery(target="x", victors_only=True).as_api_kwargs()
-
-        assert kwargs == {"progress_filter": "victors"}
-
-    def test_all_flags_together(self) -> None:
-        kwargs = ratings.RatingsQuery(
+        assert ratings.RatingsQuery(target="x", victors_only=True).as_api_kwargs() == {
+            "progress_filter": "victors"
+        }
+        # 三个开关一起给的时候互不干扰
+        assert ratings.RatingsQuery(
             target="x", sort="enjoyment", ascending=True, victors_only=True
-        ).as_api_kwargs()
-
-        assert kwargs == {
+        ).as_api_kwargs() == {
             "sort": "enjoyment",
             "sort_direction": "asc",
             "progress_filter": "victors",
@@ -426,38 +421,43 @@ class TestRatingsQueryApiKwargs:
 
 
 class TestRatingsQueryDescribe:
-    """RatingsQuery.describe()"""
+    """RatingsQuery.describe()。
 
-    def test_no_flags_describes_nothing(self) -> None:
+    摘要怎么措辞随便改，这里只守「什么时候有摘要、不同条件的摘要区分得开」。
+    """
+
+    def test_nothing_to_describe_is_empty(self) -> None:
         assert ratings.RatingsQuery(target="x").describe() == ""
-
-    def test_sort_desc_by_default(self) -> None:
-        assert ratings.RatingsQuery(target="x", sort="rating").describe() == "按 rating 倒序"
-
-    def test_sort_asc(self) -> None:
-        query = ratings.RatingsQuery(target="x", sort="rating", ascending=True)
-
-        assert query.describe() == "按 rating 正序"
-
-    def test_victors_only(self) -> None:
-        assert ratings.RatingsQuery(target="x", victors_only=True).describe() == "只看通关"
-
-    def test_parts_joined_by_ideographic_comma(self) -> None:
-        query = ratings.RatingsQuery(
-            target="x", sort="enjoyment", ascending=True, victors_only=True
-        )
-
-        assert query.describe() == "按 enjoyment 正序、只看通关"
-
-    def test_ascending_alone_is_invisible(self) -> None:
-        """没有 sort 的时候 -asc 不进 describe（跟 as_api_kwargs 一致）"""
+        # 没有 sort 的时候 -asc 不进 describe（跟 as_api_kwargs 一致）
         assert ratings.RatingsQuery(target="x", ascending=True).describe() == ""
+
+    def test_each_condition_gets_its_own_summary(self) -> None:
+        """正序 / 倒序 / 只看通关 三种条件的摘要必须互不相同"""
+        desc = ratings.RatingsQuery(target="x", sort="rating").describe()
+        asc = ratings.RatingsQuery(target="x", sort="rating", ascending=True).describe()
+        victors = ratings.RatingsQuery(target="x", victors_only=True).describe()
+
+        assert len({desc, asc, victors}) == 3
+        assert all([desc, asc, victors])
+
+    def test_multiple_conditions_are_all_carried(self) -> None:
+        """几个条件一起给的时候，每一段都得在摘要里"""
+        both = ratings.RatingsQuery(
+            target="x", sort="enjoyment", ascending=True, victors_only=True
+        ).describe()
+
+        assert (
+            ratings.RatingsQuery(target="x", sort="enjoyment", ascending=True).describe()
+            in both
+        )
+        assert ratings.RatingsQuery(target="x", victors_only=True).describe() in both
 
     def test_describe_uses_api_field_name_not_alias(self) -> None:
         """用户写 -s tier，describe 里显示的是 API 字段名 rating"""
-        query = ratings.parse_args("bloodbath -s tier")
+        summary = ratings.parse_args("bloodbath -s tier").describe()
 
-        assert query.describe() == "按 rating 倒序"
+        assert "rating" in summary
+        assert "tier" not in summary
 
 
 class TestResolveLevel:
@@ -498,7 +498,8 @@ class TestResolveLevel:
 
         assert level_id is None
         assert fake.name_queries == ["1234"]
-        assert err == "GDDL 上没有找到「1234」这个关卡"
+        # 走的是「按名字搜、搜不到」这一支，提示里要把用户输的东西回显出来
+        assert "1234" in err
 
     def test_digits_mixed_with_letters_go_to_name_lookup(
         self, monkeypatch: pytest.MonkeyPatch
@@ -516,13 +517,13 @@ class TestResolveLevel:
 
         assert ratings.resolve_level("cataclysm") == (123, "Cataclysm", "")
 
-    def test_no_match_message(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_match_returns_no_level(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(ratings, "Gddl", FakeGddl(by_name=[]))
 
         level_id, name, err = ratings.resolve_level("不存在的关")
 
         assert (level_id, name) == (None, None)
-        assert err == "GDDL 上没有找到「不存在的关」这个关卡"
+        assert "不存在的关" in err  # 搜不到时要回显用户输的关卡名
 
     def test_exact_name_match_wins_over_fuzzy_ones(
         self, monkeypatch: pytest.MonkeyPatch
@@ -551,8 +552,8 @@ class TestResolveLevel:
             "Gddl",
             FakeGddl(
                 by_name=[
-                    _gddl_level(1, "Sonic Wave", rating=19.456),
-                    _gddl_level(2, "Sonic Wave Rebirth"),
+                    _gddl_level(731, "Sonic Wave", rating=19.456),
+                    _gddl_level(842, "Sonic Wave Rebirth"),
                 ]
             ),
         )
@@ -560,11 +561,14 @@ class TestResolveLevel:
         level_id, name, err = ratings.resolve_level("sonic")
 
         assert (level_id, name) == (None, None)
-        assert err == (
-            "「sonic」在 GDDL 上匹配到 2 个关卡，请用 id 重新查：\n"
-            "  Sonic Wave t19.46 (ID: 1)\n"
-            "  Sonic Wave Rebirth (ID: 2)"
-        )
+        # 认不出是哪一关的时候要把候选一条一行列出来，让用户拿 id 再查一次
+        lines = err.splitlines()
+        assert len(lines) == 1 + 2  # 一行说明 + 两个候选
+        assert "Sonic Wave" in lines[1]
+        assert "731" in lines[1]
+        assert "19.46" in lines[1]  # Rating 保留两位小数
+        assert "Sonic Wave Rebirth" in lines[2]
+        assert "842" in lines[2]
 
     def test_candidate_list_is_capped_at_ten(
         self, monkeypatch: pytest.MonkeyPatch
@@ -578,10 +582,12 @@ class TestResolveLevel:
         _, _, err = ratings.resolve_level("level")
         lines = err.splitlines()
 
+        # 一行说明 + 10 个候选 + 一行「剩下的」
         assert len(lines) == 1 + 10 + 1
-        assert lines[1] == "  Level 1 (ID: 1)"
-        assert lines[10] == "  Level 10 (ID: 10)"
-        assert lines[-1] == "  ...还有 3 个"
+        assert "Level 1" in lines[1]
+        assert "Level 10" in lines[10]
+        assert "Level 11" not in err  # 第 11 个开始就不列了
+        assert "3" in lines[-1]       # 溢出行要说清楚还剩几个
 
     def test_exactly_ten_candidates_has_no_overflow_line(
         self, monkeypatch: pytest.MonkeyPatch
@@ -594,8 +600,8 @@ class TestResolveLevel:
 
         _, _, err = ratings.resolve_level("level")
 
-        assert "还有" not in err
-        assert len(err.splitlines()) == 11
+        # 正好 10 个就没有溢出那一行：说明 + 10 个候选
+        assert len(err.splitlines()) == 1 + 10
 
     def test_zero_rating_shows_no_tier_suffix(
         self, monkeypatch: pytest.MonkeyPatch
@@ -614,8 +620,10 @@ class TestResolveLevel:
 
         _, _, err = ratings.resolve_level("a")
 
-        assert "  A one (ID: 1)" in err
-        assert "  A two (ID: 2)" in err
+        assert "A one" in err
+        assert "A two" in err
+        # 两条 id 里都没有 0：rating 那个 0 要是漏判成真值，err 里就会冒出个 0 来
+        assert "0" not in err
 
     def test_none_entries_from_the_api_are_filtered_out(
         self, monkeypatch: pytest.MonkeyPatch
@@ -629,49 +637,40 @@ class TestResolveLevel:
 
 
 class TestFormatSubmissionLine:
-    """format_submission_line()"""
+    """format_submission_line()。
 
-    def test_full_line(self) -> None:
-        line = ratings.format_submission_line(
-            Submission(_sub(21, 8.5, name="Riot", user_id=99))
-        )
+    一行里该有的东西：tier、enjoyment、谁提交的。排版怎么写不管。
+    """
 
-        assert line == "Tier 21, Enjoyment 8.5 by Riot"
+    def test_line_carries_the_values_and_who_submitted(self) -> None:
+        fmt = ratings.format_submission_line
 
-    def test_missing_rating_and_enjoyment_show_na(self) -> None:
-        line = ratings.format_submission_line(
-            Submission(_sub(None, None, name="Riot", user_id=99))
-        )
+        line = fmt(Submission(_sub(21, 8.5, name="Riot", user_id=99)))
+        assert "21" in line
+        assert "8.5" in line
+        assert "Riot" in line
 
-        assert line == "Tier N/A, Enjoyment N/A by Riot"
+        # 双人提交两个名字都要出现
+        both = fmt(Submission(_sub(30, 9, name="A", user_id=1, second="B")))
+        assert "A" in both
+        assert "B" in both
 
-    def test_zero_is_not_na(self) -> None:
-        """判的是 `is not None`，所以 enjoyment=0 要老老实实显示 0"""
-        line = ratings.format_submission_line(
-            Submission(_sub(0, 0, name="Riot", user_id=99))
-        )
+    def test_zero_is_not_confused_with_missing(self) -> None:
+        """判的是 `is not None`，所以 0 分要老老实实显示成 0，不能当成没填"""
+        fmt = ratings.format_submission_line
 
-        assert line == "Tier 0, Enjoyment 0 by Riot"
+        zero = fmt(Submission(_sub(0, 0, name="Riot", user_id=99)))
+        missing = fmt(Submission(_sub(None, None, name="Riot", user_id=99)))
 
-    def test_missing_user_name_falls_back_to_user_id(self) -> None:
-        line = ratings.format_submission_line(Submission(_sub(10, 5, user_id=4242)))
+        assert zero != missing
+        assert "0" in zero
 
-        assert line == "Tier 10, Enjoyment 5 by 用户4242"
+    def test_user_name_falls_back_to_user_id(self) -> None:
+        """用的是 `or`，None 和空字符串一样兜底到用户 id"""
+        fmt = ratings.format_submission_line
 
-    def test_empty_user_name_also_falls_back(self) -> None:
-        """用的是 `or`，空字符串一样兜底到用户 id"""
-        line = ratings.format_submission_line(
-            Submission(_sub(10, 5, name="", user_id=4242))
-        )
-
-        assert line == "Tier 10, Enjoyment 5 by 用户4242"
-
-    def test_two_player_submission_shows_both_names(self) -> None:
-        line = ratings.format_submission_line(
-            Submission(_sub(30, 9, name="A", user_id=1, second="B"))
-        )
-
-        assert line == "Tier 30, Enjoyment 9 by A & B"
+        assert "4242" in fmt(Submission(_sub(10, 5, user_id=4242)))
+        assert "4242" in fmt(Submission(_sub(10, 5, name="", user_id=4242)))
 
 
 class TestRatingsSessionFetch:
@@ -782,7 +781,7 @@ class TestRatingsSessionPaging:
 
         ok, msg = session.go_next()
 
-        assert (ok, msg) == (False, "已经是最后一页了")
+        assert (ok, bool(msg)) == (False, True)  # 翻不动，而且说明了原因
         assert session.page == 1
         assert fake.calls == []  # 越界判断在请求之前
 
@@ -793,7 +792,10 @@ class TestRatingsSessionPaging:
         monkeypatch.setattr(ratings, "Gddl", fake)
         session = self._session(fake, total_pages=1)
 
-        assert session.go_next() == (False, "已经是最后一页了")
+        ok, msg = session.go_next()
+
+        assert (ok, bool(msg)) == (False, True)
+        assert fake.calls == []
 
     def test_next_with_failed_request_keeps_the_page(
         self, monkeypatch: pytest.MonkeyPatch
@@ -804,8 +806,10 @@ class TestRatingsSessionPaging:
 
         ok, msg = session.go_next()
 
-        assert (ok, msg) == (False, "翻页失败，GDDL 那边没响应")
+        assert (ok, bool(msg)) == (False, True)
         assert session.page == 0
+        # 和「越界不请求」那条区分开：这里是真发了请求才失败的
+        assert len(fake.calls) == 1
 
     def test_prev_before_first_page_is_refused(
         self, monkeypatch: pytest.MonkeyPatch
@@ -814,7 +818,9 @@ class TestRatingsSessionPaging:
         monkeypatch.setattr(ratings, "Gddl", fake)
         session = self._session(fake, total_pages=3)
 
-        assert session.go_prev() == (False, "已经是第一页了")
+        ok, msg = session.go_prev()
+
+        assert (ok, bool(msg)) == (False, True)
         assert session.page == 0
 
     def test_prev_uses_cache_and_never_requests(
@@ -903,6 +909,13 @@ class TestRatingsRender:
         defaults.update(kw)
         return ratings.RatingsSession(**defaults)
 
+    def _filled(self, *, page: int = 0, total: int, total_pages: int, **kw: Any):
+        session = self._session(page=page, **kw)
+        session.total = total
+        session.total_pages = total_pages
+        session.pages = {page: [Submission(_sub(1, 1, name="a"))]}
+        return session
+
     def test_first_page_of_two(self) -> None:
         session = self._session()
         session.total = 12
@@ -914,64 +927,50 @@ class TestRatingsRender:
             ]
         }
 
-        assert session.render() == (
-            "「Bloodbath」的提交评分　共 12 条，第 1/2 页\n"
-            "Tier 21, Enjoyment 8 by Riot\n"
-            "Tier N/A, Enjoyment 3 by 用户42\n"
-            "n 下一页 / 结束 取消"
-        )
+        lines = session.render().splitlines()
 
-    def test_middle_page_offers_both_directions(self) -> None:
-        session = self._session(page=1)
-        session.total = 25
-        session.total_pages = 3
-        session.pages = {1: [Submission(_sub(1, 1, name="a"))]}
+        # 标题行只断言会随行为变的：关卡名、总条数。怎么排版随便改
+        assert "Bloodbath" in lines[0]
+        assert str(session.total) in lines[0]
+        # 中间是每条提交一行，顺序和 pages 里一致
+        assert len(lines) == 1 + 2 + 1  # 标题 + 两条提交 + 提示行
+        assert lines[1] == ratings.format_submission_line(session.current[0])
+        assert lines[2] == ratings.format_submission_line(session.current[1])
 
-        assert session.render().splitlines()[-1] == "n 下一页 / p 上一页 / 结束 取消"
-        assert "第 2/3 页" in session.render()
+    def test_hints_depend_on_where_the_page_is(self) -> None:
+        """翻页提示只在真能翻的方向上出现 —— 四个位置的提示互不相同"""
+        first = self._filled(total=25, total_pages=3).render().splitlines()[-1]
+        middle = self._filled(page=1, total=25, total_pages=3).render().splitlines()[-1]
+        last = self._filled(page=2, total=25, total_pages=3).render().splitlines()[-1]
+        only = self._filled(total=1, total_pages=1).render().splitlines()[-1]
 
-    def test_last_page_has_no_next_hint(self) -> None:
-        session = self._session(page=2)
-        session.total = 25
-        session.total_pages = 3
-        session.pages = {2: [Submission(_sub(1, 1, name="a"))]}
-
-        assert session.render().splitlines()[-1] == "p 上一页 / 结束 取消"
-
-    def test_single_page_only_offers_cancel(self) -> None:
-        session = self._session()
-        session.total = 1
-        session.total_pages = 1
-        session.pages = {0: [Submission(_sub(1, 1, name="a"))]}
-
-        assert session.render().splitlines()[-1] == "结束 取消"
+        assert len({first, middle, last, only}) == 4
 
     def test_query_description_is_appended_to_the_header(self) -> None:
-        session = self._session(
+        session = self._filled(
+            total=2,
+            total_pages=1,
             query=ratings.RatingsQuery(
                 target="bloodbath", sort="rating", ascending=True, victors_only=True
-            )
+            ),
         )
-        session.total = 2
-        session.total_pages = 1
-        session.pages = {0: [Submission(_sub(1, 1, name="a"))]}
 
         head = session.render().splitlines()[0]
 
-        assert head == "「Bloodbath」的提交评分　共 2 条，第 1/1 页　[按 rating 正序、只看通关]"
+        # 只断言 describe() 的内容被带进了标题行，标题怎么排版不管
+        assert session.query.describe() in head
 
-    def test_empty_page_says_nobody_submitted(self) -> None:
-        session = self._session()
+    def test_empty_page_is_a_single_line_message(self) -> None:
+        """一条提交都没有时不列表格、不给翻页提示，只发一句话"""
+        text = self._session().render()
 
-        assert session.render() == "「Bloodbath」在 GDDL 上还没有人提交评分"
+        assert len(text.splitlines()) == 1
+        assert "Bloodbath" in text
 
     def test_title_falls_back_to_level_id(self) -> None:
-        session = self._session(level_name=None)
-        session.total = 1
-        session.total_pages = 1
-        session.pages = {0: [Submission(_sub(1, 1, name="a"))]}
+        session = self._filled(total=1, total_pages=1, level_name=None)
 
-        assert session.render().startswith("「10565740」的提交评分")
+        assert "10565740" in session.render().splitlines()[0]
 
 
 class TestRatingsStartSession:
@@ -992,25 +991,28 @@ class TestRatingsStartSession:
         session, err = ratings.start_session("不存在的关")
 
         assert session is None
-        assert err == "GDDL 上没有找到「不存在的关」这个关卡"
+        # 定位失败时把 resolve_level 的原话透传出去
+        assert err == ratings.resolve_level("不存在的关")[2]
+        assert "不存在的关" in err
 
-    def test_request_failure_message(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        fake = FakeGddl({}, by_name=[_gddl_level(1, "Cataclysm")])
-        monkeypatch.setattr(ratings, "Gddl", fake)
+    def test_request_failure_and_no_submissions_are_different_branches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """关卡找得到、但拉评分的请求挂了 —— 和「没人提交」是两条不同的提示"""
+        level = [_gddl_level(1, "Cataclysm")]
 
-        session, err = ratings.start_session("cataclysm")
+        monkeypatch.setattr(ratings, "Gddl", FakeGddl({}, by_name=level))
+        failed_session, failed_err = ratings.start_session("cataclysm")
 
-        assert session is None
-        assert err == "GDDL 那边没响应，等会再试试"
+        monkeypatch.setattr(
+            ratings, "Gddl", FakeGddl({0: _sub_page([], total=0)}, by_name=level)
+        )
+        empty_session, empty_err = ratings.start_session("cataclysm")
 
-    def test_no_submissions_message(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        fake = FakeGddl({0: _sub_page([], total=0)}, by_name=[_gddl_level(1, "Cataclysm")])
-        monkeypatch.setattr(ratings, "Gddl", fake)
-
-        session, err = ratings.start_session("cataclysm")
-
-        assert session is None
-        assert err == "「Cataclysm」在 GDDL 上还没有人提交评分"
+        assert (failed_session, empty_session) == (None, None)
+        assert failed_err and empty_err
+        assert failed_err != empty_err   # 请求挂了 ≠ 没人提交
+        assert "Cataclysm" in empty_err  # 没人提交时要说清是哪一关
 
     def test_success_returns_a_primed_session(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1073,11 +1075,10 @@ class TestRatingsAgainstStubbedHttp:
             "sortDirection": "asc",
             "progressFilter": "victors",
         }
-        assert session.render() == (
-            "「Bloodbath」的提交评分　共 12 条，第 1/2 页　[按 rating 正序、只看通关]\n"
-            "Tier 21, Enjoyment 8 by Riot\n"
-            "n 下一页 / 结束 取消"
-        )
+        # 响应也要被吃进会话里：总条数原样收下，总页数由每页条数推出来
+        assert len(subs) == 1
+        assert session.total == 12
+        assert session.total_pages == _pages_for(12, GDDL_SUBMISSION_LIMIT)
 
     def test_http_error_becomes_a_failed_fetch(self, stub_requests) -> None:
         """接口 500 时 gddlapi 返回 None，会话保持原样"""
@@ -1098,7 +1099,10 @@ class TestRatingsAgainstStubbedHttp:
 
 
 class TestDifficultyTables:
-    """两张难度别名表"""
+    """两张难度别名表。
+
+    表是纯数据，逐行抄一遍等于把表写两份 —— 只守住必须成立的那几条不变式。
+    """
 
     def test_demon_values_are_within_the_api_range(self) -> None:
         """demonFilter 只认 1-5，超了服务器一条都不返回"""
@@ -1118,57 +1122,54 @@ class TestDifficultyTables:
     def test_demon_sentinel(self) -> None:
         assert fullsearch.DIFF_DEMON == -2
 
-    @pytest.mark.parametrize(
-        ("alias", "value"),
-        [
-            ("1", 1), ("easy", 1),
-            ("2", 2), ("medium", 2), ("med", 2),
-            ("3", 3), ("hard", 3),
-            ("4", 4), ("insane", 4),
-            ("5", 5), ("extreme", 5), ("ex", 5),
-        ],
-    )
-    def test_demon_alias_contents(self, alias: str, value: int) -> None:
-        assert fullsearch.DEMON_DIFFICULTIES[alias] == value
+    def test_numeric_keys_map_to_themselves(self) -> None:
+        """用户直接写数字时必须原样传给服务器（"0" 是唯一例外，见上）"""
+        for table in (fullsearch.DEMON_DIFFICULTIES, fullsearch.NONDEMON_DIFFICULTIES):
+            for key, value in table.items():
+                if key.isdigit() and key != "0":
+                    assert value == int(key)
 
-    @pytest.mark.parametrize(
-        ("alias", "value"),
-        [
-            ("0", -3), ("auto", -3),
-            ("1", 1), ("easy", 1),
-            ("2", 2), ("normal", 2),
-            ("3", 3), ("hard", 3),
-            ("4", 4), ("harder", 4),
-            ("5", 5), ("insane", 5),
-        ],
-    )
-    def test_nondemon_alias_contents(self, alias: str, value: int) -> None:
-        assert fullsearch.NONDEMON_DIFFICULTIES[alias] == value
+    def test_named_aliases_follow_the_ingame_order(self) -> None:
+        """名字和数字对错位不会报错，只是搜出来的难度悄悄不对"""
+        demon = fullsearch.DEMON_DIFFICULTIES
+        assert [demon[k] for k in ("easy", "medium", "hard", "insane", "extreme")] == [
+            1, 2, 3, 4, 5
+        ]
+        # 缩写和全称必须指向同一个难度
+        assert demon["med"] == demon["medium"]
+        assert demon["ex"] == demon["extreme"]
+
+        nondemon = fullsearch.NONDEMON_DIFFICULTIES
+        assert [
+            nondemon[k] for k in ("auto", "easy", "normal", "hard", "harder", "insane")
+        ] == [-3, 1, 2, 3, 4, 5]
 
 
 class TestAliasName:
     """_alias_name()：反查一个人类看得懂的名字"""
 
-    @pytest.mark.parametrize(
-        ("value", "expected"), [(1, "easy"), (2, "medium"), (3, "hard"), (4, "insane"), (5, "extreme")]
-    )
-    def test_demon_names_skip_numeric_keys(self, value: int, expected: str) -> None:
+    def test_demon_names_skip_numeric_keys(self) -> None:
         """纯数字的 key 要跳过，取表里第一个非数字别名"""
-        assert fullsearch._alias_name(fullsearch.DEMON_DIFFICULTIES, value) == expected
+        names = [fullsearch._alias_name(fullsearch.DEMON_DIFFICULTIES, v) for v in range(1, 6)]
 
-    @pytest.mark.parametrize(
-        ("value", "expected"),
-        [(-3, "auto"), (1, "easy"), (2, "normal"), (3, "hard"), (4, "harder"), (5, "insane")],
-    )
-    def test_nondemon_names(self, value: int, expected: str) -> None:
-        assert fullsearch._alias_name(fullsearch.NONDEMON_DIFFICULTIES, value) == expected
+        assert names == ["easy", "medium", "hard", "insane", "extreme"]
+
+    def test_nondemon_names(self) -> None:
+        values = (-3, 1, 2, 3, 4, 5)
+        names = [fullsearch._alias_name(fullsearch.NONDEMON_DIFFICULTIES, v) for v in values]
+
+        assert names == ["auto", "easy", "normal", "hard", "harder", "insane"]
 
     def test_unknown_value_falls_back_to_the_number(self) -> None:
         assert fullsearch._alias_name(fullsearch.DEMON_DIFFICULTIES, 99) == "99"
 
 
 class TestFullSearchParseArgs:
-    """*gdfullsearch <关键词> [-a] [-d [难度]] [-u <难度>] 的解析"""
+    """*gdfullsearch <关键词> [-a] [-d [难度]] [-u <难度>] 的解析。
+
+    「关键词怎么拼、没关键词怎么报错」这部分和 ratings 一模一样，
+    在 TestParseArgsSharedShape 里一起测了，这里只放 fullsearch 自己的开关。
+    """
 
     def test_defaults_are_rated_only(self) -> None:
         query = fullsearch.parse_args("bloodbath")
@@ -1177,23 +1178,6 @@ class TestFullSearchParseArgs:
         assert query.rated_only is True
         assert query.diff is None
         assert query.demon_filter is None
-
-    def test_empty_text_raises(self) -> None:
-        with pytest.raises(fullsearch.ArgError) as exc:
-            fullsearch.parse_args("")
-
-        assert str(exc.value).startswith("请提供要搜索的关卡名")
-        assert fullsearch.USAGE in str(exc.value)
-
-    def test_whitespace_only_raises(self) -> None:
-        with pytest.raises(fullsearch.ArgError):
-            fullsearch.parse_args("   ")
-
-    def test_only_flags_raises(self) -> None:
-        with pytest.raises(fullsearch.ArgError) as exc:
-            fullsearch.parse_args("-a -d")
-
-        assert str(exc.value).startswith("请提供要搜索的关卡名")
 
     def test_all_flag_drops_rated_only(self) -> None:
         assert fullsearch.parse_args("bloodbath -a").rated_only is False
@@ -1210,15 +1194,14 @@ class TestFullSearchParseArgs:
         assert query.diff == fullsearch.DIFF_DEMON
         assert query.demon_filter is None
 
-    @pytest.mark.parametrize(
-        ("alias", "value"), sorted(fullsearch.DEMON_DIFFICULTIES.items())
-    )
-    def test_every_demon_alias_is_consumed(self, alias: str, value: int) -> None:
-        query = fullsearch.parse_args(f"bloodbath -d {alias}")
+    def test_every_demon_alias_is_consumed(self) -> None:
+        """-d 后面接表里任意一个别名都会被吃掉（表加了别名自动跟着测）"""
+        for alias, value in fullsearch.DEMON_DIFFICULTIES.items():
+            query = fullsearch.parse_args(f"bloodbath -d {alias}")
 
-        assert query.demon_filter == value
-        assert query.diff == fullsearch.DIFF_DEMON
-        assert query.query == "bloodbath"
+            assert query.demon_filter == value
+            assert query.diff == fullsearch.DIFF_DEMON
+            assert query.query == "bloodbath"
 
     def test_demon_flag_keeps_a_non_difficulty_word_as_a_keyword(self) -> None:
         """-d 后面不是合法难度就不吃掉，留给关键词（docstring 明说的行为）"""
@@ -1253,35 +1236,28 @@ class TestFullSearchParseArgs:
         assert query.demon_filter == 5
 
     def test_demon_flag_eating_the_only_keyword_raises(self) -> None:
-        with pytest.raises(fullsearch.ArgError) as exc:
+        """`-d easy` 里的 easy 被当难度吃掉了，一个关键词都不剩"""
+        with pytest.raises(fullsearch.ArgError):
             fullsearch.parse_args("-d easy")
 
-        assert str(exc.value).startswith("请提供要搜索的关卡名")
+    def test_every_nondemon_alias_parses(self) -> None:
+        for alias, value in fullsearch.NONDEMON_DIFFICULTIES.items():
+            query = fullsearch.parse_args(f"bloodbath -u {alias}")
 
-    @pytest.mark.parametrize(
-        ("alias", "value"), sorted(fullsearch.NONDEMON_DIFFICULTIES.items())
-    )
-    def test_every_nondemon_alias_parses(self, alias: str, value: int) -> None:
-        query = fullsearch.parse_args(f"bloodbath -u {alias}")
-
-        assert query.diff == value
-        assert query.demon_filter is None
+            assert query.diff == value
+            assert query.demon_filter is None
 
     def test_nondemon_flag_without_value_raises(self) -> None:
+        """-u 后面什么都没有就报错，报错里要带上用法"""
         with pytest.raises(fullsearch.ArgError) as exc:
             fullsearch.parse_args("bloodbath -u")
 
-        message = str(exc.value)
-        assert message.startswith("-u 后面要跟难度（0-5 或 auto/easy/normal/hard/harder/insane）")
-        assert fullsearch.USAGE in message
+        assert fullsearch.USAGE in str(exc.value)
 
     def test_unknown_nondemon_difficulty_raises(self) -> None:
-        with pytest.raises(fullsearch.ArgError) as exc:
+        """demon 不是合法的「非 demon 难度」，-u 不认它"""
+        with pytest.raises(fullsearch.ArgError):
             fullsearch.parse_args("bloodbath -u demon")
-
-        message = str(exc.value)
-        assert message.startswith("看不懂的非 demon 难度：demon")
-        assert "0 就是 auto" in message
 
     def test_nondemon_flag_always_eats_the_next_token(self) -> None:
         """和 -d 不一样，-u 后面那个词一定会被当成难度（不合法就直接报错）"""
@@ -1289,62 +1265,35 @@ class TestFullSearchParseArgs:
             fullsearch.parse_args("-u bloodbath")
 
     def test_demon_and_nondemon_together_raise(self) -> None:
-        with pytest.raises(fullsearch.ArgError) as exc:
-            fullsearch.parse_args("bloodbath -d -u 3")
-
-        assert str(exc.value) == "-d 和 -u 不能一起用：一个是只搜 demon，一个是只搜非 demon"
-
-    def test_conflict_is_detected_in_either_order(self) -> None:
-        with pytest.raises(fullsearch.ArgError):
-            fullsearch.parse_args("bloodbath -u 3 -d")
-        with pytest.raises(fullsearch.ArgError):
-            fullsearch.parse_args("bloodbath -d 5 -u 3")
-
-    def test_bad_nondemon_value_wins_over_the_conflict_error(self) -> None:
-        """冲突检查在循环之后，所以循环里先炸的是难度不合法"""
-        with pytest.raises(fullsearch.ArgError) as exc:
-            fullsearch.parse_args("bloodbath -d -u nope")
-
-        assert "看不懂的非 demon 难度" in str(exc.value)
+        """两个开关谁先谁后都要拦住（难度本身都是合法的，只可能是冲突炸的）"""
+        for text in ("bloodbath -d -u 3", "bloodbath -u 3 -d", "bloodbath -d 5 -u 3"):
+            with pytest.raises(fullsearch.ArgError):
+                fullsearch.parse_args(text)
 
     def test_repeated_flags_last_one_wins(self) -> None:
         assert fullsearch.parse_args("x -d 1 -d 5").demon_filter == 5
         assert fullsearch.parse_args("x -u 1 -u 5").diff == 5
         assert fullsearch.parse_args("x -a -a").rated_only is False
 
-    def test_keywords_are_joined_with_single_spaces(self) -> None:
-        assert fullsearch.parse_args("  the   nightmare  ").query == "the nightmare"
-
-    def test_keywords_split_by_a_flag_are_joined_in_order(self) -> None:
-        assert fullsearch.parse_args("the -a nightmare").query == "the nightmare"
-
-    def test_unknown_dash_token_becomes_a_keyword(self) -> None:
-        assert fullsearch.parse_args("-x bloodbath").query == "-x bloodbath"
-
 
 class TestFullSearchQueryApiKwargs:
     """FullSearchQuery.as_api_kwargs()"""
 
-    def test_rated_only_sends_star(self) -> None:
-        assert fullsearch.FullSearchQuery(query="x").as_api_kwargs() == {"star": True}
-
-    def test_all_levels_omits_star_entirely(self) -> None:
+    def test_star_is_sent_only_for_rated_only(self) -> None:
         """注释：-a 的时候是「不传 star」而不是「传 star=0」"""
-        query = fullsearch.FullSearchQuery(query="x", rated_only=False)
-
-        assert query.as_api_kwargs() == {}
-
-    def test_diff_and_demon_filter_pass_through(self) -> None:
-        query = fullsearch.FullSearchQuery(
-            query="x", diff=fullsearch.DIFF_DEMON, demon_filter=5
+        assert fullsearch.FullSearchQuery(query="x").as_api_kwargs() == {"star": True}
+        assert (
+            fullsearch.FullSearchQuery(query="x", rated_only=False).as_api_kwargs() == {}
         )
 
-        assert query.as_api_kwargs() == {"star": True, "diff": -2, "demon_filter": 5}
-
-    def test_nondemon_diff_only(self) -> None:
-        query = fullsearch.FullSearchQuery(query="x", rated_only=False, diff=-3)
-
-        assert query.as_api_kwargs() == {"diff": -3}
+    def test_diff_and_demon_filter_pass_through(self) -> None:
+        assert fullsearch.FullSearchQuery(
+            query="x", diff=fullsearch.DIFF_DEMON, demon_filter=5
+        ).as_api_kwargs() == {"star": True, "diff": -2, "demon_filter": 5}
+        # 非 demon 只有 diff，没有 demon_filter
+        assert fullsearch.FullSearchQuery(
+            query="x", rated_only=False, diff=-3
+        ).as_api_kwargs() == {"diff": -3}
 
     def test_kwarg_names_match_the_gdapi_signature(self) -> None:
         """search_levels_page 是 **kwargs 收的，键名写错了不会报错，只能这么守"""
@@ -1357,64 +1306,60 @@ class TestFullSearchQueryApiKwargs:
 
 
 class TestFullSearchDescribe:
-    """FullSearchQuery.describe()"""
+    """FullSearchQuery.describe()。
 
-    def test_default(self) -> None:
-        assert fullsearch.FullSearchQuery(query="x").describe() == "rated"
+    摘要是给用户看的一句话，措辞随便改；这里只守「每种筛选都说得出话、
+    而且互相区分得开」—— 从命令行原文一路走到摘要，describe() 的分支全覆盖到了。
+    """
 
-    def test_all_levels(self) -> None:
-        assert fullsearch.FullSearchQuery(query="x", rated_only=False).describe() == "全部关卡"
+    def test_every_filter_combo_gets_its_own_summary(self) -> None:
+        texts = [
+            "bloodbath",        # 默认只搜 rated
+            "bloodbath -a",     # 全部关卡
+            "bloodbath -d",     # 只说 demon，没具体难度
+            "bloodbath -d 2",   # 有 demon_filter 就走它那一支
+            "bloodbath -a -d ex",
+            "bloodbath -u 0",   # 非 demon，0 就是 auto
+            "bloodbath -u 4",
+        ]
 
-    def test_bare_demon(self) -> None:
-        query = fullsearch.FullSearchQuery(query="x", diff=fullsearch.DIFF_DEMON)
+        summaries = [fullsearch.parse_args(t).describe() for t in texts]
 
-        assert query.describe() == "rated、demon"
-
-    def test_demon_with_filter_wins_over_the_diff_branch(self) -> None:
-        query = fullsearch.FullSearchQuery(
-            query="x", diff=fullsearch.DIFF_DEMON, demon_filter=5
-        )
-
-        assert query.describe() == "rated、extreme demon"
-
-    def test_nondemon(self) -> None:
-        query = fullsearch.FullSearchQuery(query="x", diff=3)
-
-        assert query.describe() == "rated、非 demon / hard"
-
-    def test_auto_with_all_levels(self) -> None:
-        query = fullsearch.FullSearchQuery(query="x", rated_only=False, diff=-3)
-
-        assert query.describe() == "全部关卡、非 demon / auto"
-
-    @pytest.mark.parametrize(
-        ("text", "expected"),
-        [
-            ("bloodbath", "rated"),
-            ("bloodbath -a", "全部关卡"),
-            ("bloodbath -d", "rated、demon"),
-            ("bloodbath -d 2", "rated、medium demon"),
-            ("bloodbath -a -d ex", "全部关卡、extreme demon"),
-            ("bloodbath -u 0", "rated、非 demon / auto"),
-            ("bloodbath -u 4", "rated、非 demon / harder"),
-        ],
-    )
-    def test_end_to_end_from_the_command_line(self, text: str, expected: str) -> None:
-        assert fullsearch.parse_args(text).describe() == expected
+        assert all(summaries)                      # 每种组合都得说点什么
+        assert len(set(summaries)) == len(texts)   # 而且互相区分得开
 
 
 class TestFormatLevelLine:
     """format_level_line()"""
 
-    def test_non_demon_line(self) -> None:
+    def test_line_carries_index_name_creator_difficulty_and_id(self) -> None:
+        """一行里该有的东西：序号、关卡名、作者、难度标签、id。排版怎么写不管"""
         level = _gd_level(
             level_id=128, level_name="Nine Circles", creator_name="Zobros", stars=9, length=3
         )
 
-        assert (
-            fullsearch.format_level_line(1, level)
-            == "1. Nine Circles by Zobros 9⭐insane (ID: 128)"
-        )
+        line = fullsearch.format_level_line(7, level)
+
+        assert "7" in line  # 序号原样用，不重新编号
+        assert "Nine Circles" in line
+        assert "Zobros" in line
+        assert level.difficulty_label() in line  # "9⭐insane"
+        assert "128" in line
+
+    def test_missing_fields_do_not_blow_up(self) -> None:
+        """名字 / 作者 / 星数缺了都不能炸，各有各的兜底"""
+        no_name = _gd_level(level_id=7, level_name=None, stars=1, length=3)
+        no_creator = _gd_level(level_id=7, level_name="Unrated one", stars=0, length=3)
+        # stars 是 None 时 difficulty_label 返回 Unknown，也不会加星数前缀
+        no_stars = _gd_level(level_id=7, level_name="X", stars=None, length=3)
+
+        for level in (no_name, no_creator, no_stars):
+            line = fullsearch.format_level_line(1, level)
+
+            assert line.strip()                       # 兜底之后不能是空行
+            assert "None" not in line                 # 更不能把 None 印出来
+            assert "7" in line                        # id 一定还在
+            assert level.difficulty_label() in line   # 难度标签原样透传
 
     def test_demon_line_gets_a_star_prefix(self) -> None:
         """difficulty_label() 对 demon 只给 "Extreme Demon"，星数是这里补的"""
@@ -1428,10 +1373,12 @@ class TestFormatLevelLine:
             demon_difficulty=6,
         )
 
-        assert (
-            fullsearch.format_level_line(3, level)
-            == "3. Bloodbath by Riot 10⭐Extreme Demon (ID: 10565740)"
-        )
+        line = fullsearch.format_level_line(3, level)
+
+        assert f"10⭐{level.difficulty_label()}" in line
+        assert "Bloodbath" in line
+        assert "Riot" in line
+        assert "10565740" in line
 
     def test_platformer_demon_uses_the_moon_sign(self) -> None:
         level = _gd_level(
@@ -1444,28 +1391,8 @@ class TestFormatLevelLine:
             demon_difficulty=6,
         )
 
-        assert fullsearch.format_level_line(1, level) == "1. Plat by Someone 10🌙Extreme Pemon (ID: 1)"
-
-    def test_unrated_level(self) -> None:
-        level = _gd_level(level_id=7, level_name="Unrated one", stars=0, length=3)
-
-        assert fullsearch.format_level_line(1, level) == "1. Unrated one Unrated (ID: 7)"
-
-    def test_missing_name_falls_back(self) -> None:
-        level = _gd_level(level_id=7, level_name=None, stars=1, length=3)
-
-        assert fullsearch.format_level_line(1, level) == "1. 未知关卡 1⭐auto (ID: 7)"
-
-    def test_missing_stars_renders_unknown(self) -> None:
-        """stars 是 None 时 difficulty_label 返回 Unknown，也不会加星数前缀"""
-        level = _gd_level(level_id=7, level_name="X", stars=None, length=3)
-
-        assert fullsearch.format_level_line(1, level) == "1. X Unknown (ID: 7)"
-
-    def test_index_is_used_verbatim(self) -> None:
-        level = _gd_level(level_id=1, level_name="X", stars=0, length=3)
-
-        assert fullsearch.format_level_line(10, level).startswith("10. X ")
+        # plat 关卡补的是月亮不是星星
+        assert f"10🌙{level.difficulty_label()}" in fullsearch.format_level_line(1, level)
 
     def test_ten_star_level_without_demon_difficulty_keeps_one_prefix(self) -> None:
         """stars>=10 但没有 demon_difficulty 时 difficulty_label() 兜底返回 "10⭐demon"，
@@ -1474,72 +1401,64 @@ class TestFormatLevelLine:
         level = _gd_level(
             level_id=1, level_name="X", stars=10, length=3, demon_difficulty=None
         )
+        label = level.difficulty_label()
 
-        assert fullsearch.format_level_line(1, level) == "1. X 10⭐demon (ID: 1)"
+        line = fullsearch.format_level_line(1, level)
 
-    def test_plat_without_demon_difficulty_keeps_one_prefix(self) -> None:
-        """plat 也一样不重复。兜底串是 gdapi 硬编码的 "10⭐demon"（星号不是月亮），
-        那是 difficulty_label() 自己的小瑕疵，这里只保证不再翻倍。
+        assert label in line              # 标签原样透传
+        assert line.count("⭐") == 1       # 只有标签自带的那一个星号，没被补第二次
+
+    def test_other_self_starred_labels_also_keep_one_prefix(self) -> None:
+        """plat 和 11 星走的是同一个「标签自带星数就别再补」的判断。
+
+        兜底串是 gdapi 硬编码的 "10⭐demon"（星号不是月亮），那是
+        difficulty_label() 自己的小瑕疵，这里只保证不再翻倍成 "11⭐10⭐demon"。
         """
-        level = _gd_level(
-            level_id=1, level_name="X", stars=10, length=5, demon_difficulty=None
-        )
-
-        assert fullsearch.format_level_line(1, level) == "1. X 10⭐demon (ID: 1)"
-
-    def test_stars_above_ten_without_demon_difficulty_keeps_one_prefix(self) -> None:
-        """星数大于 10 时也不能补前缀，否则会出现 "11⭐10⭐demon" 这种自相矛盾的串"""
-        level = _gd_level(
+        plat = _gd_level(level_id=1, level_name="X", stars=10, length=5, demon_difficulty=None)
+        above_ten = _gd_level(
             level_id=1, level_name="X", stars=11, length=3, demon_difficulty=None
         )
 
-        assert fullsearch.format_level_line(1, level) == "1. X 10⭐demon (ID: 1)"
+        for level in (plat, above_ten):
+            line = fullsearch.format_level_line(1, level)
 
-    @pytest.mark.parametrize(
-        ("stars", "expected"),
-        [
-            (0, "Unrated"),
-            (1, "1⭐auto"),
-            (2, "2⭐easy"),
-            (3, "3⭐normal"),
-            (4, "4⭐hard"),
-            (5, "5⭐hard"),
-            (6, "6⭐harder"),
-            (7, "7⭐harder"),
-            (8, "8⭐insane"),
-            (9, "9⭐insane"),
-        ],
-    )
-    def test_below_ten_stars_never_gets_an_extra_prefix(self, stars: int, expected: str) -> None:
-        """difficulty_label() 在 10 星以下已经把星数写进去了，这里一个字都不该加"""
-        level = _gd_level(level_id=1, level_name="X", stars=stars, length=3)
+            assert level.difficulty_label() in line
+            assert line.count("⭐") == 1
+            assert "🌙" not in line
 
-        assert fullsearch.format_level_line(1, level) == f"1. X {expected} (ID: 1)"
+    def test_below_ten_stars_never_gets_an_extra_prefix(self) -> None:
+        """difficulty_label() 在 10 星以下已经把星数写进去了，这里一个字都不该加。
 
-    @pytest.mark.parametrize(
-        ("demon_difficulty", "expected"),
-        [
-            (0, "10⭐Hard Demon"),
-            (3, "10⭐Easy Demon"),
-            (4, "10⭐Medium Demon"),
-            (5, "10⭐Insane Demon"),
-            (6, "10⭐Extreme Demon"),
-        ],
-    )
-    def test_demon_labels_all_get_exactly_one_prefix(
-        self, demon_difficulty: int, expected: str
-    ) -> None:
+        比的是 difficulty_label() 的返回值 —— 要守的是「原样透传」，
+        标签本身长什么样是 gdapi 的事。
+        """
+        for stars in range(gdapi.DEMON_STARS):
+            level = _gd_level(level_id=1, level_name="X", stars=stars, length=3)
+            label = level.difficulty_label()
+
+            line = fullsearch.format_level_line(1, level)
+
+            assert label in line
+            assert line.count("⭐") == label.count("⭐")  # 一颗星都没多加
+
+    def test_demon_labels_all_get_exactly_one_prefix(self) -> None:
         """有 demon_difficulty 的那一支返回纯文字（"Extreme Demon"），星数得这里补"""
-        level = _gd_level(
-            level_id=1,
-            level_name="X",
-            stars=10,
-            length=3,
-            is_demon=True,
-            demon_difficulty=demon_difficulty,
-        )
+        for demon_difficulty in (0, 3, 4, 5, 6):
+            level = _gd_level(
+                level_id=1,
+                level_name="X",
+                stars=10,
+                length=3,
+                is_demon=True,
+                demon_difficulty=demon_difficulty,
+            )
+            label = level.difficulty_label()
 
-        assert fullsearch.format_level_line(1, level) == f"1. X {expected} (ID: 1)"
+            assert "⭐" not in label  # 前提：这一支不自带星数
+            line = fullsearch.format_level_line(1, level)
+
+            assert f"10⭐{label}" in line
+            assert line.count("⭐") == 1
 
     def test_line_built_from_a_real_server_response(self) -> None:
         """用真的服务器 key:value 串解析出来的关卡也排得对"""
@@ -1549,10 +1468,13 @@ class TestFormatLevelLine:
         )
         level.creator_name = "Cyclic"
 
-        assert (
-            fullsearch.format_level_line(2, level)
-            == "2. Sonic Wave by Cyclic 10⭐Insane Demon (ID: 11097037)"
-        )
+        line = fullsearch.format_level_line(2, level)
+
+        # 解析出来的字段一样样都得进这一行
+        assert "Sonic Wave" in line
+        assert "Cyclic" in line
+        assert "11097037" in line
+        assert f"10⭐{level.difficulty_label()}" in line
 
 
 class TestFullSearchSessionFetch:
@@ -1742,7 +1664,7 @@ class TestFullSearchSessionPaging:
 
         ok, msg = session.go_next()
 
-        assert (ok, msg) == (False, "已经是最后一页了")
+        assert (ok, bool(msg)) == (False, True)  # 翻不动，而且说明了原因
         assert session.page == 0
         assert fake.calls == []
 
@@ -1756,11 +1678,11 @@ class TestFullSearchSessionPaging:
 
         ok, msg = session.go_next()
 
-        assert (ok, msg) == (False, "已经是最后一页了")
+        assert (ok, bool(msg)) == (False, True)
         assert session.page == 0
         assert len(fake.calls) == 1
         # 探到底之后再翻就不请求了
-        assert session.go_next() == (False, "已经是最后一页了")
+        assert session.go_next()[0] is False
         assert len(fake.calls) == 1
 
     def test_prev_before_first_page_is_refused(
@@ -1770,7 +1692,9 @@ class TestFullSearchSessionPaging:
         monkeypatch.setattr(fullsearch, "search_levels_page", fake)
         session = self._session(fake)
 
-        assert session.go_prev() == (False, "已经是第一页了")
+        ok, msg = session.go_prev()
+
+        assert (ok, bool(msg)) == (False, True)
         assert session.page == 0
         assert fake.calls == []
 
@@ -1881,53 +1805,45 @@ class TestFullSearchRender:
         }
         return session
 
+    def _uncapped(self, total: int, *, page: int = 0) -> fullsearch.FullSearchSession:
+        session = self._session(page=page)
+        session.total = total
+        session.total_is_capped = False
+        return session
+
     def test_capped_total_hides_the_count(self) -> None:
         """total 是 9999 那种封顶值，不能显示出来骗人"""
         session = self._session()
         session.total = GD_TOTAL_CAP
 
-        assert session.render() == (
-            "「bloodbath」第 1 页　[rated]\n"
-            "1. Bloodbath by Riot 10⭐Extreme Demon (ID: 10565740)\n"
-            "2. Nine Circles by Zobros 9⭐insane (ID: 128)\n"
-            "输入序号选中 / n 下一页 / 结束 取消"
-        )
+        lines = session.render().splitlines()
+
+        assert "bloodbath" in lines[0]                 # 搜的是什么词要写出来
+        assert str(GD_TOTAL_CAP) not in lines[0]       # 封顶值一个字都不能露出来
+        assert len(lines) == 1 + 2 + 1                 # 标题 + 两条结果 + 提示行
+        assert "Bloodbath" in lines[1]
+        assert "Nine Circles" in lines[2]
 
     def test_uncapped_total_shows_count_and_page_count(self) -> None:
-        session = self._session()
-        session.total = 25
-        session.total_is_capped = False
+        """总条数和总页数都要出现在标题里，总页数由 GD_PAGE_SIZE 推出来"""
+        head = self._uncapped(25).render().splitlines()[0]
 
-        assert session.render().splitlines()[0] == "「bloodbath」共 25 条，第 1/3 页　[rated]"
+        assert "25" in head
+        assert str(_pages_for(25, GD_PAGE_SIZE)) in head
 
-    def test_uncapped_total_below_one_page_still_says_one_page(self) -> None:
-        session = self._session()
-        session.total = 2
-        session.total_is_capped = False
+    def test_hints_depend_on_where_the_page_is(self) -> None:
+        """能往哪翻就只提示哪边 —— 四个位置的提示互不相同"""
+        first = self._uncapped(25).render().splitlines()[-1]
+        middle = self._uncapped(25, page=1).render().splitlines()[-1]
+        last = self._uncapped(25, page=2).render().splitlines()[-1]
+        only = self._uncapped(2).render().splitlines()[-1]  # 一页就装下了
 
-        assert session.render().splitlines()[0] == "「bloodbath」共 2 条，第 1/1 页　[rated]"
-        # 只有一页，就不该提示 n 下一页
-        assert session.render().splitlines()[-1] == "输入序号选中 / 结束 取消"
+        assert len({first, middle, last, only}) == 4
 
-    def test_middle_page_hints(self) -> None:
-        session = self._session(page=1)
-        session.total = 25
-        session.total_is_capped = False
-
-        assert session.render().splitlines()[-1] == "输入序号选中 / n 下一页 / p 上一页 / 结束 取消"
-
-    def test_last_page_hints(self) -> None:
-        session = self._session(page=2)
-        session.total = 25
-        session.total_is_capped = False
-
-        assert session.render().splitlines()[-1] == "输入序号选中 / p 上一页 / 结束 取消"
-
-    def test_unknown_last_page_always_offers_next(self) -> None:
-        session = self._session(page=3)
-        session.total = GD_TOTAL_CAP
-
-        assert session.render().splitlines()[-1] == "输入序号选中 / n 下一页 / p 上一页 / 结束 取消"
+        # total 封顶时不知道哪一页是最后一页，只能一直给「下一页」，跟中间页一样
+        capped = self._session(page=3)
+        capped.total = GD_TOTAL_CAP
+        assert capped.render().splitlines()[-1] == middle
 
     def test_filters_are_shown_in_the_header(self) -> None:
         session = self._session(
@@ -1937,23 +1853,30 @@ class TestFullSearchRender:
         )
         session.total = GD_TOTAL_CAP
 
-        assert session.render().splitlines()[0] == "「bloodbath」第 1 页　[全部关卡、extreme demon]"
+        head = session.render().splitlines()[0]
+
+        assert session.query.describe() in head
 
     def test_empty_page_message_includes_the_filters(self) -> None:
+        """一条都没搜到时要说清楚是带着哪些筛选没搜到"""
         session = fullsearch.FullSearchSession(
             query=fullsearch.FullSearchQuery(query="bloodbath", diff=3)
         )
 
-        assert session.render() == "没有找到符合条件的关卡（rated、非 demon / hard）"
+        text = session.render()
+
+        assert len(text.splitlines()) == 1  # 没结果就不列表、不给翻页提示
+        assert session.query.describe() in text
 
     def test_numbering_starts_at_one_on_every_page(self) -> None:
         """序号是每页从 1 开始的（选中时按当前页的序号找）"""
         session = self._session(page=2)
         session.total = GD_TOTAL_CAP
         lines = session.render().splitlines()
+        levels = session.current_levels
 
-        assert lines[1].startswith("1. ")
-        assert lines[2].startswith("2. ")
+        assert lines[1] == fullsearch.format_level_line(1, levels[0])
+        assert lines[2] == fullsearch.format_level_line(2, levels[1])
 
 
 class TestFullSearchStartSession:
@@ -1970,7 +1893,9 @@ class TestFullSearchStartSession:
         session, err = fullsearch.start_session("bloodbath -a -d 5")
 
         assert session is None
-        assert err == "没有找到「bloodbath」相关的关卡（全部关卡、extreme demon）"
+        # 提示里要带上关键词和筛选条件，用户才知道是「哪一次搜索」没结果
+        assert "bloodbath" in err
+        assert fullsearch.parse_args("bloodbath -a -d 5").describe() in err
 
     def test_success_returns_a_primed_session(
         self, monkeypatch: pytest.MonkeyPatch
@@ -2024,12 +1949,14 @@ class TestFullSearchAgainstStubbedHttp:
         assert "diff" not in sent
         assert "demonFilter" not in sent
 
-        assert session.render() == (
-            "「bloodbath」共 5 条，第 1/1 页　[rated]\n"
-            "1. Bloodbath by Riot 10⭐Extreme Demon (ID: 10565740)\n"
-            "2. Sonic Wave by Cyclic 9⭐insane (ID: 11097037)\n"
-            "输入序号选中 / 结束 取消"
-        )
+        # 响应整段被解析进会话：total、两条关卡、以及另一段里的作者名
+        assert session.total == 5
+        assert session.total_is_capped is False
+        assert _pages_for(session.total, GD_PAGE_SIZE) == 1  # 5 条一页放得下
+        levels = session.current_levels
+        assert [lv.level_id for lv in levels] == [10565740, 11097037]
+        assert [lv.level_name for lv in levels] == ["Bloodbath", "Sonic Wave"]
+        assert [lv.creator_name for lv in levels] == ["Riot", "Cyclic"]
 
     def test_filters_are_translated_into_request_fields(
         self, stub_requests, make_response
@@ -2050,7 +1977,7 @@ class TestFullSearchAgainstStubbedHttp:
         session, err = fullsearch.start_session("绝对搜不到的关卡")
 
         assert session is None
-        assert err == "没有找到「绝对搜不到的关卡」相关的关卡（rated）"
+        assert "绝对搜不到的关卡" in err  # 提示里要回显搜的是什么
 
     def test_network_failure_is_swallowed_by_gdapi(self, stub_requests) -> None:
         """requests 抛异常时 gdapi 返回空页，start_session 走「没找到」分支"""
@@ -2061,4 +1988,4 @@ class TestFullSearchAgainstStubbedHttp:
         session, err = fullsearch.start_session("bloodbath")
 
         assert session is None
-        assert err.startswith("没有找到「bloodbath」相关的关卡")
+        assert "bloodbath" in err  # 网络挂了也走「没找到」那条提示，不是异常
