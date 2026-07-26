@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 import requests
 from nonebot import logger
+from nonebot_plugin_apscheduler import scheduler
 
 HTTP_OK = 200
 
@@ -216,3 +217,26 @@ class Aredl:
                 )
                 return level
         return None
+
+@scheduler.scheduled_job("cron", hour=3, minute=0)
+async def daily_update_job() -> None:
+    """
+    每日自动更新入口
+    """
+    logger.info("[aredlapi] 开始执行每日数据更新")
+
+    try:
+        aredllevels = get_aredl_levels()
+        arepllevels = get_arepl_levels()
+        aredl_dict = {}
+
+        for level in aredllevels:
+            if level.level_id not in aredl_dict:
+                aredl_dict[level.level_id] = level
+            # 同关卡保留第一个也就是排位高的，用于兼容2p
+
+        for level in arepllevels:
+            if level.level_id not in aredl_dict:
+                aredl_dict[level.level_id] = level
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[aredlapi] 更新失败:{e!s}")
