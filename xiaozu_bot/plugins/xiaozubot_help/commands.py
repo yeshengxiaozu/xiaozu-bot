@@ -98,6 +98,19 @@ COMMANDS: dict[str, Cmd] = {
         ),
         examples=("*gduser yeshengxiaozu",),
     ),
+    "gdicon": Cmd(
+        usage="*gdicon 用户名 [gamemode] [-a]",
+        summary="看玩家的图标",
+        category="gd",
+        detail=(
+            "把玩家某个 gamemode 的图标画出来，用的是他自己的图标 id 和配色。\n"
+            "gamemode 可选：cube / ship / ball / ufo / wave / robot /\n"
+            "spider / swing / jetpack，不写默认 cube。\n"
+            "ufo 可以写 bird，wave 可以写 dart，中文也认（飞碟 / 秋千 之类）。\n"
+            "加 -a 把九个 gamemode 拼成一张图发出来，不会刷屏。"
+        ),
+        examples=("*gdicon RobTop", "*gdicon RobTop ship", "*gdicon RobTop -a"),
+    ),
     "gd随机推关": Cmd(
         usage="*gd随机推关 (最低)tier [最高tier] [最低enj] [最高enj]",
         summary="按 tier / enjoyment 随机推一关",
