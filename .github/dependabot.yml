@@ -1,0 +1,34 @@
+version: 2
+
+updates:
+  # Python 依赖：读 pyproject.toml 的 [project] dependencies /
+  # optional-dependencies / [dependency-groups]。
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # 一堆小版本各开一个 PR 太吵，按类别合成一个。
+      nonebot:
+        patterns:
+          - "nonebot*"
+      dev-tools:
+        patterns:
+          - "pytest*"
+          - "ruff"
+          - "pyright*"
+
+  # workflow 里 uses: 的 action 版本。
+  # 现在钉的是 checkout@v5 / setup-python@v5 / upload-artifact@v4，
+  # 上游各自还有更新的大版本，dependabot 会开 PR 提上来，
+  # 到时候人看一眼 changelog 再决定要不要跟。
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"

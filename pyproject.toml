@@ -1,3 +1,25 @@
+# 显式声明构建后端。不写的话 pip 会退到 setuptools.build_meta:__legacy__，
+# 并且每次构建都从 PyPI 现拉一个不定版本的 setuptools 进隔离环境。
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+# 打包哪些目录也必须写死。默认的 flat-layout 自动发现会把仓库根下**任何**
+# 带 .py 的目录都当成顶层包，于是：
+#   - scripts/try_search.py 跑一次会生成 temp/，之后 `pip install -e .` 直接报
+#     「Multiple top-level packages discovered in a flat-layout: ['temp', 'xiaozu_bot']」；
+#   - 以后谁在根目录再放个包，同样会炸。
+# CI 是干净 checkout 所以之前没暴露，但 README 让贡献者先跑 try_search 再装，
+# 照着做一遍就会踩到。
+#
+# namespaces = true 是 pyproject 下的默认值，这里显式写出来是因为它不能少：
+# xiaozu_bot/ 和 xiaozu_bot/plugins/ 都**没有** __init__.py（PEP 420 命名空间包），
+# 关掉的话 find 一个包都扫不到，装出来是个空壳。
+# 实测这套配置打出来的 wheel 里有全部 52 个 .py，顶层只有 xiaozu_bot/。
+[tool.setuptools.packages.find]
+include = ["xiaozu_bot*"]
+namespaces = true
+
 [project]
 name = "xiaozu-bot"
 version = "0.1.0"
@@ -22,7 +44,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pyright[nodejs]",
-    "ruff"
+    "ruff",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
 ]
 # mlx_audio 只能装在 Apple Silicon 上，放进必选依赖会让别的平台整个装不上。
 # say 插件是在 handler 里才 import 它的，所以不装也不影响其他插件加载。
@@ -35,11 +60,60 @@ migrate = [
     "redis>=5.0.0",
 ]
 
-[project.dependency-groups]
+# PEP 735 规定 dependency-groups 是**顶层**表，不是 [project] 的子表。
+# 之前写成 [project.dependency-groups]，setuptools 校验 [project] 时会直接报
+# 「`project` must not contain {'dependency-groups'} properties」，
+# 于是 `pip install -e .` 整个装不上 —— CI 第一次跑就会挂在装依赖这一步。
+[dependency-groups]
 dev = [
     "pyright",
     "ruff",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
 ]
+
+[tool.pytest.ini_options]
+# 测试只在 tests/ 下面，别去扫 xiaozu_bot/ 和 scripts/
+testpaths = ["tests"]
+# tests/ 下有 __init__.py，是个包；仓库根目录必须在 sys.path 上，
+# 这样 `import xiaozu_bot` 和 `import tests.xxx` 都能成。
+# （tests/conftest.py 里也塞了一遍，双保险：直接 python 跑单个文件时也管用。）
+pythonpath = ["."]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# auto：async def 的测试函数自动当 asyncio 用例跑，不用每个都记得加
+# @pytest.mark.asyncio。这个仓库里几乎所有 handler 都是 async 的，
+# 有 7 个人并行写测试，少一个能忘的步骤就少一类翻车。
+asyncio_mode = "auto"
+# pytest-asyncio 1.x 不显式设这个会刷 deprecation warning；
+# function 作用域 = 每个用例一个全新事件循环，用例之间不会串。
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-config"
+filterwarnings = [
+    # 基线是 default 而不是 error。理由：模块级 import 时发出的 warning
+    # 每个进程只触发一次，全局 error 的话「哪个用例先 import 就哪个用例挂」，
+    # 结果依赖执行顺序 —— 这正是我们要避免的不稳定。
+    "default",
+    # 但仓库自己代码里的废弃用法必须报错，这才是我们能修的部分
+    "error::DeprecationWarning:xiaozu_bot",
+    "error::PendingDeprecationWarning:xiaozu_bot",
+    # 三方库的噪音，仓库这边改不了
+    "ignore::FutureWarning:google.*",
+    "ignore::DeprecationWarning:google.*",
+    "ignore::DeprecationWarning:googleapiclient.*",
+    "ignore::DeprecationWarning:httpx.*",
+    "ignore::DeprecationWarning:pydantic.*",
+    # 没登记的 marker 只警告不报错 —— 不然并行加测试的人会被卡住
+    "default::pytest.PytestUnknownMarkWarning",
+]
+markers = [
+    "slow: 跑得慢的用例（大批量数据、重渲染），平时可以 -m 'not slow' 跳过",
+    "integration: 跨多个模块的集成用例（仍然不许联网）",
+    "updater: gdlevelsearch/updater 相关的用例",
+]
+
 [tool.nonebot]
 plugin_dirs = ["xiaozu_bot/plugins"]
 builtin_plugins = []

@@ -1,5 +1,7 @@
 # xiaozu-bot
 
+[![CI](https://github.com/yeshengxiaozu/xiaozu-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/yeshengxiaozu/xiaozu-bot/actions/workflows/ci.yml)
+
 xiaozu-bot 是一个基于 NoneBot 的模块化机器人仓库示例，包含若干实用与娱乐插件（AI 聊天、TTS、Geometry Dash 关卡检索、猜图小游戏、人品、抓图等）。项目以插件化方式组织，适合游戏社群、兴趣群、以及插件开发测试场景。
 
 ## 主要功能
@@ -90,22 +92,66 @@ python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没�
 
 数据路径现在都是相对文件本身算的，从哪个目录启动都行。
 
-## gdlevelsearch 需要的两份「仓库里没有」的东西
+## 测试与 CI
 
-这两样都不在 git 里，新克隆一份代码是跑不出图的，得手动放进去：
+本地跑测试（在仓库根目录）：
 
-**`xiaozu_bot/plugins/gdlevelsearch/resources/`** —— 出图用的字体和素材
-（`PUSAB.TTF`、`ARIAL.TTF`、`left_bg.png`、`right_bg.png`、`noThumb.png`、
-`moon.png`、`diffIcon/`、`tiers/`、`skillsets/`，一共 4 MB 左右）。
-二进制文件在 7b2f1bb 那次提交里被特意清出仓库了。少了它们，
-`create_image_from_gdlevel` 会直接 `OSError: cannot open resource`。
+```bash
+python -m pip install -e ".[dev]"
+python -m pytest
+```
 
-> 文件名大小写要和 `draw.py` 里一致（`PUSAB.TTF` / `ARIAL.TTF`）。
-> 实在缺了也不会整个挂掉，会退回 PIL 默认字体，只是难看。
+`[dev]` 里带了 pytest / pytest-asyncio / pytest-cov / ruff / pyright。
+用例全在 `tests/` 下，配置在 `pyproject.toml` 的 `[tool.pytest.ini_options]`，
+写测试的规矩和 fixture 一览看 `tests/README.md`。三条硬要求：
+**不许联网**（有个 autouse 的 fixture 拦着，真出网直接抛异常）、
+只许往 `tmp_path` 写、不许依赖真实时钟和没播种的 random。
+
+有 8 个用例是测 `scripts/migrate_redis_to_json.py` 的，要 `redis` 这个可选依赖。
+不装的话它们会 SKIP（`pytest.importorskip`），不会让套件变红；想让它们真跑起来：
+
+```bash
+python -m pip install -e ".[dev,migrate]"   # 想让这 8 个也跑起来
+python -m pytest --cov=xiaozu_bot --cov-report=term-missing   # 看覆盖率
+```
+
+push 到 `main`、开 PR、以及手动触发时，`.github/workflows/ci.yml` 会在
+ubuntu-latest 上按 Python 3.10 / 3.11 / 3.12 各跑一遍：
+
+- **ruff check** —— **暂时不阻塞**。存量违规还没清（4600+ 条，全是历史遗留），
+  结果只以 annotation 的形式贴在 PR 的 diff 上；清干净之后再把它变成门禁。
+- **干净检出守卫** —— 插件在 import 期就会建出 `data/storage.json`，
+  这一步确认全新检出上新生成的文件都被 `.gitignore` 覆盖了。
+- **全量测试 + 覆盖率** —— 报告以 artifact 上传（`coverage-py3.x`，留 14 天）。
+- **测试跑完工作区还得是干净的** —— 有用例往仓库里写东西就红。
+
+CI 上不装 `[tts]`（mlx-audio 只有 Apple Silicon 的包，Linux runner 装不上），
+也没跑 pyright —— 仓库基本没写类型标注，等标注补得差不多了再单独加一步。
+
+## 新克隆之后还缺什么
+
+出图用的字体和素材（`xiaozu_bot/plugins/gdlevelsearch/resources/`：
+`PUSAB.TTF`、`ARIAL.TTF`、`left_bg.png`、`right_bg.png`、`noThumb.png`、
+`moon.png`、`diffIcon/`、`tiers/`、`skillsets/`，一共 114 个文件、4 MB 左右）
+**在仓库里**，clone 下来就是全的，不用另外找。
+（这段以前写的是「二进制在 7b2f1bb 被清出仓库了，要手动放进去」——
+那个说法已经过时，binary 后来又补回来了。）
+
+真正需要自己补的只有下面这些，它们都在 `.gitignore` 里：
 
 **`xiaozu_bot/plugins/gdlevelsearch/data/*.json`** —— 关卡数据缓存，
 跑一次 `python scripts/run_updater.py` 就有了（见下）。没有这些 json 的话
 搜索不会报错，只是什么都搜不到。
+
+**`xiaozu_bot/plugins/guess/data/`** —— 猜图题库，打包在
+`xiaozu_bot/plugins/guess/dist.zip` 里，解开就行。
+⚠️ 题库为空时 `*guess_start` 会**死循环**（`while not file_names`
+里没有退出条件），务必先解压再用。
+
+**`xiaozu_bot/plugins/zhua/data/`** —— 抓图图库，没有的话 `*zhua` 抓不到东西。
+
+这些都不影响跑测试：`tests/` 里所有用到它们的用例都把目录指向了
+pytest 的 `tmp_path`，干净 checkout 上照样全绿。
 
 ## 数据更新
 
