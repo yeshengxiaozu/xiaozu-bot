@@ -1,0 +1,43 @@
+version: 2
+
+updates:
+  # Python 依赖。
+  #
+  # 说清楚这一条实际能干什么，免得高估它：pyproject.toml 里所有约束都是没有
+  # 上界的 `>=`（pillow>=10.0.0、requests>=2.31.0……），而且仓库里没有 lock 文件。
+  # 也就是说上游发了新版之后，现有的约束**照样满足**，manifest 不需要改，
+  # dependabot 也就不会开 PR。所以这一条对 pyproject 基本是空转的。
+  #
+  # 它真正能盯住的是 requirements-lint.txt 里的 `ruff==0.16.0` —— 这是本仓库
+  # 唯一一个钉死的、将来一定会过期的版本。（CI 里 pytest 那几个也钉死了，
+  # 但那是写在 ci.yml 的 run: 里的，pip 生态解析不到，只能靠人手动升。）
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # 一堆小版本各开一个 PR 太吵，按类别合成一个。
+      nonebot:
+        patterns:
+          - "nonebot*"
+      dev-tools:
+        patterns:
+          - "pytest*"
+          - "ruff"
+          - "pyright*"
+
+  # workflow 里 uses: 的 action 版本。现在钉的是 checkout@v5 / setup-python@v5
+  # （upload-artifact 已经不用了 —— 覆盖率不再传 artifact）。
+  # 上游出新的大版本时 dependabot 会开 PR 提上来，
+  # 到时候人看一眼 changelog 再决定要不要跟。
+  # 这一条是这个文件里真正会产出 PR 的部分，一年大概几个。
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"

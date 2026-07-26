@@ -1,0 +1,241 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # 每周一 04:00 UTC（北京时间周一中午 12 点）跑一次全版本矩阵。
+  # 平时每次 push 只测 3.10 和 3.13 两头（见下面 matrix 那段的解释），
+  # 中间版本的漂移交给这个定时任务，不必让每次 push 都为它买单。
+  schedule:
+    - cron: "0 4 * * 1"
+
+# 最小权限：这个工作流只需要把代码读出来。
+# 不写回仓库、不发包、不碰 issue / PR / packages，所以只留 contents: read。
+permissions:
+  contents: read
+
+# 同一个 ref 上又推了一次，就把上一次还在跑的取消掉，别浪费 runner。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  # 这两个只是让日志干净点，跟结果无关
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  # ==========================================================================
+  # Lint —— 目前只是提示，不卡合并
+  # ==========================================================================
+  lint:
+    name: Lint (ruff，仅提示)
+    runs-on: ubuntu-latest
+    # 这个 job 实测不到一分钟。不写的话默认是 GitHub 的 360 分钟，
+    # 真卡住了就是白烧六小时的 runner，还看不出任何信号。
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # ruff 钉死版本：不钉的话哪天 ruff 出新规则，一次没改代码的 push 也会变红。
+      # 版本写在 requirements-lint.txt 里而不是直接写在这行命令里 ——
+      # dependabot 只会去解析依赖清单文件，写在 `run:` 里它根本看不见，
+      # 那样这个仓库唯一一个会过期的版本钉恰恰是没人盯的。
+      - name: 装 ruff
+        run: python -m pip install -r requirements-lint.txt
+
+      # ------------------------------------------------------------------
+      # lint 这个 job **永远不会让 CI 变红**（下面那步没有 `exit 1` 的路径）。
+      # 它只打一份分类统计到日志里，用来看存量是不是在往下掉。
+      #
+      # 为什么不贴 annotation：以前这里跑的是 `ruff check --output-format=github .`，
+      # 会把结果贴到 PR 的 diff 上。但 GitHub 每步最多只显示 10 条 annotation，
+      # 而存量有一千多条，于是每个 PR 都会贴十条跟你这次改动毫无关系的提示。
+      # 贴几次之后你就学会了无视 annotation 这个通道 —— 等哪天真有要紧的东西
+      # 出现在那儿，你也不会看了。所以宁可不贴。
+      #
+      # 存量现状（ruff 0.16.0）：1225 条，xiaozu_bot/ 740、tests/ 415、scripts/ 70。
+      # （之前是 4712 条，pyproject 里关掉 PLC2401 / ANN001 / ANN201 / Q000 /
+      #  N802 / E501 这几类「这个仓库的既定风格」之后降到这个数。）
+      # 里面 590 条 ruff --fix 能自动改，大头是 UP045 303 条（Optional[X] 写法）。
+      #
+      # 什么时候可以把它变成真门禁：等 `ruff check .` 降到两位数，
+      # 把下面这步换成 `ruff check .`（去掉 --statistics，让非零退出码生效）即可。
+      #
+      # `ruff format --check` 和 pyright 都**没加**：前者现在会判定 61 个文件需要
+      # 重排，后者在一个基本没写类型标注的仓库上只会刷出读不完的报错。
+      # ------------------------------------------------------------------
+      - name: ruff 违规统计（只看趋势，不阻塞）
+        run: |
+          ruff check --statistics . || true
+          echo "—— 以上只是存量统计，这一步不会让 CI 变红 ——"
+
+  # ==========================================================================
+  # 测试
+  # ==========================================================================
+  test:
+    name: 测试 (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    # 装依赖 + 跑完全量实测两三分钟，20 分钟已经很宽裕了。
+    # 加这个上限是因为「转而不是挂」的代码路径最难查：guess 的题库轮询以前
+    # 在题库目录为空（也就是干净 checkout）时是死循环，现在已经改成有上限了，
+    # 但再冒出一条同类的，我们要的是 20 分钟后红掉，不是 6 小时后。
+    timeout-minutes: 20
+    strategy:
+      # 一个版本挂了，别把其他版本的结果一起掐掉 —— 不然看不出是普遍问题
+      # 还是只有某个版本的问题。
+      fail-fast: false
+      matrix:
+        # **只测两头**：3.10 是 pyproject 里 requires-python = ">=3.10" 承诺的下限，
+        # 3.13 是 bot 实际跑的版本。中间的 3.11 / 3.12 是插值，每次 push 都测它们
+        # 收益极低 —— 这套测试全是打了桩的单元测试，版本差异只可能出在字典序、
+        # match 语句、标准库废弃这类地方，而两头都覆盖到了。
+        #
+        # 这里以前写的是 ["3.10", "3.11", "3.12"]，也就是**唯独没测生产用的版本**。
+        # 3.13 是后来才实测的：nonebot2 2.5.0 + Pillow 12.3.0 下 2092 个用例全绿。
+        #
+        # 依赖里最挑版本的是 nonebot-plugin-htmlkit（带二进制扩展的预发布版），
+        # 它 0.1.0rc5 在 PyPI 上有 cp310-abi3 和 cp312-abi3 两组 manylinux_2_34
+        # x86_64 wheel；abi3 向上兼容，所以 3.10 拿 cp310-abi3、3.13 拿 cp312-abi3，
+        # 两个都有现成轮子，不会退化成本地编译 Rust。
+        #
+        # 定时任务（每周一）跑全矩阵，把中间版本也带上。
+        # 注意这一行必须是单行的纯量：表达式要整体求值成数组，
+        # 写成 >- 折叠块的话 YAML 先把它变成字符串，矩阵就展不开了。
+        python-version: ${{ github.event_name == 'schedule' && fromJSON('["3.10", "3.11", "3.12", "3.13"]') || fromJSON('["3.10", "3.13"]') }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          # setup-python 自带的 pip 缓存，key 由 cache-dependency-path 的哈希算出来。
+          # 依赖清单只有 pyproject.toml 一份，所以指它就够了。
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # ------------------------------------------------------------------
+      # 装依赖。这一串每一段都是实测出来的，别随手精简：
+      #
+      # 1. `-e .` —— 项目本体。**不需要 `--pre`**：pyproject 里写的是
+      #    `nonebot-plugin-htmlkit>=0.1.0rc5`，版号本身就是预发布，按 PEP 440
+      #    pip 会自动放行该包的预发布版。实测 `pip install -e .` 直接就把
+      #    0.1.0rc5 装上了。
+      #
+      # 2. `[migrate]` —— 也就是 redis。tests/test_json_storage.py 里
+      #    TestMigrateScriptRun 那个 fixture 现在是 `pytest.importorskip("redis")`，
+      #    没装也只会 SKIP 不会 ERROR。但我们**希望这 8 个用例在 CI 上真的跑**
+      #    （搬家脚本坏了得有人知道），所以这里显式装上。
+      #    换句话说：装它是为了多测一点，不是为了绕过什么。
+      #
+      # 3. 测试工具单独列，**没有**用 `.[dev]`：dev extra 里有 `pyright[nodejs]`，
+      #    会顺带拖一整个 Node 运行时下来，而这个工作流根本不跑类型检查。
+      #
+      # 4. **没装** `[tts]`：里面的 mlx-audio 只有 Apple Silicon 的包，
+      #    Linux runner 上装不上。say 插件是在 handler 里才 import 它的，
+      #    不装不影响任何插件加载，也不影响测试。
+      #
+      # 5. pillow **不钉版本**，跟着 pyproject 的 `pillow>=10.0.0` 走。
+      #    这里以前钉着 `pillow<12`，因为 guess 的 get_variance() 用了
+      #    Pillow 12 才标废弃的 image.getdata()，撞上 pytest 的
+      #    `error::DeprecationWarning:xiaozu_bot` 会挂 19 个用例。
+      #    现在 get_variance() 改成 ImageStat 了，装最新的 Pillow 就行 ——
+      #    CI 装的依赖集必须和用户实际装到的一样，否则测了个寂寞。
+      # ------------------------------------------------------------------
+      # 6. 测试工具**钉死版本**，理由和上面 ruff 那条一模一样：
+      #    pytest-asyncio 在小版本之间改过 ini 选项名（0.23 那次、0.24 引入
+      #    asyncio_default_fixture_loop_scope、1.0 删掉 event_loop fixture），
+      #    不钉的话哪天它再改一次，一个你什么都没推的日子 CI 就红了。
+      #    升级就改这里，改完本地先跑一遍。
+      - name: 装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[migrate]" \
+            pytest==9.1.1 pytest-asyncio==1.4.0 pytest-cov==7.1.0
+
+      - name: 记一下实际装了什么版本
+        run: python -m pip list
+
+      # ------------------------------------------------------------------
+      # 干净检出守卫 —— 这一步专门盯「本地过、CI 挂」里最常见的那一类：
+      # import 期的文件系统副作用。
+      #
+      # 每个插件在**模块级**就 `r = JsonRedis(plugin_storage(__file__))`，
+      # 而 JsonRedis 会把 xiaozu_bot/plugins/<x>/data/storage.json 连同目录
+      # 一起建出来。开发机上这些 data/ 早就存在了，从来不会暴露问题；
+      # CI 上是全新检出，data/ 一个都没有（git 里没有任何 data/ 下的文件，
+      # 全被 .gitignore 挡掉了），所有目录都是这一刻现建的。
+      #
+      # 只做收集（--collect-only）就足以 import 到每一个插件模块，
+      # 比跑全量快得多，还顺带验证了这个 Python 版本上所有模块都 import 得动。
+      #
+      # 跑完 git status 必须是空的。实测这一步会新建 5 个文件：
+      #   game / gdlevelsearch / guess / jrrp / zhua 各一个 data/storage.json，
+      # 五个都已经在 .gitignore 里，所以 git status 看不见它们。
+      # 以后谁加了新插件却忘了配 .gitignore，会在这里就红，
+      # 而不是等到某次 commit 不小心把 storage.json 混进去。
+      # ------------------------------------------------------------------
+      - name: 干净检出守卫（import 期文件副作用）
+        # 只在生产用的那个版本上跑。fail-fast: false + 多版本矩阵的话，
+        # 同一个问题会被原样报三遍，看着像三个 bug。
+        if: matrix.python-version == '3.13'
+        run: |
+          # 收集的输出以前是 `> /dev/null`。别再那样写：pytest 的收集错误
+          # （某个插件 import 不动、pydantic 校验挂了之类）是打在 stdout 上的，
+          # 丢进 /dev/null 之后这一步只剩一句 "Process completed with exit code 2"，
+          # 整个 run 里没有任何线索，只能自己在本地重跑一遍收集才知道发生了什么。
+          if ! python -m pytest tests --collect-only -q > collect.log 2>&1; then
+            echo "::group::收集失败的完整输出"
+            cat collect.log
+            echo "::endgroup::"
+            echo "::error::pytest 收集阶段就失败了 —— 通常是某个插件 import 不动，往上翻 traceback"
+            rm -f collect.log
+            exit 1
+          fi
+          rm -f collect.log
+
+          echo "::group::import 之后新建出来的 data/ 目录"
+          find xiaozu_bot/plugins -type d -name data 2>/dev/null || true
+          echo "::endgroup::"
+
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "::error::import 期产生了没被 .gitignore 覆盖的文件，请补 .gitignore"
+            exit 1
+          fi
+          echo "工作区干净。"
+
+      # coverage.xml 在 .gitignore 里，所以下一步的「测试有没有往工作区写东西」
+      # 还能继续用 git status 判断。
+      #
+      # 这里以前还生成 htmlcov/ 并且把它和 coverage.xml 一起传成 artifact，
+      # 已经删掉了：一个人维护的仓库不会有人去 run 页面下 zip 再解压看网页版，
+      # 而 --cov-report=term-missing 已经把覆盖率和没覆盖到的行号直接打在日志里了。
+      - name: 跑测试
+        run: |
+          python -m pytest tests \
+            --cov=xiaozu_bot \
+            --cov-report=term-missing \
+            --cov-report=xml
+
+      # 仓库的测试约定是「只许往 pytest 的 tmp_path 写」。这一步把它变成硬约束：
+      # 工作区里冒出没被 .gitignore 挡住的新文件就直接红。
+      - name: 测试不许污染工作区
+        if: matrix.python-version == '3.13'
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            echo "::error::工作区出现了没被 .gitignore 覆盖的新文件（上面是清单）。如果是测试写的，改成写 tmp_path；如果是新加的 pytest 报告参数，把产物加进 .gitignore"
+            exit 1
+          fi
+          echo "工作区干净。"

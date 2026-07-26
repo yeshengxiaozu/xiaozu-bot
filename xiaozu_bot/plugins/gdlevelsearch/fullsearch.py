@@ -168,9 +168,11 @@ def format_level_line(index: int, level: GDLevel) -> str:
     label = level.difficulty_label()
 
     # difficulty_label() 对非 demon 已经把星数写进去了（"8⭐insane"），
-    # demon 那一支只给 "Extreme Demon"，这里补个星数前缀让两种看起来一致
+    # demon 那一支只给 "Extreme Demon"，这里补个星数前缀让两种看起来一致。
+    # 但 10 星没有 demon_difficulty 时它兜底返回的是 "10⭐demon"，自己就带着星数，
+    # 再补一次就成了 "10⭐10⭐demon"，所以只给还没写星数的标签补前缀。
     stars = int(level.stars or 0)
-    if stars >= DEMON_STARS:
+    if stars >= DEMON_STARS and "⭐" not in label and "🌙" not in label:
         sign = "🌙" if level.is_plat() else "⭐"
         label = f"{stars}{sign}{label}"
 

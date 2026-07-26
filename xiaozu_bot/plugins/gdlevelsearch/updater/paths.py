@@ -55,11 +55,42 @@ def staged_or_published(name: str) -> Path:
     return candidate if candidate.exists() else DATA_DIR / name
 
 
+#: 新文件的条目数至少要有旧文件的这个比例，否则拒绝发布。
+#: 榜单每天的正常变动是个位数百分比（实测一次真实更新：hds -3.9%、ids +1.7%、
+#: nlw +1.7%、plat +3.4%），留到 50% 已经非常宽松，只拦「基本被清空」这种。
+MIN_KEEP_RATIO = 0.5
+
+
+def _entry_count(path: Path) -> "int | None":
+    """数一个数据文件里有多少条记录，读不了就返回 None（None = 不做判断）。"""
+    import json
+
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if isinstance(data, dict):
+        levels = data.get("levels")
+        return len(levels) if isinstance(levels, list) else None
+    return len(data) if isinstance(data, list) else None
+
+
 def publish() -> list[str]:
     """把 staging 里的成品原子地搬进 DATA_DIR。
 
     用 os.replace，同一个文件系统上是原子的，不会出现读到写一半的文件。
     返回实际发布了哪些文件。
+
+    **注意原子性的边界**：每个文件各自是原子的，但这里是 6 次独立的 replace。
+    中途被 kill / 磁盘满，DATA_DIR 里会留下「一部分是新的、一部分是上一轮的」
+    的混合状态。重跑一次就能收敛，但别把它当成一次全有或全无的事务。
+
+    发布前会做一道**下限检查**：新文件的条目数不到旧文件的 MIN_KEEP_RATIO，
+    就拒绝发布这一个文件（其余照常）。理由是上游是社区维护的在线表格，
+    改个格式、插一行空行就可能让解析结果变成空列表或被截断，而那种情况
+    **不会抛异常** —— job 报成功，然后一份 30 字节的空文件就把几百 KB 的
+    线上数据盖掉了，而 data/ 不在 git 里，盖掉就没了。
     """
     moved: list[str] = []
     for name in PUBLISHED_FILES:
@@ -67,6 +98,19 @@ def publish() -> list[str]:
         if not src.exists():
             continue
         dst = DATA_DIR / name
+
+        new_n = _entry_count(src)
+        old_n = _entry_count(dst) if dst.exists() else None
+        if new_n is not None and old_n:
+            if new_n < old_n * MIN_KEEP_RATIO:
+                logger.error(
+                    f"[UPDATER] 拒绝发布 {name}：新数据只有 {new_n} 条，"
+                    f"旧数据有 {old_n} 条（不到 {MIN_KEEP_RATIO:.0%}）。"
+                    f"多半是上游表格改了格式导致解析失败，"
+                    f"已保留旧数据，新文件留在 staging 里可以自己看一眼。"
+                )
+                continue
+
         os.replace(src, dst)
         moved.append(name)
     if moved:
