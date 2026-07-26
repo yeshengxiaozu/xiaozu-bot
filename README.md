@@ -148,7 +148,10 @@ python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没�
 
 - `ai <文本>` — 与本地 LLM 对话（插件 `ai`）
 - `say <文本>` — 文本转语音并发送（插件 `say`）
-- `gdsearch <id/name>` — 查询 GD 关卡（插件 `gdlevelsearch`）
+- `gdsearch <id/name>` — 查询 GD 关卡，数据来自本地收录的榜单（插件 `gdlevelsearch`）
+- `gdfullsearch <关键词> [-a] [-d [难度]] [-u <难度>]` — 直连 GD 服务器搜索，能搜到服务器上的任意关卡；
+  默认只搜 rated，`-a` 连未评级的一起搜，`-d` 只搜 demon，`-u` 只搜非 demon。
+  结果分页显示，输入序号选中、`n` 下一页、`p` 上一页、`结束` 取消
 - `guess start` / `guess giveup` — 猜图小游戏（插件 `guess`）
 - `zhua` — 随机抓图（插件 `zhua`）
 - `jrrp` — 今日人品查询（插件 `jrrp`）

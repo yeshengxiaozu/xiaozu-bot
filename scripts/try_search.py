@@ -136,9 +136,46 @@ async def run(query: str, out: Path, do_reload: bool) -> int:
     return 0
 
 
+async def run_full(raw_args: str, out: Path, pages: int) -> int:
+    """*gdfullsearch 的命令行版：直连 GD 服务器 + 翻页选择器。
+
+    走的是和 bot 里同一套 fullsearch.py，只是把「等用户回消息」换成了
+    自动往后翻 N 页，最后把第一条出成图。
+    """
+    fullsearch = import_submodule("fullsearch")
+    draw = import_submodule("draw")
+
+    try:
+        session, err = fullsearch.start_session(raw_args)
+    except fullsearch.ArgError as e:
+        print(f"! 参数有问题：\n{e}", file=sys.stderr)
+        return 2
+
+    if session is None:
+        print(err)
+        return 1
+
+    print(session.render())
+
+    for _ in range(pages):
+        ok, msg = session.go_next()
+        print()
+        if not ok:
+            print(f"[翻页到底] {msg}")
+            break
+        print(session.render())
+
+    first = session.current_levels[0]
+    print(f"\n== 拿本页第 1 条出图：{first.level_name}")
+    image = await draw.create_image_from_gdlevel(first)
+    image.save(out)
+    print(f"== 已写入 {out}  ({out.stat().st_size / 1024:.1f} KB, {image.size[0]}x{image.size[1]})")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("query", help="关卡名或关卡 id")
+    parser.add_argument("query", help="关卡名或关卡 id；--full 模式下是整串参数")
     parser.add_argument("-o", "--out", type=Path, help="输出的 png 路径")
     parser.add_argument(
         "--reload",
@@ -146,15 +183,30 @@ def main() -> int:
         action="store_true",
         help="查之前先跑一次 reload_all()，用来验证重载逻辑",
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="走 *gdfullsearch 那套（直连 GD 服务器 + 翻页），query 当成整串参数解析",
+    )
+    parser.add_argument(
+        "--pages",
+        type=int,
+        default=0,
+        help="--full 模式下自动往后翻几页（默认 0，只看第一页）",
+    )
     args = parser.parse_args()
 
     if Path.cwd() != REPO_ROOT:
         print(f"! 请在仓库根目录运行：cd {REPO_ROOT}", file=sys.stderr)
         return 2
 
-    out = args.out or REPO_ROOT / "temp" / f"gdsearch_{args.query.replace(' ', '_')}.png"
+    stem = args.query.replace(" ", "_").replace("-", "")[:40] or "result"
+    prefix = "gdfull" if args.full else "gdsearch"
+    out = args.out or REPO_ROOT / "temp" / f"{prefix}_{stem}.png"
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    if args.full:
+        return asyncio.run(run_full(args.query, out, args.pages))
     return asyncio.run(run(args.query, out, args.do_reload))
 
 

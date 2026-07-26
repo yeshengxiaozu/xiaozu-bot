@@ -11,6 +11,8 @@ from nonebot.permission import SUPERUSER
 from . import aredlapi, nlwapi, platapi
 from .aredlapi import Aredl  # noqa: F401
 from .draw import create_image_from_gdlevel
+from .fullsearch import SESSION_TIMEOUT, ArgError, FullSearchSession
+from .fullsearch import start_session as start_fullsearch_session
 from .gdapi import GDLevel, get_level_by_id, get_user_by_name
 from .gddlapi import Gddl
 from .imageinfo import send_ttp  # noqa: F401
@@ -196,18 +198,17 @@ async def clear_search_cache(bot: Bot, event: Event, user_id: str) -> None:
 
 
 @gdsearch.handle()
-async def handle_gdsearch(bot: Bot, event: Event, arg: Message = CommandArg()) -> None:
+async def handle_gdsearch(
+    bot: Bot, event: MessageEvent, arg: Message = CommandArg()
+) -> None:
     """处理用户对gdsearch的调用"""
     name = arg.extract_plain_text().strip()
     if name == "":
         await gdsearch.finish("请提供关卡的名字或id")
 
     user_id = str(event.get_user_id())
-    # 清除旧缓存/任务
-    search_cache.pop(user_id, None)
-    if user_id in timeout_tasks:
-        timeout_tasks[user_id].cancel()
-        del timeout_tasks[user_id]
+    # 清除旧缓存/任务，两个选择器的都要清（同时只能活一个）
+    _clear_all_sessions(event)
 
     # ID 搜索
     if len(name) > 4 and name.isdigit():  # noqa: PLR2004 yes its a magic number but it help user
@@ -286,6 +287,131 @@ async def handle_choice(bot: Bot, event: Event) -> None:
         await gdsearchselect.finish("发生未知错误。相关id: " + str(result.id))
     await gdsearchselect.finish()
 
+
+# ---------------------------------------------------------------- gdfullsearch
+# 直连 GD 服务器搜索，带翻页选择器。逻辑都在 fullsearch.py 里，
+# 这里只负责接 nonebot 的事件。
+
+gdfullsearch = on_command("gdfullsearch")
+
+# 按 session_id 存（群里是 group_xxx_yyy，私聊是 private_yyy）。
+# 上面那个 search_cache 只按 user_id，同一个人在两个群里搜会串，新的不继承这毛病。
+fullsearch_sessions: dict[str, FullSearchSession] = {}
+fullsearch_timeouts: dict[str, asyncio.Task] = {}
+
+NEXT_WORDS = {"n", "next", "下一页", "下页"}
+PREV_WORDS = {"p", "prev", "上一页", "上页"}
+STOP_WORDS = {"结束", "取消", "退出", "q"}
+
+
+def _drop_fullsearch(session_id: str) -> None:
+    fullsearch_sessions.pop(session_id, None)
+    task = fullsearch_timeouts.pop(session_id, None)
+    if task:
+        task.cancel()
+
+
+def _clear_all_sessions(event: MessageEvent) -> None:
+    """两个选择器同时只能有一个活着，不然 on_message 会互相打架"""
+    _drop_fullsearch(event.get_session_id())
+    user_id = str(event.get_user_id())
+    search_cache.pop(user_id, None)
+    task = timeout_tasks.pop(user_id, None)
+    if task:
+        task.cancel()
+
+
+def has_fullsearch(event: MessageEvent) -> bool:
+    return event.get_session_id() in fullsearch_sessions
+
+
+gdfullsearchselect = on_message(Rule(has_fullsearch), priority=100, block=False)
+
+
+async def clear_fullsearch(bot: Bot, event: Event, session_id: str) -> None:
+    await asyncio.sleep(SESSION_TIMEOUT)
+    if session_id in fullsearch_sessions:
+        fullsearch_sessions.pop(session_id, None)
+        fullsearch_timeouts.pop(session_id, None)
+        await bot.send(event, "搜索超时，已结束")
+
+
+def _arm_timeout(bot: Bot, event: Event, session_id: str) -> None:
+    old = fullsearch_timeouts.pop(session_id, None)
+    if old:
+        old.cancel()
+    fullsearch_timeouts[session_id] = asyncio.create_task(
+        clear_fullsearch(bot, event, session_id)
+    )
+
+
+@gdfullsearch.handle()
+async def handle_gdfullsearch(
+    bot: Bot, event: MessageEvent, arg: Message = CommandArg()
+) -> None:
+    """直接问 GD 服务器要结果，默认只搜 rated"""
+    _clear_all_sessions(event)
+    session_id = event.get_session_id()
+
+    try:
+        # 请求和解析都是同步阻塞的，别堵在事件循环上
+        session, err = await asyncio.to_thread(
+            start_fullsearch_session, arg.extract_plain_text().strip()
+        )
+    except ArgError as e:
+        await gdfullsearch.finish(str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[gdfullsearch] 搜索失败")
+        await gdfullsearch.finish(f"搜索出错了：{e}")
+
+    if session is None:
+        await gdfullsearch.finish(err)
+
+    # 只有一条就别让人再选一次了，和 gdsearch 的行为保持一致
+    if len(session.current_levels) == 1:
+        await send_result(bot, event, session.current_levels[0])
+        await gdfullsearch.finish()
+
+    fullsearch_sessions[session_id] = session
+    _arm_timeout(bot, event, session_id)
+    await gdfullsearch.finish(session.render())
+
+
+@gdfullsearchselect.handle()
+async def handle_fullsearch_choice(bot: Bot, event: MessageEvent) -> None:
+    """处理翻页选择器里的输入"""
+    session_id = event.get_session_id()
+    session = fullsearch_sessions.get(session_id)
+    if session is None:
+        await gdfullsearchselect.finish()
+
+    choice = event.get_message().extract_plain_text().strip().lower()
+
+    if choice in STOP_WORDS:
+        _drop_fullsearch(session_id)
+        await gdfullsearchselect.finish("已结束搜索")
+
+    if choice in NEXT_WORDS or choice in PREV_WORDS:
+        go = session.go_next if choice in NEXT_WORDS else session.go_prev
+        ok, msg = await asyncio.to_thread(go)
+        _arm_timeout(bot, event, session_id)
+        await gdfullsearchselect.finish(session.render() if ok else msg)
+
+    if not choice.isdigit():
+        # 不是给我们的消息，别吞群聊
+        await gdfullsearchselect.finish()
+
+    levels = session.current_levels
+    index = int(choice)
+    if index < 1 or index > len(levels):
+        await gdfullsearchselect.finish(f"请输入 1-{len(levels)} 之间的序号")
+
+    level = levels[index - 1]
+    _drop_fullsearch(session_id)
+    await send_result(bot, event, level)
+    await gdfullsearchselect.finish()
+
+
 @gdrandom.handle()
 async def handle_gdrandom(bot: Bot, event: Event, arg: Message = CommandArg()) -> None:
     args = arg.extract_plain_text().strip().split()
@@ -326,6 +452,14 @@ async def handle_gdsearchhelp() -> None:
 数据来源包括GDDL NLW等chart AREDL
 以及Plat difficulty chart等plat chart
 可以使用*references (gddl/nlw/plat)查询对应的参考线
+
+*gdsearch 只查本地收录的榜单，所以基本只有demon
+想搜服务器上的任意关卡用*gdfullsearch，它直接问GD服务器要数据：
+  *gdfullsearch 关卡名         默认只搜rated
+  *gdfullsearch 关卡名 -a      连没评级的一起搜
+  *gdfullsearch 关卡名 -d      只搜demon，后面可以跟1-5或easy/medium/hard/insane/extreme
+  *gdfullsearch 关卡名 -u 难度  只搜非demon，0-5或auto/easy/normal/hard/harder/insane（0是auto）
+结果多的时候会分页，输入序号选中，n下一页，p上一页，结束取消
 """  # noqa: N806
     #那几个references的实现我扔给xiaozubot_help模块了
     await gdsearchhelp.finish(HELP_STR)

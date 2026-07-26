@@ -1,4 +1,5 @@
 import base64
+from dataclasses import dataclass, field
 from typing import Any, Final, Optional
 from urllib.parse import unquote
 
@@ -7,6 +8,12 @@ from nonebot import logger
 
 DEMON_STARS = 10
 LENGTH_PLAT = 5
+
+# GD 服务器一页固定给 10 条
+GD_PAGE_SIZE = 10
+# 响应里的 total 到这个数就是封顶了，不是真实条数。
+# 实测：搜 bloodbath 不加筛选 total=9999，加 star=1 之后 total=5。
+GD_TOTAL_CAP = 9999
 
 OFFICIAL_SONG_MAP = {
     -1: ("Practice: Stay Inside Me", "OcularNebula"),
@@ -494,7 +501,47 @@ def parse_song_object(song_str: str) -> Optional[dict[str, Any]]:
     return song_data if "id" in song_data else None
 
 
-def search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
+@dataclass
+class SearchPage:
+    """一次 getGJLevels21 请求的结果，带上响应里的分页信息。
+
+    分页信息来自响应的第 4 段（`total:offset:pagesize`），
+    以前 search_levels 把这段直接丢掉了。
+    """
+
+    levels: list["GDLevel"] = field(default_factory=list)
+    total: int = 0
+    offset: int = 0
+    page_size: int = GD_PAGE_SIZE
+    page: int = 0
+
+    @property
+    def total_is_capped(self) -> bool:
+        """total 是不是封顶值。
+
+        是的话说明服务器没给真实条数，别拿它去算总页数或者显示「共 N 条」。
+        """
+        return self.total >= GD_TOTAL_CAP
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.levels
+
+
+def search_levels_page(  # noqa: PLR0913
+    query: Optional[str] = None,
+    page: int = 0,
+    **kwargs: Any,
+) -> SearchPage:
+    """和 search_levels 一样，但把分页信息一起返回。
+
+    没有结果（服务器返回 -1）时返回一个空的 SearchPage，不抛异常 ——
+    翻页翻过头和搜不到东西，服务器给的都是 -1。
+    """
+    return _search_levels(query=query, page=page, **kwargs)
+
+
+def _search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
     query: Optional[str] = None,
     page: int = 0,
     *,
@@ -526,7 +573,7 @@ def search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
     binary_version: int = 42,
     gdw: int = 0,
     **kwargs: Any,
-) -> list[GDLevel]:
+) -> SearchPage:
     """i dumped every param so it looks like this lol"""
     url = "http://www.boomlings.com/database/getGJLevels21.php"
     headers = {"User-Agent": ""}
@@ -577,10 +624,12 @@ def search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
     resp = requests.post(url, data=data, headers=headers)
     text = resp.text.strip()
+    # -1 有两种意思：搜不到东西，或者页码翻过头了。这里都当成空页返回，
+    # 由调用方结合当前页码去区分。
     if text == "-1":
-        return []
+        return SearchPage(page=page)
 
-    # 分割响应
+    # 分割响应：关卡#作者#歌曲#分页信息#hash
     parts = text.split("#")
     if len(parts) < 4:  # noqa: PLR2004
         raise ValueError(f"响应格式不正确: {text}")  # noqa: TRY003
@@ -588,6 +637,15 @@ def search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
     levels_raw = parts[0]
     creators_raw = parts[1] if len(parts) > 1 else ""
     songs_raw = parts[2] if len(parts) > 2 else ""  # noqa: PLR2004
+
+    # --- 分页信息：total:offset:pagesize ---
+    total, offset, page_size = 0, page * GD_PAGE_SIZE, GD_PAGE_SIZE
+    page_info = parts[3].split(":")
+    if len(page_info) >= 3:  # noqa: PLR2004
+        try:
+            total, offset, page_size = (int(x) for x in page_info[:3])
+        except ValueError:
+            logger.warning(f"分页信息解析失败，按默认值处理: {parts[3]!r}")
 
     # --- 关卡列表 ---
     level_strs = [s for s in levels_raw.split("|") if s.strip()]
@@ -648,7 +706,25 @@ def search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
                     level.custom_song_id,
                 )
 
-    return levels
+    return SearchPage(
+        levels=levels,
+        total=total,
+        offset=offset,
+        page_size=page_size or GD_PAGE_SIZE,
+        page=page,
+    )
+
+
+def search_levels(
+    query: Optional[str] = None,
+    page: int = 0,
+    **kwargs: Any,
+) -> list[GDLevel]:
+    """按条件搜索关卡，只返回关卡列表。
+
+    要拿分页信息（总数 / 偏移）用 search_levels_page。
+    """
+    return _search_levels(query=query, page=page, **kwargs).levels
 
 def get_user_info(
     user_id: int
@@ -708,8 +784,13 @@ def search_levels_by_name(  # noqa: PLR0913
     参数：
         name (str): 搜索关键词。
         page (int): 页码，默认 0。
-        diff (str): 难度筛选，如 "easy", "normal" 等，详见文档。
-        demon_filter (int): 恶魔难度筛选，0=hard, 3=easy, 4=medium, 5=insane, 6=extreme。
+        diff (int): 难度筛选。-3=auto, -1=未评级, 1~5=easy/normal/hard/harder/insane,
+            -2=demon（要配合 demon_filter 细分）。筛的是关卡自报难度（响应字段 9），
+            所以未评级的关卡也能筛到。
+        demon_filter (int): 恶魔难度筛选，**1=easy, 2=medium, 3=hard, 4=insane, 5=extreme**，
+            0 等于不筛。注意这套刻度和响应里的字段 43 不一样（字段 43 是
+            0=hard, 3=easy, 4=medium, 5=insane, 6=extreme），别搞混 ——
+            按字段 43 的刻度传 6 进来服务器会一条都不返回。
         length (str): 长度筛选，如 "tiny", "short", "medium", "long", "xl"。
         featured (bool), epic (bool), legendary (bool), mythic (bool): self-explain
         star (bool): if it is rated
@@ -721,7 +802,7 @@ def search_levels_by_name(  # noqa: PLR0913
     return search_levels(
         query=name,
         page=page,
-        type=0,  # 固定为关键词搜索
+        search_type=0,  # 固定为关键词搜索
         diff=diff,
         demon_filter=demon_filter,
         length=length,
