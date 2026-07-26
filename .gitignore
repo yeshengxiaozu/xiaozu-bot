@@ -256,3 +256,10 @@ xiaozu_bot/plugins/say/*.mp3
 xiaozu_bot/plugins/gdlevelsearch/data/*.json
 xiaozu_bot/plugins/gdlevelsearch/data/*.cache
 xiaozu_bot/plugins/gdlevelsearch/data/*.tmp
+
+# JsonRedis 的存储文件：都是运行时数据（余额、人品、奖池等），不进仓库
+xiaozu_bot/plugins/zhua/data/
+xiaozu_bot/plugins/jrrp/data/
+xiaozu_bot/plugins/roulette/data/
+xiaozu_bot/plugins/zhua_api/data/
+xiaozu_bot/plugins/game/data/

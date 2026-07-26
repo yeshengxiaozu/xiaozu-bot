@@ -24,12 +24,13 @@ import random
 import time
 from pathlib import Path
 
-import redis
 from nonebot_plugin_apscheduler import scheduler
+
+from xiaozu_bot.utils.json_storage import JsonRedis
 
 from .config import *
 
-r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+r = JsonRedis("xiaozu_bot/plugins/game/data/storage.json")
 
 
 def whitelist(event: GroupMessageEvent):

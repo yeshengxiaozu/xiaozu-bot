@@ -11,7 +11,6 @@ dependencies = [
     "nonebot-plugin-localstore>=0.7.4",
     "nonebot-plugin-htmlkit>=0.1.0rc5",
     # 以下是插件实际 import 但之前漏写的依赖
-    "redis>=5.0.0",              # game / jrrp / roulette / zhua_api
     "requests>=2.31.0",          # gdlevelsearch 各 api 与 updater
     "emoji>=2.0.0",              # ai
     "certifi>=2024.2.2",         # updater 的 ssl context
@@ -29,6 +28,11 @@ dev = [
 # say 插件是在 handler 里才 import 它的，所以不装也不影响其他插件加载。
 tts = [
     "mlx-audio",
+]
+# 所有插件都改用 JsonRedis 了，bot 本身不再需要 redis。
+# 只有 scripts/migrate_redis_to_json.py 要拿它把老数据搬出来，搬完就可以卸了。
+migrate = [
+    "redis>=5.0.0",
 ]
 
 [project.dependency-groups]

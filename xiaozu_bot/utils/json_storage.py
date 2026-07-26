@@ -1,3 +1,4 @@
+import fnmatch
 import json
 import threading
 import time
@@ -11,9 +12,15 @@ class JsonRedis:
     支持:
     - get/set 带过期时间 (ex)
     - ttl 查询剩余时间
-    - hget/hset 哈希操作
+    - hget/hset/hkeys/hexists 哈希操作
+    - keys 按 glob 匹配键名
     - delete 删除
     - 每次修改操作后自动保存到文件
+
+    和真 redis 的一个区别：真 redis 开了 decode_responses=True 之后
+    存什么读出来都是 str，这里是存什么类型读出来还是什么类型。
+    现有调用方要么存的就是 str，要么读出来立刻 int()，所以没影响；
+    新写调用的时候留意一下别拿 int 去和字符串比。
     """
 
     def __init__(self, file_path: str, auto_save: bool = True) -> None:  # noqa: FBT001, FBT002
@@ -103,6 +110,39 @@ class JsonRedis:
             self.data[name][key] = value
             if self.auto_save:
                 self._save()
+
+    def _as_hash(self, name: str) -> dict[str, Any]:
+        """把 name 当哈希表取出来，取不到就返回空 dict。
+
+        带过期时间的普通键存的也是 dict（{_val, _exp}），
+        那种不算哈希表，要排掉。
+        """
+        value = self.data.get(name)
+        if isinstance(value, dict) and "_exp" not in value:
+            return value
+        return {}
+
+    def hkeys(self, name: str) -> list[str]:
+        """列出哈希表里所有的字段名，表不存在就返回空列表"""
+        with self.lock:
+            self._clean_expired()
+            return list(self._as_hash(name).keys())
+
+    def hexists(self, name: str, key: str) -> bool:
+        """哈希表里有没有这个字段"""
+        with self.lock:
+            self._clean_expired()
+            return key in self._as_hash(name)
+
+    def keys(self, pattern: str = "*") -> list[str]:
+        """按 glob 匹配键名，语义对齐 redis 的 KEYS。
+
+        调用方有用关键字传的（r.keys(pattern="roulette_status*")），
+        所以参数名必须叫 pattern。
+        """
+        with self.lock:
+            self._clean_expired()
+            return fnmatch.filter(list(self.data.keys()), pattern)
 
     def exists(self, key: str) -> bool:
         """检查键是否存在且未过期"""

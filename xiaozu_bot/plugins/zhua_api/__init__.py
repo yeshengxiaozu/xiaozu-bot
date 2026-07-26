@@ -2,7 +2,6 @@ import datetime
 import json
 import time
 
-import redis
 import requests
 from nonebot import get_plugin_config, on_command, on_fullmatch
 from nonebot.adapters import Event
@@ -17,10 +16,12 @@ from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from nonebot.rule import Rule
 
+from xiaozu_bot.utils.json_storage import JsonRedis
+
 from .config import Config
 from .messages import *
 
-r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+r = JsonRedis("xiaozu_bot/plugins/zhua_api/data/storage.json")
 
 __plugin_meta__ = PluginMetadata(
     name="zhua_api",

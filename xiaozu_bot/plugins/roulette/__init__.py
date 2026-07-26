@@ -1,12 +1,13 @@
 import random
 
-import redis
 from nonebot import get_plugin_config, on_command, require
 from nonebot.adapters import Message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
+
+from xiaozu_bot.utils.json_storage import JsonRedis
 
 from .config import Config
 from .const import *
@@ -16,8 +17,10 @@ manager = require("zhua_api").berry_manager
 msg = require("zhua_api").msg_api()
 
 random.seed()
-r = redis.Redis(host="localhost", port=6379, decode_responses=True)
-data.pool = int(r.get("roulette_pool"))
+r = JsonRedis("xiaozu_bot/plugins/roulette/data/storage.json")
+# 这行是在 import 期间跑的，键不存在就 int(None) 直接把整个插件的加载搞崩，
+# 所以必须给个默认值（换成空的 json 存储之后第一次启动就是这种情况）
+data.pool = int(r.get("roulette_pool") or 0)
 
 __plugin_meta__ = PluginMetadata(
     name="roulette",
@@ -63,7 +66,7 @@ async def handle_function(event: GroupMessageEvent):
         await msg.emoji_like(event.message_id, "424")
         await roulette.finish()
     r.set(f"roulette_status_{id}", "pending")
-    r.set("roulette_total", int(r.get("roulette_total")) + 1)
+    r.set("roulette_total", int(r.get("roulette_total") or 0) + 1)
     manager.setCoins(id, manager.getCoins(id) - 10)
     manager.setCoins(event.self_id, manager.getCoins(event.self_id) + 1)
     data.pool += 10
