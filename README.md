@@ -91,6 +91,24 @@ python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没�
 注意：脚本都得在仓库根目录下跑，因为 `nlwapi.py` 和 `aredlapi.py` 里的
 数据路径是相对当前工作目录写的。
 
+## gdlevelsearch 需要的两份「仓库里没有」的东西
+
+这两样都不在 git 里，新克隆一份代码是跑不出图的，得手动放进去：
+
+**`xiaozu_bot/plugins/gdlevelsearch/resources/`** —— 出图用的字体和素材
+（`PUSAB.TTF`、`ARIAL.TTF`、`left_bg.png`、`right_bg.png`、`noThumb.png`、
+`moon.png`、`diffIcon/`、`tiers/`、`skillsets/`，一共 4 MB 左右）。
+二进制文件在 7b2f1bb 那次提交里被特意清出仓库了。少了它们，
+`create_image_from_gdlevel` 会直接 `OSError: cannot open resource`。
+
+> 注意大小写：文件名是 `PUSAB.TTF` / `ARIAL.TTF`，而 `draw.py` 里写的是
+> `pusab.ttf` / `arial.ttf`。macOS 和 Windows 的文件系统不区分大小写所以没事，
+> 但要是哪天挪到 Linux 上就会找不到文件。
+
+**`xiaozu_bot/plugins/gdlevelsearch/data/*.json`** —— 关卡数据缓存，
+跑一次 `python scripts/run_updater.py` 就有了（见下）。没有这些 json 的话
+搜索不会报错，只是什么都搜不到。
+
 ## 数据更新
 
 `gdlevelsearch` 的关卡数据来自 `xiaozu_bot/plugins/gdlevelsearch/data/*.json`，
