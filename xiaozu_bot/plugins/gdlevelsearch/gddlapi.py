@@ -8,6 +8,8 @@ HTTP_OK = 200
 GDDL_PLAT_LENGTH = 6
 # 提交评分一页放几条。网页上是 10 条一页，跟着来。
 GDDL_SUBMISSION_LIMIT = 10
+# gdladder 的请求超时
+GDDL_TIMEOUT = 15
 # 接口限制 limit 只能 1-30，超了直接 400
 GDDL_LIMIT_MIN = 1
 GDDL_LIMIT_MAX = 30
@@ -285,7 +287,11 @@ class Gddl:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
-        response = requests.get(url, headers=headers)
+        try:
+            response = requests.get(url, headers=headers, timeout=GDDL_TIMEOUT)
+        except requests.RequestException as e:
+            logger.error(f"[gddl] 拉 tags 失败 level={level_id}: {e}")
+            return []
         if response.status_code == HTTP_OK:
             data = response.json()
             return [
@@ -314,7 +320,10 @@ class Gddl:
         return []
 
     @staticmethod
-    def getlevelbyid(level_id: Union[str, int]) -> Optional[GDDLLevel]:
+    def getlevelbyid(
+        level_id: Union[str, int],
+        with_tags: bool = True,  # noqa: FBT001, FBT002
+    ) -> Optional[GDDLLevel]:
         """??????gddl api????????????id????????????????????????"""
         url = f"https://gdladder.com/api/level/{level_id}"
         headers = {
@@ -323,10 +332,12 @@ class Gddl:
             "Authorization": f"Bearer {apikey}",
         }
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=GDDL_TIMEOUT)
             if response.status_code == HTTP_OK:
                 data = response.json()
-                tags = Gddl.getleveltags(level_id)
+                # with_tags=False 时不在这里顺带拉 tags —— 那是第二次往返，
+                # 调用方想并发的话可以自己单独调 getleveltags
+                tags = Gddl.getleveltags(level_id) if with_tags else None
                 return GDDLLevel(data, tags)
         except requests.RequestException as e:
             logger.error(f"Error fetching level by ID: {e}")

@@ -231,6 +231,20 @@ HTTP_NOT_FOUND = 404
 HTTP_SERVER_ERROR = 500
 
 
+async def _none() -> None:
+    """gather 里占个位，省得为「没有缩略图」单开一条分支"""
+    return None
+
+
+def _thumbnail_id_for(level_id: Optional[int]) -> str:
+    """官方前三关在缩略图站上的 id 和关卡 id 不一样，单独映射"""
+    if level_id is None:
+        return ""
+    if level_id <= 3:  # noqa: PLR2004
+        return ["0", "14", "18", "20"][level_id]
+    return str(level_id)
+
+
 async def _fetch_thumbnail(thumbnail_id: str) -> Optional[bytes]:
     """取关卡缩略图，失败会重试。拿不到返回 None。
 
@@ -289,7 +303,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     tier_icon_path: Path = Path(),
     skill_icons: Optional[list[Path]] = None,
     detail_text: str = "",
-    thumbnail_id: str = "",
+    thumb_bytes: Optional[bytes] = None,
     derived_suffix: str = "",
     derived_difficulty: str = "",
     tier_prefix: str = "",
@@ -469,15 +483,14 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     thumb_y = panel[3] - panel_pad - thumb_h
     thumb_img = None
 
-    if thumb_img is None and httpx is not None and thumbnail_id:
-        raw = await _fetch_thumbnail(thumbnail_id)
-        if raw is not None:
-            try:
-                thumb_img = Image.open(io.BytesIO(raw)).convert("RGBA")
-                thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
-            except Exception:  # noqa: BLE001
-                logger.warning("缩略图拿到了但解不开，退回占位图")
-                thumb_img = None
+    # 缩略图由调用方提前并发取好再传进来，这里只负责解码
+    if thumb_bytes:
+        try:
+            thumb_img = Image.open(io.BytesIO(thumb_bytes)).convert("RGBA")
+            thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+        except Exception:  # noqa: BLE001
+            logger.warning("缩略图拿到了但解不开，退回占位图")
+            thumb_img = None
 
     if thumb_img is None:
         try:
@@ -648,8 +661,20 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
     """
     level_id = gdlevel.level_id
 
-    # 查询外部数据源
-    gddl_info = Gddl.getlevelbyid(level_id)
+    # 三个外部请求彼此不依赖，一起发。
+    # 以前是串着来的：GDDL 详情 -> GDDL tags -> 缩略图，实测一张图 3.5-5.4 秒，
+    # 而且几乎全是在等网络（PIL 那部分可以忽略不计）。
+    # 并发之后总耗时约等于最慢的那一个。
+    thumbnail_id = _thumbnail_id_for(level_id)
+    gddl_info, gddl_tags, thumb_bytes = await asyncio.gather(
+        asyncio.to_thread(Gddl.getlevelbyid, level_id, False),
+        asyncio.to_thread(Gddl.getleveltags, level_id),
+        _fetch_thumbnail(thumbnail_id) if (httpx and thumbnail_id) else _none(),
+    )
+    if gddl_info is not None and gddl_tags:
+        gddl_info.Tags = gddl_tags
+
+    # 这三个查的是内存里的表，不走网络
     aredl_info = Aredl.getlevelbyid(level_id)
     nlw_info = Nlw.getlevelbyid(level_id)
     plat_info = Platapi.getlevelbyid(level_id)
@@ -792,8 +817,6 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
     featured_fx = RES_DIR/f"diffIcon/featured_{featured_level}.png" if featured_level else Path()
 
     # thumbnail id - use level id
-    thumbnail_id = ["0", "14", "18", "20"][level_id] if level_id <= 3 else str(level_id) if level_id is not None else ""  # noqa: PLR2004
-
     return await create_level_image(
         level_line=level_line,
         creator_line=creator_line,
@@ -812,7 +835,7 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
         tier_icon_path=tier_icon_path,
         skill_icons=skill_icons,
         detail_text=detail_text,
-        thumbnail_id=thumbnail_id,
+        thumb_bytes=thumb_bytes,
         derived_suffix=derived_suffix,
         derived_difficulty=derived_difficulty,
         tier_prefix=tier_prefix,
