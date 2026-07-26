@@ -48,6 +48,23 @@ def select_tags(level:PlatInfo) -> list[str]:
 PLUGIN_DIR = Path(__file__).resolve().parent
 RES_DIR = PLUGIN_DIR / "resources"
 
+
+def _load_font(path: Path, size: int) -> ImageFont.FreeTypeFont:
+    """加载字体，加载不了就退到 PIL 自带的默认字体。
+
+    resources/ 没进仓库，新克隆一份是没有字体文件的；
+    以前这里直接 truetype，缺文件就 OSError，整条出图路径全灭。
+    宁可字丑也别整个功能不可用。
+    """
+    try:
+        return ImageFont.truetype(str(path), size)
+    except OSError:
+        logger.error(f"字体加载失败，退回默认字体：{path}")
+        try:
+            return ImageFont.load_default(size)
+        except TypeError:  # Pillow < 10.1 的 load_default 不吃 size
+            return ImageFont.load_default()
+
 CANVAS_W = 1280
 CANVAS_H = 720
 
@@ -195,9 +212,15 @@ def wrap_text_by_width(text: str, max_width: int, font: ImageFont.FreeTypeFont) 
 
 import json
 
-nong_index = {}
-with Path.open(PLUGIN_DIR/"data"/"nong_index.json", encoding="utf-8") as f:
-    nong_index = json.load(f)
+# NONG 歌曲索引。读不到就当空的用 —— 这只影响歌名显示，
+# 不该因为一个缓存文件坏了就让整个插件加载失败。
+nong_index: dict = {}
+_nong_path = PLUGIN_DIR / "data" / "nong_index.json"
+try:
+    with _nong_path.open(encoding="utf-8") as f:
+        nong_index = json.load(f)
+except (OSError, json.JSONDecodeError):
+    logger.warning(f"NONG 索引读不了，歌名会退回 GD 自带的：{_nong_path}")
 
 async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     level_line: str,
@@ -222,8 +245,11 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     derived_difficulty: str = "",
     tier_prefix: str = "",
     title_text: str = "GDDL",
-    pusab_font_path: Path = RES_DIR/"pusab.ttf",
-    sans_font_path: Path = RES_DIR/"arial.ttf",
+    # 磁盘上的文件名是全大写的 PUSAB.TTF / ARIAL.TTF。
+    # macOS 和 Windows 的文件系统不区分大小写所以写小写也能跑，
+    # 但 Linux 上会直接 OSError，整条出图路径全灭。
+    pusab_font_path: Path = RES_DIR/"PUSAB.TTF",
+    sans_font_path: Path = RES_DIR/"ARIAL.TTF",
     left_bg_path: Path = RES_DIR/"left_bg.png",
     right_bg_path: Path = RES_DIR/"right_bg.png",
 ) -> Image.Image:
@@ -270,9 +296,9 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     draw = ImageDraw.Draw(img)
 
     # 字体
-    font_title = ImageFont.truetype(pusab_font_path, FONT_PUSAB_TITLE)
-    font_sub = ImageFont.truetype(pusab_font_path, FONT_PUSAB_SUB)
-    font_small = ImageFont.truetype(sans_font_path, FONT_SANS_SMALL)
+    font_title = _load_font(pusab_font_path, FONT_PUSAB_TITLE)
+    font_sub = _load_font(pusab_font_path, FONT_PUSAB_SUB)
+    font_small = _load_font(sans_font_path, FONT_SANS_SMALL)
 
     # 主面板区域坐标
     panel = (PANEL_MARGIN, PANEL_MARGIN, PANEL_MAIN_WIDTH - PANEL_RIGHT_OFFSET, H - PANEL_BOTTOM_OFFSET)
@@ -504,8 +530,8 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     except FileNotFoundError:
         pass
 
-    title_font = ImageFont.truetype(pusab_font_path, TITLE_FONT_SIZE)
-    card_line_font = ImageFont.truetype(pusab_font_path, CARD_LINE_FONT_SIZE)
+    title_font = _load_font(pusab_font_path, TITLE_FONT_SIZE)
+    card_line_font = _load_font(pusab_font_path, CARD_LINE_FONT_SIZE)
 
     title_w = draw.textbbox((0, 0), title_text, font=title_font)[2]
     icon_spacing = ICON_SPACING

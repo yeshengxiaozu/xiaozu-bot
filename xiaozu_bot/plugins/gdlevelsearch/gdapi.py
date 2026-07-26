@@ -9,6 +9,10 @@ from nonebot import logger
 DEMON_STARS = 10
 LENGTH_PLAT = 5
 
+# boomlings 是 RobTop 自己的服务器，经常半死不活。
+# requests 默认是不超时的，一个卡住的连接能让调用方等到天荒地老。
+GD_TIMEOUT = 15
+
 # GD 服务器一页固定给 10 条
 GD_PAGE_SIZE = 10
 # 响应里的 total 到这个数就是封顶了，不是真实条数。
@@ -622,7 +626,11 @@ def _search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
     data.update({k: v for k, v in optional.items() if v is not None})
     data.update(kwargs)
 
-    resp = requests.post(url, data=data, headers=headers)
+    try:
+        resp = requests.post(url, data=data, headers=headers, timeout=GD_TIMEOUT)
+    except requests.RequestException as e:
+        logger.error(f"[gdapi] 搜索请求失败: {e}")
+        return SearchPage(page=page)
     text = resp.text.strip()
     # -1 有两种意思：搜不到东西，或者页码翻过头了。这里都当成空页返回，
     # 由调用方结合当前页码去区分。
@@ -736,7 +744,11 @@ def get_user_info(
         "secret": "Wmfd2893gb7",
         "targetAccountID": str(user_id)
     }
-    resp = requests.post(url, data=data, headers=headers)
+    try:
+        resp = requests.post(url, data=data, headers=headers, timeout=GD_TIMEOUT)
+    except requests.RequestException as e:
+        logger.error(f"[gdapi] get_user_info({user_id}) 请求失败: {e}")
+        return None
     text = resp.text.strip()
     logger.info(f"get_user_info({user_id}): {text}")
     if text == "-1":
@@ -753,7 +765,11 @@ def search_user(
         "secret": "Wmfd2893gb7",
         "str": name
     }
-    resp = requests.post(url, data=data, headers=headers)
+    try:
+        resp = requests.post(url, data=data, headers=headers, timeout=GD_TIMEOUT)
+    except requests.RequestException as e:
+        logger.error(f"[gdapi] search_user({name}) 请求失败: {e}")
+        return None
     text = resp.text.strip()
     logger.info(f"search_user({name}): {text}")
     if text == "-1":

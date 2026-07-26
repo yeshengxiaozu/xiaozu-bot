@@ -9,6 +9,13 @@ import requests
 from nonebot import logger
 
 HTTP_OK = 200
+# 外网请求超时。不设的话 requests 会一直等，
+# 而这个模块在 import 期就会去抓，等于能把 bot 卡死在启动阶段。
+AREDL_TIMEOUT = 15
+
+# 数据目录。以前写的是相对当前工作目录的 "xiaozu_bot/plugins/..."，
+# 换个目录启动就读不到；改成相对本文件。
+WORK_FOLDER = Path(__file__).resolve().parent / "data"
 
 """get /api/aredl/levels SCHEMA
 [{
@@ -72,7 +79,11 @@ def fetch_aredl_levels() -> list[AREDLLevel]:
     headers = {
         "Content-Type": "application/json",
     }
-    response = requests.get(url, headers=headers)
+    try:
+        response = requests.get(url, headers=headers, timeout=AREDL_TIMEOUT)
+    except requests.RequestException as e:
+        logger.error(f"[aredlapi] 拉取失败 {url}: {e}")
+        return []
     if response.status_code == HTTP_OK:
         levels = response.json()
         aredllevels = [AREDLLevel(level) for level in levels]
@@ -83,12 +94,16 @@ def fetch_aredl_levels() -> list[AREDLLevel]:
 
 
 def get_aredl_levels() -> list[AREDLLevel]:
-    work_folder = "xiaozu_bot/plugins/gdlevelsearch/data"
     aredlfilename = "aredl_levels.json"
-    aredlfilepath = Path(work_folder) / aredlfilename
+    aredlfilepath = WORK_FOLDER / aredlfilename
     if Path.exists(aredlfilepath):
-        with Path.open(aredlfilepath, encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with Path.open(aredlfilepath, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            logger.exception(f"[aredlapi] 缓存读不了，当过期处理: {aredlfilepath}")
+            data = {}
+        if True:
             timestamp = data.get("timestamp")
             if timestamp and time.time() - timestamp < 24 * 3600:
                 levels_data = data.get("levels", [])
@@ -131,7 +146,11 @@ def fetch_arepl_levels() -> list[AREDLLevel]:
     headers = {
         "Content-Type": "application/json",
     }
-    response = requests.get(url, headers=headers)
+    try:
+        response = requests.get(url, headers=headers, timeout=AREDL_TIMEOUT)
+    except requests.RequestException as e:
+        logger.error(f"[aredlapi] 拉取失败 {url}: {e}")
+        return []
     if response.status_code == HTTP_OK:
         levels = response.json()
         arepllevels = [AREDLLevel(level) for level in levels]
@@ -142,12 +161,16 @@ def fetch_arepl_levels() -> list[AREDLLevel]:
 
 
 def get_arepl_levels() -> list[AREDLLevel]:
-    work_folder = "xiaozu_bot/plugins/gdlevelsearch/data"
     areplfilename = "arepl_levels.json"
-    areplfilepath = Path(work_folder) / areplfilename
+    areplfilepath = WORK_FOLDER / areplfilename
     if Path.exists(areplfilepath):
-        with Path.open(areplfilepath, encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with Path.open(areplfilepath, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            logger.exception(f"[aredlapi] 缓存读不了，当过期处理: {areplfilepath}")
+            data = {}
+        if True:
             timestamp = data.get("timestamp")
             if timestamp and time.time() - timestamp < 24 * 3600:
                 arepllevels = []
@@ -219,7 +242,38 @@ def reload() -> None:
     logger.info(f"[aredlapi] 已加载 {len(aredl_dict)} 条关卡")
 
 
-reload()
+def load_from_cache_only() -> None:
+    """只读本地缓存，绝不联网。
+
+    启动阶段用这个：缓存新鲜就直接有数据，不新鲜就先空着，
+    等 startup 钩子在后台把 reload() 跑完再补上。
+    """
+    try:
+        with Path.open(WORK_FOLDER / "aredl_levels.json", encoding="utf-8") as f:
+            aredl_data = json.load(f).get("levels", [])
+        with Path.open(WORK_FOLDER / "arepl_levels.json", encoding="utf-8") as f:
+            arepl_data = json.load(f).get("levels", [])
+    except (OSError, json.JSONDecodeError):
+        logger.warning("[aredlapi] 启动时没读到可用缓存，等后台刷新")
+        return
+
+    aredllevels.clear()
+    aredllevels.extend(AREDLLevel(d) for d in aredl_data)
+    arepllevels.clear()
+    arepllevels.extend(AREDLLevel(d) for d in arepl_data)
+
+    aredl_dict.clear()
+    for level in (*aredllevels, *arepllevels):
+        if level.level_id not in aredl_dict:
+            aredl_dict[level.level_id] = level
+    logger.info(f"[aredlapi] 启动时从缓存载入 {len(aredl_dict)} 条关卡")
+
+
+# import 期只读本地缓存。
+# 以前这里直接 reload()，缓存超过 24 小时就会在插件加载阶段同步打两次外网 ——
+# api.aredl.net 一慢，nonebot 的 load_from_toml 就卡死，bot 起不来也不报错。
+# 真正的刷新挪到 gdlevelsearch/__init__.py 的 startup 钩子里后台做。
+load_from_cache_only()
 
 
 class Aredl:

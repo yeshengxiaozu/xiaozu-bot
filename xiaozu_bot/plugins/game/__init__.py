@@ -1053,7 +1053,11 @@ async def prop_demon_handle(
                 if random.randint(1, 2) == 1:
                     datas.demon_data[group_id]["hp"][opponent_turn] -= 1
                     oppo_hp = datas.demon_data[group_id]["hp"][opponent_turn]
-                    datas.demon_data[group_id]["hp"][player_turn] = current_hp
+                    # 这里原本还有一行 hp[player_turn] = current_hp。
+                    # current_hp 在本函数里唯一的赋值在一百多行之后（烈性TNT 那段），
+                    # 所以走到这儿必定 UnboundLocalError —— 道具已经扣、对方已经掉血，
+                    # 但 finish 永远执行不到，群里一条消息都收不到。
+                    # 而且语义也是反的：这段是「对方摔跤掉血」，不该去写使用者自己的 hp。
                     msg += f"但是一不小心摔了一跤，hp-1！\n- 当前对方hp：{oppo_hp}/{hp_max}\n"
             else:
                 msg += f"- 对方还顺手拿走了你的【{random_item_name}】，但是由于物品栏已满，他遗憾的把这件道具丢了！\n"

@@ -4,7 +4,7 @@ from io import BytesIO
 from typing import Optional
 
 import requests
-from nonebot import logger, require
+from nonebot import get_driver, logger, require
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
 from nonebot.permission import SUPERUSER
 
@@ -42,6 +42,19 @@ def reload_all() -> None:
             # 单个源挂了不影响别的，内存里保留旧数据总比清空好
             logger.exception(f"[gdlevelsearch] {name} 重载失败，保留原有数据")
     logger.info("[gdlevelsearch] 缓存重载完毕")
+
+
+@get_driver().on_startup
+async def _refresh_aredl_on_startup() -> None:
+    """启动之后在后台把 AREDL 刷一遍。
+
+    aredlapi 在 import 期只读本地缓存（缓存旧了也照用），刷新放在这里，
+    这样 api.aredl.net 慢或者挂掉都不会卡住插件加载。
+    """
+    try:
+        await asyncio.to_thread(aredlapi.reload)
+    except Exception:
+        logger.exception("[gdlevelsearch] 启动后刷新 AREDL 失败，继续用缓存")
 
 
 # 关键：只 import updater，让 scheduler 注册生效。
@@ -216,20 +229,20 @@ async def handle_gdsearch(
 
     # ID 搜索
     if len(name) > 4 and name.isdigit():  # noqa: PLR2004 yes its a magic number but it help user
-        level = getlevelinfo(int(name))
+        level = await asyncio.to_thread(getlevelinfo, int(name))
         if level:
             await send_result(bot, event, level)
         else:
             await gdsearch.finish("不存在符合这个id的demon关卡")
         return
 
-    # 名称搜索
-    results = search_by_name(name)
+    # 名称搜索（要打 GDDL，别堵事件循环）
+    results = await asyncio.to_thread(search_by_name, name)
     if not results:
         await gdsearch.finish(f"没有找到名为 '{name}' 的demon关卡")
 
     if len(results) == 1:
-        level = getlevelinfo(results[0].id)
+        level = await asyncio.to_thread(getlevelinfo, results[0].id)
         if level:
             await send_result(bot, event, level)
         else:
@@ -242,14 +255,18 @@ async def handle_gdsearch(
         clear_search_cache(bot, event, user_id)
     )
 
-    msgstr = f"找到 {len(results)} 个名为 '{name}' 的demon关卡："
-    for i, result in enumerate(results, start=1):
-        difficulty_str = f" ({result.difficulty or get_difficulty(result.id)})"
-        creator_str = f" by {result.creator}" if result.creator else ""
-        tier_str = f" t{result.tier}" if result.tier else ""
-        msgstr += f"\n{i}. {result.name}{creator_str}{difficulty_str}{tier_str} (ID: {result.id})"
-    msgstr += "\n输入序号以选中关卡,输入“结束”以中止搜索"
-    await gdsearch.finish(msgstr)
+    # 缺 difficulty 的条目要挨个去打 gdapi，条数多的时候是一串同步请求，
+    # 整段丢线程池里做
+    def _render_results() -> str:
+        text = f"找到 {len(results)} 个名为 '{name}' 的demon关卡："
+        for i, result in enumerate(results, start=1):
+            difficulty_str = f" ({result.difficulty or get_difficulty(result.id)})"
+            creator_str = f" by {result.creator}" if result.creator else ""
+            tier_str = f" t{result.tier}" if result.tier else ""
+            text += f"\n{i}. {result.name}{creator_str}{difficulty_str}{tier_str} (ID: {result.id})"
+        return text + "\n输入序号以选中关卡,输入“结束”以中止搜索"
+
+    await gdsearch.finish(await asyncio.to_thread(_render_results))
 
 
 @gdsearchselect.handle()
@@ -284,7 +301,7 @@ async def handle_choice(bot: Bot, event: Event) -> None:
         timeout_tasks[user_id].cancel()
         del timeout_tasks[user_id]
 
-    level = getlevelinfo(result.id)
+    level = await asyncio.to_thread(getlevelinfo, result.id)
     if level:
         await send_result(bot, event, level)
     else:
@@ -551,7 +568,7 @@ async def handle_gdrandom(bot: Bot, event: Event, arg: Message = CommandArg()) -
     if not result:
         await gdrandom.finish("没有找到符合条件的关卡，把条件放宽点试试")
 
-    level = getlevelinfo(result.ID)
+    level = await asyncio.to_thread(getlevelinfo, result.ID)
     if level:
         await send_result(bot, event, level)
     else:
@@ -571,7 +588,7 @@ async def handle_dailydemon(bot: Bot, event: Event) -> None:
     if level_info is None:
         await dailydemon.finish(err)
 
-    level = getlevelinfo(level_info.ID)
+    level = await asyncio.to_thread(getlevelinfo, level_info.ID)
     if not level:
         await dailydemon.finish(
             f"今日关卡是 {level_info.Meta.Name}（ID {level_info.ID}），"
@@ -590,7 +607,7 @@ async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
     name = arg.extract_plain_text().strip()
     if not name:
         await gduser.finish("请输入想要搜索的用户名")
-    user = get_user_by_name(name)
+    user = await asyncio.to_thread(get_user_by_name, name)
     if not user:
         await gduser.finish("没有找到对应的用户")
     user_basic_info = f"{user.user_name}\n{user.stars}⭐ {user.moons}🌙 {user.demons_count}👿 {str(user.creator_points) + '🔧' if user.creator_points else ''}"

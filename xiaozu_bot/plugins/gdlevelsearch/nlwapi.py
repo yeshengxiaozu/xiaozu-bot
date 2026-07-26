@@ -92,73 +92,53 @@ lwlevel_dict = {}
 hdslevel_dict = {}
 
 
+# 数据目录。以前写的是相对当前工作目录的 "xiaozu_bot/plugins/..."，
+# 换个目录启动就读不到；改成相对本文件。
+WORK_FOLDER = Path(__file__).resolve().parent / "data"
+
+# 四个数据源长得一模一样，列出来循环处理就行
+_SOURCES = (
+    ("nlw_levels.json", "NLW", NLWlevel, nlwlevels),
+    ("ids_levels.json", "IDS", IDSlevel, idslevels),
+    ("lw_levels.json", "LW", LWlevel, lwlevels),
+    ("hds_levels.json", "HDS", HDSlevel, hdslevels),
+)
+
+STALE_AFTER = 7 * 24 * 3600
+
+
 # 抓取逻辑现在统一由 updater/jobs/{nlw,ids,lw,hds}.py 负责，这里只负责读缓存。
-def get_nlw_levels() -> None:  # noqa: C901, PLR0912, PLR0915
-    """从各路json中获取信息并存储到内存"""
-    work_folder = "xiaozu_bot/plugins/gdlevelsearch/data"
-    nlwfilename = "nlw_levels.json"
-    nlwfilepath = Path(work_folder) / nlwfilename
-    idsfilename = "ids_levels.json"
-    idsfilepath = Path(work_folder) / idsfilename
-    lwfilename = "lw_levels.json"
-    lwfilepath = Path(work_folder) / lwfilename
-    hdsfilename = "hds_levels.json"
-    hdsfilepath = Path(work_folder) / hdsfilename
-    if Path.exists(nlwfilepath):
-        with Path.open(nlwfilepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            timestamp = data.get("timestamp")
-            if True:
-                levels_data = data.get("levels", [])
-                for level_data in levels_data:
-                    nlwlevel_instance = NLWlevel(level_data)
-                    nlwlevels.append(nlwlevel_instance)
-            logger.info(
-                f"Sussefully load {nlwlevels.__len__()} levels from nlw_levels.json"
-            )
-            if timestamp and time.time() - timestamp > 7 * 24 * 3600:
-                logger.warning("NLW本地缓存已经使用超过一周，建议再次fetch获取关卡")
-        with Path.open(idsfilepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            timestamp = data.get("timestamp")
-            if True:
-                levels_data = data.get("levels", [])
-                for level_data in levels_data:
-                    idslevel_instance = IDSlevel(level_data)
-                    idslevels.append(idslevel_instance)
-            logger.info(
-                f"Sussefully load {idslevels.__len__()} levels from ids_levels.json"
-            )
-            if timestamp and time.time() - timestamp > 7 * 24 * 3600:
-                logger.warning("IDS本地缓存已经使用超过一周，建议再次fetch获取关卡")
-        with Path.open(lwfilepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            timestamp = data.get("timestamp")
-            if True:
-                levels_data = data.get("levels", [])
-                for level_data in levels_data:
-                    lwlevel_instance = LWlevel(level_data)
-                    lwlevels.append(lwlevel_instance)
-            logger.info(
-                f"Sussefully load {lwlevels.__len__()} levels from lw_levels.json"
-            )
-            if timestamp and time.time() - timestamp > 7 * 24 * 3600:
-                logger.warning("LW本地缓存已经使用超过一周，建议再次fetch获取关卡")
-        with Path.open(hdsfilepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            timestamp = data.get("timestamp")
-            if True:
-                levels_data = data.get("levels", [])
-                for level_data in levels_data:
-                    hdslevel_instance = HDSlevel(level_data)
-                    hdslevels.append(hdslevel_instance)
-            logger.info(
-                f"Sussefully load {hdslevels.__len__()} levels from hds_levels.json"
-            )
-            if timestamp and time.time() - timestamp > 7 * 24 * 3600:
-                logger.warning("HDS本地缓存已经使用超过一周，建议再次fetch获取关卡")
-        return
-    logger.error("本地缓存不存在")
+def get_nlw_levels() -> None:
+    """从各路 json 里读数据进内存。
+
+    每个源单独判断存在、单独 try —— 以前是只判断 nlw 一个文件存在就
+    无条件打开另外三个，而且四个 json.load 都没有保护：
+    任何一个文件损坏或缺失都会让异常冒到插件加载器，
+    整个 gdlevelsearch（包括跟这些文件无关的命令）一起下线。
+    """
+    for filename, label, cls, target in _SOURCES:
+        path = WORK_FOLDER / filename
+        if not path.exists():
+            logger.warning(f"[nlwapi] {label} 缓存不存在，跳过: {path}")
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            logger.exception(f"[nlwapi] {label} 缓存读不了，跳过: {path}")
+            continue
+
+        for level_data in data.get("levels", []):
+            try:
+                target.append(cls(level_data))
+            except (KeyError, TypeError):
+                logger.exception(f"[nlwapi] {label} 有一条数据格式不对，跳过这条")
+
+        logger.info(f"[nlwapi] {label} 载入 {len(target)} 条（{filename}）")
+
+        timestamp = data.get("timestamp")
+        if timestamp and time.time() - timestamp > STALE_AFTER:
+            logger.warning(f"{label}本地缓存已经使用超过一周，建议再次fetch获取关卡")
 
 
 def _rebuild_dicts() -> None:
