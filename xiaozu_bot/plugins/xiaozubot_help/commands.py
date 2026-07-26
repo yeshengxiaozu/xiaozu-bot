@@ -440,17 +440,11 @@ COMMANDS: dict[str, Cmd] = {
         constraints="要在局内",
     ),
     "恶魔帮助": Cmd(
-        usage=".恶魔帮助",
+        usage="*恶魔帮助",
         summary="恶魔轮盘指令速查",
         category="demon",
-        prefix=".",
-        aliases=("。恶魔帮助",),
-        detail=(
-            "恶魔轮盘的指令速查表。\n"
-            "注意这条是点号开头（.恶魔帮助 或 。恶魔帮助），不是星号，\n"
-            "而且要完整输入，后面不能带别的字。"
-        ),
-        examples=(".恶魔帮助",),
+        detail="恶魔轮盘几条指令的速查表，不用在局内也能看。",
+        examples=("*恶魔帮助",),
         constraints="只在指定的几个群里能用",
     ),
 }

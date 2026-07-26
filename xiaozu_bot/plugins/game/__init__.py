@@ -1,6 +1,6 @@
 # 这个代码是我复制粘贴移植的，能跑就不需要动
 # 导入定时任务库
-from nonebot import get_bots, on_command, on_fullmatch, require
+from nonebot import get_bots, on_command, require
 from nonebot.adapters.onebot.v11 import (
     GROUP,
     Bot,
@@ -283,11 +283,13 @@ item_effects = {
 }
 
 help_msg = """
-输入 .开枪 自己/对方 -|- 向自己/对方开枪
-输入 .查看局势 -|- 查看当前局势
-输入 .恶魔道具 道具名/all -|- 查看道具的使用说明
-输入 .恶魔投降 -|- 进行投降
-输入 .使用道具 道具名 -|- 使用道具"""
+输入 *betgame -|- 加入/开始一局
+输入 *setmode 0/1/2 -|- 设置模式（普通/身份/膀胱）
+输入 *开枪 自己/对方 -|- 向自己/对方开枪
+输入 *查看局势 -|- 查看当前局势
+输入 *恶魔道具 道具名/all -|- 查看道具的使用说明
+输入 *恶魔投降 -|- 进行投降
+输入 *使用道具 道具名 -|- 使用道具"""
 
 # 奖励设置
 jiangli = 388
@@ -745,7 +747,7 @@ async def fire_handle(bot: Bot, event: GroupMessageEvent, arg: Message = Command
         await shoot(stp, group_id, fire, args)
     else:
         await fire.finish(
-            "指令错误！请输入 <.开枪 自己> 或者 <.开枪 对方> 来开枪哦！", at_sender=True
+            "指令错误！请输入 <*开枪 自己> 或者 <*开枪 对方> 来开枪哦！", at_sender=True
         )
 
 
@@ -1456,8 +1458,10 @@ async def prop_demon_query_handle(bot: Bot, event: Event, arg: Message = Command
 
 
 # 恶魔帮助
-prop_demon_help = on_fullmatch(
-    [".恶魔帮助", "。恶魔帮助"],
+# 这条原来是从别处直接搬过来的 on_fullmatch(".恶魔帮助")，前缀没跟着改，
+# 和本仓库其他命令的 * 前缀对不上。改成正常的 on_command。
+prop_demon_help = on_command(
+    "恶魔帮助",
     permission=GROUP,
     priority=1,
     block=True,
