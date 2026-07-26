@@ -26,7 +26,7 @@ SORT_ALIASES: dict[str, str] = {
 }
 
 USAGE = """用法：*gdratings <关卡名或id> [-s <排序>] [-asc] [-v]
-  -s <排序>  按什么排：tier / enj / date / progress / attempts / rr
+  -s <排序>  按什么排：tier / enj / date / progress / attempts
   -asc       正序（默认倒序）
   -v         只看通关的人
 翻页：n 下一页 / p 上一页 / 结束 取消"""

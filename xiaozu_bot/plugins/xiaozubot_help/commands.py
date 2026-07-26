@@ -43,77 +43,76 @@ COMMANDS: dict[str, Cmd] = {
     # ---------------------------------------------------------------- gd
     "gdsearch": Cmd(
         usage="*gdsearch 关卡名或id",
-        summary="查关卡（本地榜单）",
+        summary="基于GDDL的demon搜索",
         category="gd",
         detail=(
-            "查本地收录的难度表：GDDL、NLW、IDS、LW、HDS，还有 plat chart。\n"
-            "结果渲染成一张图，上面有 tier、enjoyment、AREDL 排名、技能标签这些。\n"
-            "收录的基本都是 demon，普通关卡多半查不到，那种用 *gdfullsearch。\n"
-            "5 位以上纯数字当关卡 id 直接查；同名搜到多个会列出来，回复序号选，"
-            "30 秒不选自动取消。"
+            "基于 GDDL 进行仅限demon的关卡查询，结合AREDL/NLW等其他来源的信息；\n"
+            "结果以图片化形式输出，包含所有能查询到且方便排版的内容\n"
+            "如果想要查询nondemon关卡，可以使用*gdfullsearch\n"
+            "5 位以上纯数字会自动识别为关卡 id 并进行直接id搜索"
         ),
-        examples=("*gdsearch Tartarus", "*gdsearch 59075347"),
+        examples=("*gdsearch Acu", "*gdsearch 61079355"),
     ),
     "gdfullsearch": Cmd(
         usage="*gdfullsearch 关键词 [-a] [-d [难度]] [-u 难度]",
-        summary="查关卡（直连 GD 服务器）",
+        summary="基于GD服务器的关卡搜索",
         category="gd",
         detail=(
-            "直接问 GD 官方服务器要数据，服务器上有的关卡都能搜到，不限 demon。\n"
-            "默认只搜 rated（评过级的）。\n"
-            "-a　　　搜全部关卡，包括没评级的\n"
+            "从gd服务器直接获取数据进行关卡搜索\n"
+            "默认只搜索 rated 关卡\n"
+            "-a　　　搜索全部关卡，包括unrate\n"
             "-d [难度]　只搜 demon。难度可省略，也可写 1-5 或\n"
             "　　　　　easy / medium / hard / insane / extreme\n"
             "-u 难度　只搜非 demon。写 0-5 或\n"
-            "　　　　　auto / easy / normal / hard / harder / insane（0 就是 auto）\n"
-            "-d 和 -u 不能一起用。\n"
-            "一页 10 条：回复序号选中、n 下一页、p 上一页、结束 取消。"
+            "　　　　　auto / easy / normal / hard / harder / insane\n"
+            "-d 和 -u 不能同时使用（废话）。\n"
+            "一页列出 10 条内容：回复序号选中、回复下一页/上一页翻页，回复结束取消。"
         ),
         examples=("*gdfullsearch bloodbath", "*gdfullsearch stereo -a -u 0"),
-        constraints="2 分钟不操作自动结束翻页",
+        constraints="2 分钟不操作自动结束搜索",
     ),
     "gdratings": Cmd(
         usage="*gdratings 关卡名或id [-s 排序] [-asc] [-v]",
-        summary="看 GDDL 上大家给的评分",
+        summary="查看 GDDL 上的评分详情",
         category="gd",
         detail=(
             "列出这关在 GDDL 上每个人提交的 tier 和 enjoyment，\n"
-            "就是网页上「Submitted ratings」那块。\n"
-            "-s 排序　tier / enj / date / progress / attempts / rr\n"
+            "完全的vibe coding产物！\n"
+            "-s 排序　tier / enj / date / progress / attempts\n"
             "-asc　　正序（默认倒序）\n"
-            "-v　　　只看通关了的人\n"
-            "一页 10 条，n 下一页 / p 上一页 / 结束 取消。\n"
-            "给名字会去 GDDL 上找对应关卡，撞名了会把候选连 id 列出来让你重查。"
+            "-v　　　只看通关的人\n"
+            "一页列出 10 条内容：回复序号选中、回复下一页/上一页翻页，回复结束取消。\n"
+            "如果有多个关卡重名，会列出所有相关关卡的id，请使用id重新搜索"
         ),
-        examples=("*gdratings Tartarus", "*gdratings 10565740 -s enj -asc"),
-        constraints="2 分钟不操作自动结束翻页",
+        examples=("*gdratings Sky Mirage", "*gdratings 137369971 -s enj -asc"),
+        constraints="2 分钟不操作自动结束搜索",
     ),
     "gduser": Cmd(
         usage="*gduser 用户名",
         summary="查 GD 玩家资料",
         category="gd",
         detail=(
-            "查一个 GD 玩家的星星、月亮、demon 数、creator point，\n"
+            "查一个 GD 玩家的star、moon、demon 数、creator point，\n"
             "以及 classic / platformer 各难度的通关数拆分。\n"
-            "按游戏内用户名查。"
+            "请输入游戏内用户名。"
         ),
-        examples=("*gduser Riot",),
+        examples=("*gduser yeshengxiaozu",),
     ),
     "gd随机推关": Cmd(
-        usage="*gd随机推关 tier低 [tier高] [enj低] [enj高]",
+        usage="*gd随机推关 (最低)tier [最高tier] [最低enj] [最高enj]",
         summary="按 tier / enjoyment 随机推一关",
         category="gd",
         detail=(
             "在指定条件里随机挑一关推给你。\n"
-            "第 1 个是 tier 下限（1-39），必填；只给这一个就是只推那个 tier。\n"
-            "第 2 个是 tier 上限，给了就按区间来。\n"
-            "第 3、4 个是 enjoyment 的下限和上限（0-10），不写就不筛。\n"
-            "写反了（上限比下限小）会自动帮你调过来。"
+            "第 1 个是 tier 下限（1-39），必填；只给一个参数时视为上下界相同。\n"
+            "第 2 个是 tier 上限\n"
+            "第 3、4 个是 enjoyment 的下限和上限（0-10，可选）\n"
         ),
         examples=(
             "*gd随机推关 20",
             "*gd随机推关 15 20",
             "*gd随机推关 15 20 7",
+            "*gd随机推关 0 15 0 6",
         ),
     ),
     "dailydemon": Cmd(
@@ -123,8 +122,7 @@ COMMANDS: dict[str, Cmd] = {
         detail=(
             "每天从 GDDL 挑一关推给大家，条件是\n"
             "tier 1-9、enjoyment 7 分以上、提交数 10 条以上，\n"
-            "也就是不太难又确实好玩、还有足够多人评过的那种。\n"
-            "同一天不管谁发、发几次都是同一关，第二天零点自动换。"
+            "无人工干涉，每天更换，随到搞笑关别打我"
         ),
         examples=("*dailydemon",),
     ),
@@ -133,10 +131,10 @@ COMMANDS: dict[str, Cmd] = {
         summary="各难度表的参考线",
         category="gd",
         detail=(
-            "看各个难度表每一档大概什么水平，用知名关卡当标尺。\n"
+            "看各个难度表每一档大概的参考线，使用官方提供或知名关卡。\n"
             "表名：gddl / nlw / lw / ids / hds / plat\n"
             "gddl 有 8 页（5 个 tier 一页），nlw 4 页，plat 2 页，其余 1 页。\n"
-            "aredl 是实时变的给不了固定参考线，直接 *gdsearch 查知名关的排名。"
+            "aredl 会实时变化无法提供固定参考线，建议直接 *gdsearch 查知名关的排名。"
         ),
         examples=("*references gddl 5", "*references nlw"),
     ),
@@ -144,7 +142,7 @@ COMMANDS: dict[str, Cmd] = {
         usage="*gdsearchhelp",
         summary="gd 命令的简要说明",
         category="gd",
-        detail="gd 相关命令的简短说明，内容和 *help gd 差不多。",
+        detail="gdsearch 相关命令的简短说明，内容和 *help gdsearch 差不多。",
     ),
     # ---------------------------------------------------------------- guess
     "guess_start": Cmd(
