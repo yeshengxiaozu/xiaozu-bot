@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from typing import Any, Optional, Union
 
+from nonebot import logger
+
 
 class PlatInfo:
     """Represents one level entry from plat_combined.json."""
@@ -178,13 +180,22 @@ platdata_by_name: dict[str, PlatInfo] = platdata.by_name
 
 def fetch(cache_file: Optional[str] = None) -> list[PlatInfo]:
     """Reload plat data from JSON and return PlatInfo entries."""
-    global platdata, platdata_entries, platdata_main_entries, platdata_derived_entries, platdata_by_id  # noqa: PLW0603
+    # platdata_by_name 之前漏在这里没重新赋值，导致 fetch 之后
+    # getderivedlevels 用的还是旧表
+    global platdata, platdata_entries, platdata_main_entries, platdata_derived_entries, platdata_by_id, platdata_by_name  # noqa: PLW0603, E501
     platdata = PlatData(cache_file=cache_file) if cache_file else PlatData()
     platdata_entries = platdata.entries
     platdata_main_entries = platdata.main_entries
     platdata_derived_entries = platdata.derived_entries
     platdata_by_id = platdata.by_id
+    platdata_by_name = platdata.by_name
     return platdata_entries
+
+
+def reload() -> None:
+    """重新从 plat_combined.json 加载 plat 数据"""
+    fetch()
+    logger.info(f"[platapi] 已加载 {len(platdata_entries)} 条 plat 关卡")
 
 class Platapi:
     @staticmethod

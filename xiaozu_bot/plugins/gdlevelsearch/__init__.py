@@ -8,6 +8,7 @@ from nonebot import logger, require
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
 from nonebot.permission import SUPERUSER
 
+from . import aredlapi, nlwapi, platapi
 from .aredlapi import Aredl  # noqa: F401
 from .draw import create_image_from_gdlevel
 from .gdapi import GDLevel, get_level_by_id, get_user_by_name
@@ -18,10 +19,28 @@ from .platapi import Platapi
 
 require("nonebot_plugin_apscheduler")
 
-# 关键：只 import updater，让 scheduler 注册生效
-#from . import updater  # noqa: F401, RUF100
-
 # i have no idea is this amount of exposal is bad but looked it worked
+
+
+def reload_all() -> None:
+    """把磁盘上的缓存重新读进内存。
+
+    各个 api 模块都是在 import 的时候把数据读进模块级 list/dict 的，
+    不主动调这个的话，updater 半夜抓完的新数据要等到下次重启才生效。
+    """
+    logger.info("[gdlevelsearch] 开始重载本地缓存")
+    for name, module in (("nlw", nlwapi), ("plat", platapi), ("aredl", aredlapi)):
+        try:
+            module.reload()
+        except Exception:
+            # 单个源挂了不影响别的，内存里保留旧数据总比清空好
+            logger.exception(f"[gdlevelsearch] {name} 重载失败，保留原有数据")
+    logger.info("[gdlevelsearch] 缓存重载完毕")
+
+
+# 关键：只 import updater，让 scheduler 注册生效。
+# 必须放在 reload_all 定义之后 —— updater 的定时任务要回头调它。
+from . import updater  # noqa: E402, F401, RUF100
 
 # fallback function since I should already get it using gdapi if this get called we f*cked up
 def get_creator(level_id: int) -> Optional[str]:
@@ -313,11 +332,17 @@ async def handle_gdsearchhelp() -> None:
 
 update_cmd = on_command("gdsearch_update", permission=SUPERUSER, priority=1, block=True)
 
-from .updater.runner import run_all
+from .updater.runner import run_all_async
 
 
 @update_cmd.handle()
 async def _handle(event: MessageEvent):  # noqa: ARG001
     await update_cmd.send("🚀 开始执行手动更新...")
-    result = run_all()
-    await update_cmd.finish(f"✅ 更新完成\n{result}")
+    try:
+        result = await run_all_async()
+    except Exception as e:  # noqa: BLE001
+        await update_cmd.finish(f"❌ 更新失败\n{e}")
+    else:
+        # 抓完立刻重载，这样不用重启就能查到新数据
+        await asyncio.to_thread(reload_all)
+        await update_cmd.finish(f"✅ 更新完成，缓存已重载\n{result}")

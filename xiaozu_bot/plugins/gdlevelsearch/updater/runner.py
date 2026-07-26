@@ -66,3 +66,17 @@ def run_all(stop_on_error: bool = True) -> dict:
         raise RuntimeError(f"Updater failed: {results['failed']}")
 
     return results
+
+
+async def run_all_async(stop_on_error: bool = True) -> dict:
+    """run_all 的异步封装。
+
+    run_all 是同步的，而且是十个串行的网络抓取，直接在事件循环里 await
+    会把整个 bot 卡住到跑完为止。丢到线程里跑。
+    _lock 保证定时任务和手动 gdsearch_update 不会同时开跑。
+    """
+    if _lock.locked():
+        raise RuntimeError("已经有一个更新任务在跑了，等它跑完再来")
+
+    async with _lock:
+        return await asyncio.to_thread(run_all, stop_on_error)

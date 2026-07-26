@@ -7,7 +7,6 @@ from typing import Any, Optional
 
 import requests
 from nonebot import logger
-from nonebot_plugin_apscheduler import scheduler
 
 HTTP_OK = 200
 
@@ -88,7 +87,7 @@ def get_aredl_levels() -> list[AREDLLevel]:
     aredlfilename = "aredl_levels.json"
     aredlfilepath = Path(work_folder) / aredlfilename
     if Path.exists(aredlfilepath):
-        with Path.open(aredlfilepath) as f:
+        with Path.open(aredlfilepath, encoding="utf-8") as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if timestamp and time.time() - timestamp < 24 * 3600:
@@ -120,7 +119,7 @@ def get_aredl_levels() -> list[AREDLLevel]:
         }
         levels_data.append(level_data)
     if levels_data.__len__() > 0:
-        with Path.open(aredlfilepath, "w") as f:
+        with Path.open(aredlfilepath, "w", encoding="utf-8") as f:
             json.dump({"timestamp": time.time(), "levels": levels_data}, f, indent=4)
     else:
         logger.error(f"failed to save {aredllevels.__len__()} level datas")
@@ -147,7 +146,7 @@ def get_arepl_levels() -> list[AREDLLevel]:
     areplfilename = "arepl_levels.json"
     areplfilepath = Path(work_folder) / areplfilename
     if Path.exists(areplfilepath):
-        with Path.open(areplfilepath) as f:
+        with Path.open(areplfilepath, encoding="utf-8") as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if timestamp and time.time() - timestamp < 24 * 3600:
@@ -181,25 +180,46 @@ def get_arepl_levels() -> list[AREDLLevel]:
         }
         levels_data.append(level_data)
     if levels_data.__len__() > 0:
-        with Path.open(areplfilepath, "w") as f:
+        with Path.open(areplfilepath, "w", encoding="utf-8") as f:
             json.dump({"timestamp": time.time(), "levels": levels_data}, f, indent=4)
     else:
         logger.error(f"failed to save {arepllevels.__len__()} level datas")
     return arepllevels
 
 
-aredllevels = get_aredl_levels()
-arepllevels = get_arepl_levels()
-aredl_dict = {}
+aredllevels: list[AREDLLevel] = []
+arepllevels: list[AREDLLevel] = []
+aredl_dict: dict[int, AREDLLevel] = {}
 
-for level in aredllevels:
-    if level.level_id not in aredl_dict:
-        aredl_dict[level.level_id] = level
-    # 同关卡保留第一个也就是排位高的，用于兼容2p
 
-for level in arepllevels:
-    if level.level_id not in aredl_dict:
-        aredl_dict[level.level_id] = level
+def reload() -> None:
+    """重新拉取 AREDL / AREPL 数据并重建查询字典。
+
+    注意这里必须原地改 list/dict（clear + extend/update）而不是重新赋值：
+    别的模块是 `from .aredlapi import aredllevels` 拿走引用的，重新赋值它们看不到。
+    """
+    new_aredl = get_aredl_levels()
+    new_arepl = get_arepl_levels()
+
+    aredllevels.clear()
+    aredllevels.extend(new_aredl)
+    arepllevels.clear()
+    arepllevels.extend(new_arepl)
+
+    aredl_dict.clear()
+    for level in aredllevels:
+        if level.level_id not in aredl_dict:
+            aredl_dict[level.level_id] = level
+        # 同关卡保留第一个也就是排位高的，用于兼容2p
+
+    for level in arepllevels:
+        if level.level_id not in aredl_dict:
+            aredl_dict[level.level_id] = level
+
+    logger.info(f"[aredlapi] 已加载 {len(aredl_dict)} 条关卡")
+
+
+reload()
 
 
 class Aredl:
@@ -218,25 +238,6 @@ class Aredl:
                 return level
         return None
 
-@scheduler.scheduled_job("cron", hour=3, minute=0)
-async def daily_update_job() -> None:
-    """
-    每日自动更新入口
-    """
-    logger.info("[aredlapi] 开始执行每日数据更新")
-
-    try:
-        aredllevels = get_aredl_levels()
-        arepllevels = get_arepl_levels()
-        aredl_dict = {}
-
-        for level in aredllevels:
-            if level.level_id not in aredl_dict:
-                aredl_dict[level.level_id] = level
-            # 同关卡保留第一个也就是排位高的，用于兼容2p
-
-        for level in arepllevels:
-            if level.level_id not in aredl_dict:
-                aredl_dict[level.level_id] = level
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"[aredlapi] 更新失败:{e!s}")
+# 这里原本自己挂了一个 3 点的 scheduled_job，但它是坏的：赋值的是局部变量，
+# 没有 global，抓完数据就丢了，模块全局一直是启动时那份。
+# 现在统一由 gdlevelsearch 的 reload_all() 在每日更新跑完后调用上面的 reload()。

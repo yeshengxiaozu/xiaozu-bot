@@ -105,7 +105,7 @@ def get_nlw_levels() -> None:  # noqa: C901, PLR0912, PLR0915
     hdsfilename = "hds_levels.json"
     hdsfilepath = Path(work_folder) / hdsfilename
     if Path.exists(nlwfilepath):
-        with Path.open(nlwfilepath, "r") as f:
+        with Path.open(nlwfilepath, "r", encoding="utf-8") as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if True:
@@ -118,7 +118,7 @@ def get_nlw_levels() -> None:  # noqa: C901, PLR0912, PLR0915
             )
             if timestamp and time.time() - timestamp > 7 * 24 * 3600:
                 logger.warning("NLW本地缓存已经使用超过一周，建议再次fetch获取关卡")
-        with Path.open(idsfilepath, "r") as f:
+        with Path.open(idsfilepath, "r", encoding="utf-8") as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if True:
@@ -131,7 +131,7 @@ def get_nlw_levels() -> None:  # noqa: C901, PLR0912, PLR0915
             )
             if timestamp and time.time() - timestamp > 7 * 24 * 3600:
                 logger.warning("IDS本地缓存已经使用超过一周，建议再次fetch获取关卡")
-        with Path.open(lwfilepath, "r") as f:
+        with Path.open(lwfilepath, "r", encoding="utf-8") as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if True:
@@ -144,7 +144,7 @@ def get_nlw_levels() -> None:  # noqa: C901, PLR0912, PLR0915
             )
             if timestamp and time.time() - timestamp > 7 * 24 * 3600:
                 logger.warning("LW本地缓存已经使用超过一周，建议再次fetch获取关卡")
-        with Path.open(hdsfilepath, "r") as f:
+        with Path.open(hdsfilepath, "r", encoding="utf-8") as f:
             data = json.load(f)
             timestamp = data.get("timestamp")
             if True:
@@ -161,15 +161,34 @@ def get_nlw_levels() -> None:  # noqa: C901, PLR0912, PLR0915
     logger.error("本地缓存不存在")
 
 
-get_nlw_levels()
-for level in nlwlevels:
-    nlwlevel_dict[level.id] = level
-for level in idslevels:
-    idslevel_dict[level.id] = level
-for level in lwlevels:
-    lwlevel_dict[level.id] = level
-for level in hdslevels:
-    hdslevel_dict[level.id] = level
+def _rebuild_dicts() -> None:
+    """按 id 重建四张查询表"""
+    for dct, levels in (
+        (nlwlevel_dict, nlwlevels),
+        (idslevel_dict, idslevels),
+        (lwlevel_dict, lwlevels),
+        (hdslevel_dict, hdslevels),
+    ):
+        dct.clear()
+        for level in levels:
+            dct[level.id] = level
+
+
+def reload() -> None:
+    """重新从本地缓存加载 NLW/IDS/LW/HDS 数据。
+
+    get_nlw_levels() 是往 list 里 append 的，所以必须先 clear，
+    否则每更新一次条目就翻一倍。
+    也正因为要保持 `from .nlwapi import nlwlevels` 那种引用有效，
+    这里全部原地清空而不是重新赋值。
+    """
+    for levels in (nlwlevels, idslevels, lwlevels, hdslevels):
+        levels.clear()
+    get_nlw_levels()
+    _rebuild_dicts()
+
+
+reload()
 
 
 class Nlw:

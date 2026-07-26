@@ -196,7 +196,7 @@ def wrap_text_by_width(text: str, max_width: int, font: ImageFont.FreeTypeFont) 
 import json
 
 nong_index = {}
-with Path.open(PLUGIN_DIR/"data"/"nong_index.json") as f:
+with Path.open(PLUGIN_DIR/"data"/"nong_index.json", encoding="utf-8") as f:
     nong_index = json.load(f)
 
 async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
