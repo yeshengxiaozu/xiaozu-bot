@@ -192,27 +192,56 @@ py -3.13 -m venv .venv313
 
 ## 8. 更新器（gdlevelsearch 的数据更新）出问题时
 
-先知道一个背景：**`publish()` 这一步在 2026-07-27 之前从来没有成功执行过**
-（`getmetadata.py` 少 import 了一个名字，第二阶段就 NameError 了，而流程是失败即中止）。
-所以这条链路是「刚开始真正跑起来」的状态，后面的代码历史上没被执行过，
-出问题很正常。
-
-手动跑一次（不需要 bot 在线）：
+手动跑一次（不需要 bot 在线，也不需要连 QQ）：
 
 ```bash
 python scripts/run_updater.py
 ```
 
-已知还没修的坑，出问题先怀疑这几个：
+**2026-07-27 实测跑通过一次**：10 个任务全绿，发布 6 个文件，用时 135 秒。
+数据变动量：hds -83 条、ids +26、nlw +27、plat_combined +53、nong_index +17
+（都是上游榜单的正常增删，核对过不是被截断）。
 
-- `updater/jobs/platrank.py` —— `weights[i]` 没做边界检查，Google Sheets 把某列尾部空行裁掉时会 IndexError；
+想先小范围试试，用这个 —— 它只发 2 个 Sheets 请求，而且产出的
+`platrank_weights.json` 属于中间文件（不在 `PUBLISHED_FILES` 里），
+**跑它绝对不会动 `data/`**：
+
+```bash
+python scripts/run_updater.py platrank
+```
+
+⚠️ **两条硬规矩**：
+
+1. **别在指定任务名的时候加 `--continue`。** `scripts/run_updater.py:81` 那个分支
+   在「有任务失败但加了 --continue」的情况下**照样会发布**。
+2. **跑全量之前先备份 `data/`。** 那个目录在 `.gitignore` 里，被盖掉就找不回来了：
+   ```bash
+   cp -r xiaozu_bot/plugins/gdlevelsearch/data ~/gd-data-backup
+   ```
+
+### 已知还没修的坑，出问题先怀疑这几个
+
+- `updater/jobs/platrank.py` —— `weights[i]` 没做边界检查，Google Sheets 把某列尾部
+  空行裁掉时会 IndexError（会让整条流水线中止，但**不会污染数据**，属于安全的失败）；
   另外「空权重」被当成分节标题，遇到一整行空的会把后面所有行都丢掉
-- `updater/paths.py` 的 `publish()` —— **没有下限检查**。上游表格改个格式导致解析出 0 条，
-  这一步照样把空数据发布上去，直接盖掉好的数据
-- `updater/jobs/getmetadata.py` —— 写回失败只记日志不报错，于是 `publish()` 会把没补 metadata 的数据当成品发出去
-- `updater/notify.py` —— `get_bot()` 写在 try 外面，没有 bot 在线时报错通知本身会抛异常，真正的错误信息就丢了
+- `updater/jobs/getmetadata.py` —— 写回失败只记日志不报错。而且 `open("w")` 是先截断的，
+  所以写到一半失败会在 staging 留下一个 0 字节或者半截的文件，然后被发布出去。
+  （下面那道下限检查能拦住变空的情况，但拦不住「半截但还有一半」。）
+- `updater/jobs/fetchsfh.py` —— 拿到非 200 直接静默 return，不记日志，
+  于是你会以为 NONG 索引更新了，其实还是昨天的
+- `nong_index.json` 发布了但没人 reload 它 —— `draw.py` 的 `nong_index` 是 import 期读一次，
+  要等重启 bot 才生效
 
-（这几个都是既有问题，不是新引入的，所以这轮没动。要修的话它们是独立的一次改动。）
+### 已经修掉的（别再照着老文档怀疑它们）
+
+- ~~`publish()` 没有下限检查~~ —— 现在有了。新数据条目数不到旧数据的 50% 就拒绝发布
+  那个文件，其余文件照常。上游表格改格式导致解析出空列表时，线上数据不会被盖掉。
+  （门槛设在 50% 是因为实测一次真实更新的波动是 -3.9% ~ +3.4%。）
+- ~~`notify.py` 的 `get_bot()` 写在 try 外面~~ —— 现在拿不到 bot 就把整份报告写进日志，
+  不会再用「There are no bots to get.」把真正的错误顶掉。
+
+`tests/test_updater_isolation.py` 专门盯这些「更新器出事会不会连累 bot」的性质，
+21 个用例，删了任何一个都等于把对应的坑重新挖开。
 
 ---
 
