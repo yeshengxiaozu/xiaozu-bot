@@ -6,6 +6,18 @@ from nonebot import logger
 apikey = "3244ce47ed4cf932ec348d68cdf72496de68ee48a2846044db906baa28a7cf7d"
 HTTP_OK = 200
 GDDL_PLAT_LENGTH = 6
+# 提交评分一页放几条。网页上是 10 条一页，跟着来。
+GDDL_SUBMISSION_LIMIT = 10
+# 接口限制 limit 只能 1-30，超了直接 400
+GDDL_LIMIT_MIN = 1
+GDDL_LIMIT_MAX = 30
+# 排序字段，照 API 文档的 SubmissionSortOptions
+SUBMISSION_SORTS = frozenset(
+    {"attempts", "dateAdded", "enjoyment", "rating", "progress", "refreshRate", "username"}
+)
+# 方向只认小写的 asc/desc，传 ASC/DESC 会 400
+SORT_DIRECTIONS = frozenset({"asc", "desc"})
+PROGRESS_FILTERS = frozenset({"all", "victors", "incomplete"})
 
 """
 SongDTO{
@@ -143,7 +155,127 @@ Tag*	TagDTO{
 }
 ]
 """
+class Submission:
+    """GDDL 上某个人对某关卡提交的一条评分。
+
+    对应 API 文档里的 SubmissionDTO。Rating 是 tier（1-39），
+    Enjoyment 是 0-10，两个都可能是 null（只填了其中一项）。
+    """
+
+    def __init__(self, jsondict: dict[str, Any]) -> None:
+        self.id = jsondict.get("ID")
+        self.rating = jsondict.get("Rating")          # tier，可能为 None
+        self.enjoyment = jsondict.get("Enjoyment")    # 0-10，可能为 None
+        self.refresh_rate = jsondict.get("RefreshRate")
+        self.device = jsondict.get("Device")
+        self.proof = jsondict.get("Proof")
+        self.is_solo = jsondict.get("IsSolo", True)
+        self.progress = jsondict.get("Progress")
+        self.attempts = jsondict.get("Attempts")
+        self.date_added = jsondict.get("DateAdded")
+        user = jsondict.get("User") or {}
+        self.user_id = jsondict.get("UserID")
+        self.user_name = user.get("Name")
+        second = jsondict.get("SecondaryUser") or {}
+        self.second_user_name = second.get("Name")
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
+class SubmissionPage:
+    """/api/level/{id}/submissions 的一页结果"""
+
+    def __init__(self, jsondict: dict[str, Any]) -> None:
+        self.total: int = jsondict.get("total", 0)
+        self.limit: int = jsondict.get("limit", GDDL_SUBMISSION_LIMIT)
+        self.page: int = jsondict.get("page", 0)
+        self.submissions: list[Submission] = [
+            Submission(s) for s in jsondict.get("submissions", [])
+        ]
+
+    @property
+    def total_pages(self) -> int:
+        if self.limit <= 0:
+            return 1
+        return max(1, -(-self.total // self.limit))  # 向上取整
+
+
 class Gddl:
+    @staticmethod
+    def getsubmissions(  # noqa: PLR0913
+        level_id: Union[str, int],
+        page: int = 0,
+        limit: int = GDDL_SUBMISSION_LIMIT,
+        sort: Optional[str] = None,
+        sort_direction: Optional[str] = None,
+        progress_filter: Optional[str] = None,
+    ) -> Optional[SubmissionPage]:
+        """拿某关卡的提交评分列表（就是网页上「Submitted ratings」那块）。
+
+        page 从 0 开始，limit 只能 1-30。
+        sort 见 SUBMISSION_SORTS，sort_direction 只认小写 asc/desc
+        （传 ASC/DESC 接口直接 400，实测过）。
+        progress_filter 见 PROGRESS_FILTERS。
+        非法的值这里直接丢掉不传，免得整个请求被打回来。
+        请求失败返回 None（和「没有提交」区分开）。
+        """
+        url = f"https://gdladder.com/api/level/{level_id}/submissions"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {apikey}",
+        }
+        params: dict[str, Any] = {
+            "page": max(0, page),
+            "limit": min(GDDL_LIMIT_MAX, max(GDDL_LIMIT_MIN, limit)),
+        }
+        if sort:
+            if sort in SUBMISSION_SORTS:
+                params["sort"] = sort
+            else:
+                logger.warning(f"[gddl] 不认识的排序字段 {sort!r}，忽略")
+        if sort_direction:
+            direction = sort_direction.lower()
+            if direction in SORT_DIRECTIONS:
+                params["sortDirection"] = direction
+            else:
+                logger.warning(f"[gddl] 不认识的排序方向 {sort_direction!r}，忽略")
+        if progress_filter:
+            if progress_filter in PROGRESS_FILTERS:
+                params["progressFilter"] = progress_filter
+            else:
+                logger.warning(f"[gddl] 不认识的进度过滤 {progress_filter!r}，忽略")
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=15)
+        except requests.RequestException as e:
+            logger.error(f"[gddl] 拉取提交评分失败 level={level_id}: {e}")
+            return None
+        if response.status_code != HTTP_OK:
+            logger.warning(
+                f"[gddl] 提交评分接口返回 {response.status_code} level={level_id}"
+            )
+            return None
+        return SubmissionPage(response.json())
+
+    @staticmethod
+    def getspread(level_id: Union[str, int]) -> Optional[dict[str, Any]]:
+        """拿某关卡的 tier / enjoyment 分布直方图"""
+        url = f"https://gdladder.com/api/level/{level_id}/submissions/spread"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {apikey}",
+        }
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+        except requests.RequestException as e:
+            logger.error(f"[gddl] 拉取分布失败 level={level_id}: {e}")
+            return None
+        if response.status_code != HTTP_OK:
+            return None
+        return response.json()
+
     @staticmethod
     def getleveltags(level_id: Union[str, int]) -> list[dict[str, Any]]:
         """??????gddl api?????????????????????tag"""

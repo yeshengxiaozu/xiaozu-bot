@@ -610,6 +610,11 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
             rank_parts.append("AREDL #Legacy")
         else:
             rank_parts.append(f"AREDL #{aredl_info.position}")
+        # EDEL 的 enjoyment 是 0-100 的刻度，不是 GDDL 那个 0-10，所以标上 EDEL 前缀区分。
+        # pending 的数还没定稿，直接不显示。
+        edel = getattr(aredl_info, "edel_enjoyment", None)
+        if edel is not None and not getattr(aredl_info, "is_edel_pending", False):
+            rank_parts.append(f"EDEL {edel:.1f}")
     rank_line = " | ".join(rank_parts) if rank_parts else ""
 
     # tier 信息与前缀
