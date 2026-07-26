@@ -92,29 +92,7 @@ lwlevel_dict = {}
 hdslevel_dict = {}
 
 
-# TODO：把这个函数重构为调用一套通过google sheet api获取信息并交互性从SUPERUSER处获取无法自动处理的id的信息
-# 目前无法解决的技术性困难是不挂梯子没法访问google挂梯子无法访问gdhistory
-"""
-def fetch_nlw_levels() -> None:
-    # 从https://nlw.oat.zone/中的/list获取信息
-    nlwurl = "https://nlw.oat.zone/list?type=all"
-    response = requests.get(nlwurl)
-    if response.status_code == HTTP_OK:
-        data = response.json()
-        # data中的每个元素都是一个关卡的信息，遍历data并将信息储存在nlwlevels中
-        for level_data in data:
-            nlwlevel_instance = NLWlevel(level_data)
-            nlwlevels.append(nlwlevel_instance)
-    # 从ids获取信息并如法炮制
-    idsurl = "https://nlw.oat.zone/ids?type=all"
-    response = requests.get(idsurl)
-    if response.status_code == HTTP_OK:
-        data = response.json()
-        for level_data in data:
-            idslevel_instance = IDSlevel(level_data)
-            idslevels.append(idslevel_instance)
-"""
-
+# 抓取逻辑现在统一由 updater/jobs/{nlw,ids,lw,hds}.py 负责，这里只负责读缓存。
 def get_nlw_levels() -> None:  # noqa: C901, PLR0912, PLR0915
     """从各路json中获取信息并存储到内存"""
     work_folder = "xiaozu_bot/plugins/gdlevelsearch/data"
@@ -181,39 +159,6 @@ def get_nlw_levels() -> None:  # noqa: C901, PLR0912, PLR0915
                 logger.warning("HDS本地缓存已经使用超过一周，建议再次fetch获取关卡")
         return
     logger.error("本地缓存不存在")
-    return  # 因为无代理环境难以自动fetch，改为在另一设备手动执行fetch
-    """
-    fetch_nlw_levels()
-    levels_data = []
-    for level in nlwlevels:
-        level_data = {
-            "name": level.name,
-            "creator": level.creator,
-            "id": level.id,
-            "description": level.description,
-            "video": level.video,
-            "tier": level.tier,
-            "skillset": level.skillset,
-            "enjoyment": level.enjoyment
-        }
-        levels_data.append(level_data)
-    with open(nlwfilepath, "w") as f:
-        json.dump({"timestamp": time.time(), "levels": levels_data}, f)
-    levels_data = []
-    for level in idslevels:
-        level_data = {
-            "name": level.name,
-            "creator": level.creator,
-            "id": level.id,
-            "description": level.description,
-            "video": level.video,
-            "tier": level.tier,
-            "skillset": level.skillset
-        }
-        levels_data.append(level_data)
-    with open(idsfilepath, "w") as f:
-        json.dump({"timestamp": time.time(), "levels": levels_data}, f)
-    """
 
 
 get_nlw_levels()

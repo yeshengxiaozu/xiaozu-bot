@@ -99,23 +99,7 @@ def search_by_name(name: str) -> list[SearchResult]:
             logger.info(
                 f"Find a result in GDDL: tier {getattr(level, 'Rating', None) or 'Na'}"
             )
-    """
-    # 2) AREDL exact match
-    # logically useless because all rated demon should already be in GDDL
-    for level in aredllevels:
-        if not level or not getattr(level, "name", None):
-            continue
-        if level.name.strip().lower() == normalized:
-            _add_search_result(
-                results,
-                int(level.level_id),
-                level.name,
-                None,
-                getattr(level, "gddl_tier", None),
-                "Extreme Demon",
-            )
-            logger.info("Find a result in AREDL: #" + str(level.position) or "Unknown")
-    """
+    # 注：不查 AREDL，因为所有 rated demon 理论上都已经在 GDDL 里了
 
     # 3) NLW exact match
     for level in Nlw.getlevelbyname(name):
@@ -141,28 +125,8 @@ def search_by_name(name: str) -> list[SearchResult]:
             None,
         )
 
-    if results:
-        return list(results.values())
-
-    # Fallback to gdapi exact match
-    """
-    # No point to do these fallback thing since theres already a gdsearch bot that is better than mine
-    try:
-        rated = search_levels_by_name(name, star=True)
-    except Exception:
-        rated = []
-    exact_rated = [lvl for lvl in (rated or []) if getattr(lvl, "level_name", "").strip().lower() == normalized]
-    if exact_rated:
-        return [SearchResult(int(lvl.level_id), lvl.level_name, None, None, "GDAPI") for lvl in exact_rated]
-
-    try:
-        unrated = search_levels_by_name(name, star=False)
-    except Exception:
-        unrated = []
-    exact_unrated = [lvl for lvl in (unrated or []) if getattr(lvl, "level_name", "").strip().lower() == normalized]
-    return [SearchResult(int(lvl.level_id), lvl.level_name, None, None, "GDAPI") for lvl in exact_unrated[:5]]
-    """
-    return []
+    # 不做 gdapi 兜底搜索：已经有个比我这个做得好的 gdsearch bot 了
+    return list(results.values())
 
 
 def getlevelinfo(level_id: int) -> Optional[GDLevel]:
@@ -177,39 +141,14 @@ from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageEvent  # noq
 from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
-#from .format_message import _format_demon_image_text, _format_demon_message, _format_non_demon_message, _format_pemon_image_text, _format_pemon_message
-#since we have image output, we dont need a million format thing
+# 输出统一走图片，pemon / demon / non-demon 三个分支渲染的东西完全一样，所以合并成一条路径
+
 
 async def send_result(bot: Bot, event: Event, level_info: GDLevel) -> None:
     image = await create_image_from_gdlevel(level_info)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     await bot.send(event, MessageSegment.image(buffer))
-    """
-    if level_info.is_pemon():  # noqa: SIM114 since its still a testing thing
-        image = await create_image_from_gdlevel(level_info)
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        await bot.send(event, MessageSegment.image(buffer))
-        #msgstr = _format_pemon_message(level_info)
-        #await bot.send(event=event, message=msgstr)
-        #await send_ttp(bot, event, _format_pemon_image_text(level_info))
-    elif level_info.is_demon_detail():
-        image = await create_image_from_gdlevel(level_info)
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        await bot.send(event, MessageSegment.image(buffer))
-        #msgstr = _format_demon_message(level_info)
-        #await bot.send(event=event, message=msgstr)
-        #await send_ttp(bot, event, _format_demon_image_text(level_info))
-    else:
-        image = await create_image_from_gdlevel(level_info)
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        await bot.send(event, MessageSegment.image(buffer))
-        msgstr = _format_non_demon_message(level_info)
-        await bot.send(event=event, message=msgstr)
-    """
 
 
 gdsearch = on_command("gdsearch")
