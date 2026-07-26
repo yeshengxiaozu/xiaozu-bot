@@ -244,7 +244,13 @@ def enrich_levels_with_ids(
             
             if data is None or data.get("online_id", None) is None:
                 #尝试使用gdapi
-                from .gdapi import search_levels_by_name
+                # 用插件主目录那份 gdapi。updater/jobs 下原来还有一份 571 行的
+                # 副本，已经和主的分叉了（主的重构成了 parse_server_key_value_pairs
+                # 那套并多了 GDUser），留着只会让 bug 要修两遍，所以删掉了。
+                try:
+                    from ...gdapi import search_levels_by_name   # bot 里跑
+                except ImportError:
+                    from gdapi import search_levels_by_name      # 单独跑脚本时
                 levels = search_levels_by_name(name)
                 if not levels:
                     logger.error(f"Could not find metadata for '{name}' by '{creator_raw}'")

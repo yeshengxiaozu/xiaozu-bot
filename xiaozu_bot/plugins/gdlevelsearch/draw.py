@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 from pathlib import Path
@@ -222,6 +223,54 @@ try:
 except (OSError, json.JSONDecodeError):
     logger.warning(f"NONG 索引读不了，歌名会退回 GD 自带的：{_nong_path}")
 
+# 缩略图偶尔会因为网络抖动/服务冷启动拿不到，直接退占位图太可惜了，重试几次。
+THUMB_RETRIES = 3
+THUMB_BACKOFF = 0.6          # 第 n 次失败后等 THUMB_BACKOFF * n 秒
+HTTP_OK = 200
+HTTP_NOT_FOUND = 404
+HTTP_SERVER_ERROR = 500
+
+
+async def _fetch_thumbnail(thumbnail_id: str) -> Optional[bytes]:
+    """取关卡缩略图，失败会重试。拿不到返回 None。
+
+    404 不重试 —— 那是「这关本来就没有缩略图」，重试只会让每张没图的卡
+    白等三倍时间。只有超时、连接失败、5xx 这种一看就是暂时性的才重试。
+    """
+    url = f"https://levelthumbs.prevter.me/thumbnail/{thumbnail_id}/medium"
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "image/webp,image/*;q=0.8"}
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        for attempt in range(1, THUMB_RETRIES + 1):
+            try:
+                resp = await client.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+            except Exception as e:  # noqa: BLE001  httpx 的超时/连接错误都算暂时的
+                logger.warning(
+                    f"缩略图第 {attempt}/{THUMB_RETRIES} 次失败（{type(e).__name__}）: {thumbnail_id}"
+                )
+            else:
+                if resp.status_code == HTTP_NOT_FOUND:
+                    logger.info(f"这关没有缩略图（404），不重试: {thumbnail_id}")
+                    return None
+                if resp.status_code == HTTP_OK and resp.content:
+                    if attempt > 1:
+                        logger.info(f"缩略图第 {attempt} 次尝试成功: {thumbnail_id}")
+                    return resp.content
+                logger.warning(
+                    f"缩略图第 {attempt}/{THUMB_RETRIES} 次拿到 HTTP {resp.status_code}"
+                    f"（{len(resp.content)}B）: {thumbnail_id}"
+                )
+                if resp.status_code < HTTP_SERVER_ERROR:
+                    # 4xx（除了 404）重试也没意义
+                    return None
+
+            if attempt < THUMB_RETRIES:
+                await asyncio.sleep(THUMB_BACKOFF * attempt)
+
+    logger.warning(f"缩略图 {THUMB_RETRIES} 次都没拿到，退回占位图: {thumbnail_id}")
+    return None
+
+
 async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     level_line: str,
     creator_line: str,
@@ -421,21 +470,14 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     thumb_img = None
 
     if thumb_img is None and httpx is not None and thumbnail_id:
-        thumb_url = f"https://levelthumbs.prevter.me/thumbnail/{thumbnail_id}/medium"
-        logger.debug(f"Fetching thumbnail from {thumb_url}")
-        try:
-            headers = {"User-Agent": "Mozilla/5.0", "Accept": "image/webp,image/*;q=0.8"}
-            async with httpx.AsyncClient(follow_redirects=True) as client:
-                resp = await client.get(thumb_url, headers=headers, timeout=HTTP_TIMEOUT)
-            if resp.status_code == 200 and resp.content:  # noqa: PLR2004
-                try:
-                    thumb_img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-                    thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
-                    logger.info("Thumbnail loaded via httpx")
-                except Exception:  # noqa: BLE001
-                    pass
-        except Exception:  # noqa: BLE001
-            pass
+        raw = await _fetch_thumbnail(thumbnail_id)
+        if raw is not None:
+            try:
+                thumb_img = Image.open(io.BytesIO(raw)).convert("RGBA")
+                thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+            except Exception:  # noqa: BLE001
+                logger.warning("缩略图拿到了但解不开，退回占位图")
+                thumb_img = None
 
     if thumb_img is None:
         try:
