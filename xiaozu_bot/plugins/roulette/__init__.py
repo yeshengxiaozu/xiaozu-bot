@@ -1,30 +1,26 @@
+"""轮盘已经下线，这里只剩三条命令。
+
+蓝莓经济那套（buy / sell / ck / 奖池 / 捐赠）连同 zhua_api 插件一起删掉了，
+剩下的两条 *map 和 *random 本来就跟蓝莓无关，单纯是随机工具，所以留着。
+*roulette 保留成一块墓碑，免得老玩家发了没反应还以为 bot 坏了。
+"""
+
 import random
 
-from nonebot import get_plugin_config, on_command, require
+from nonebot import get_plugin_config, on_command
 from nonebot.adapters import Message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
 from nonebot.params import CommandArg
-from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
-
-from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
 from .config import Config
 from .const import *
-from .data import *
-
-manager = require("zhua_api").berry_manager
-msg = require("zhua_api").msg_api()
 
 random.seed()
-r = JsonRedis(plugin_storage(__file__))
-# 这行是在 import 期间跑的，键不存在就 int(None) 直接把整个插件的加载搞崩，
-# 所以必须给个默认值（换成空的 json 存储之后第一次启动就是这种情况）
-data.pool = int(r.get("roulette_pool") or 0)
 
 __plugin_meta__ = PluginMetadata(
     name="roulette",
-    description="",
+    description="轮盘已下线，仅保留 *map / *random",
     usage="",
     config=Config,
 )
@@ -33,66 +29,28 @@ config = get_plugin_config(Config)
 
 roulette = on_command("roulette")
 get_map = on_command("map")
-get_pool = on_command("roulette_pool")
-donate = on_command("roulette_donate")
-roulette_count = on_command("roulette_count")
-set_pool = on_command("roulette_set_pool", permission=SUPERUSER)
-roulette_fix = on_command("roulette_fix", permission=SUPERUSER)
 rand_one = on_command("random")
+
+RETIRED_MSG = (
+    "你来到了那个轮盘原本所在的位置，只看到一块写着打烊的招牌。"
+    "这个轮盘不会再转动了。\n"
+    "（蓝莓系统和轮盘都已经下线，想随机抽个东西可以用 *random，"
+    "随机来张地图用 *map）"
+)
 
 
 @roulette.handle()
-async def handle_function(event: GroupMessageEvent):
-    if event.group_id != msg.group_id:
-        await roulette.finish("这个功能无法在伯特群外使用！考虑使用*map作为替代品。")
-    await roulette.finish(
-        "你来到了那个轮盘原本所在的位置，只看到一块写着打烊的招牌。这个轮盘不会再转动了。"
-    )
-
-
-@get_pool.handle()
-async def handle_function():
-    await get_pool.finish(
-        "你来到了蓝莓奖池旁。里面空空如也，周围的护栏呈现出风化的痕迹。看来没有人会再关心里面有多少蓝莓了。"
-    )
-
-
-@set_pool.handle()
-async def handle_function(args: Message = CommandArg()):
-    await set_pool.finish("……你记得你做了什么。")
+async def handle_roulette() -> None:
+    await roulette.finish(RETIRED_MSG)
 
 
 @get_map.handle()
-async def handle_function():
+async def handle_map() -> None:
     await get_map.finish("Your map is: " + random.choice(const.sjmap))
 
 
-@donate.handle()
-async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg()):
-    if event.group_id != msg.group_id:
-        await donate.finish("这个功能依赖和其他伯特的通信，无法在伯特群外使用！")
-    await donate.finish(
-        "你来到了蓝莓奖池旁。里面空空如也，周围的护栏呈现出风化的痕迹。你扔了一个或者一些不存在的蓝莓进去。那不重要。"
-    )
-
-
-@roulette_count.handle()
-async def handle_function():
-    t = r.get("roulette_total")
-    await roulette_count.finish(
-        f"池子旁边的一块石头上刻着{t}条密密麻麻的线。什么时候这些线也会被时间磨平呢？"
-    )
-
-
-@roulette_fix.handle()
-async def handle_function():
-    for i in r.keys(pattern="roulette_status*"):
-        r.set(i, "fixed", ex=1)
-    await roulette_fix.finish("fixed.")
-
-
 @rand_one.handle()
-async def handle_function(event: GroupMessageEvent, arg: Message = CommandArg()):
+async def handle_random(event: GroupMessageEvent, arg: Message = CommandArg()) -> None:
     args = str(arg).split()
     if len(args) == 0:
         await rand_one.finish("请输入至少一个参数！")

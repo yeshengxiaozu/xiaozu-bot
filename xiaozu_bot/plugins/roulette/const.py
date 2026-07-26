@@ -117,16 +117,3 @@ sjmap = [
     "百香万神殿 Passionfruit Pantheon",
 ]
 
-prize = {
-    "蓝莓湾 Blueberry Bay": 0.1,
-    "树莓根下 Raspberry Roots": 0.2,
-    "金芒山 Mango Mesa": 0.3,
-    "杨桃星球 Starfruit Supernova": 0.5,
-    "百香万神殿 Passionfruit Pantheon": 0.9,
-    "74": "74",
-    "十六号 塔 The Tower (XVI)": "16",
-    "象牙 Ivory": 0.04,
-    "弹球炼狱 Pinball Purgatory": 0.07,
-    "荷塘月色 Nelumbo": 0.06,
-    "烈冕号 The Solar Express": 0.05,
-}

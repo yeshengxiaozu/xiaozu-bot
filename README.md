@@ -1,6 +1,6 @@
 # xiaozu-bot
 
-xiaozu-bot 是一个基于 NoneBot 的模块化机器人仓库示例，包含若干实用与娱乐插件（AI 聊天、TTS、Geometry Dash 关卡检索、猜图小游戏、轮盘/经济、人品、抓图等）。项目以插件化方式组织，适合游戏社群、兴趣群、以及插件开发测试场景。
+xiaozu-bot 是一个基于 NoneBot 的模块化机器人仓库示例，包含若干实用与娱乐插件（AI 聊天、TTS、Geometry Dash 关卡检索、猜图小游戏、人品、抓图等）。项目以插件化方式组织，适合游戏社群、兴趣群、以及插件开发测试场景。
 
 ## 主要功能
 
@@ -9,7 +9,7 @@ xiaozu-bot 是一个基于 NoneBot 的模块化机器人仓库示例，包含若
 - **Geometry Dash 关卡检索（`gdlevelsearch`）**：整合 AREDL、GDDL、NLW、IDS、LW、HDS、plat chart 等数据源，结果渲染成一张图片发出；带本地缓存和每日自动更新（见下面「数据更新」）。
 - **猜图 / 猜关卡（`guess`）**：带题库与图片资源的互动小游戏。
 - **抓图 / 表情包（`zhua`）**：从本地图库随机/指定发送图片与描述。
-- **轮盘 / 奖池（`roulette` + `zhua_api`）**：示例性抽奖与虚拟货币交互逻辑（可扩展）。
+- **随机小工具（`roulette`）**：`*map` 随机来张地图、`*random` 在给的选项里随机挑一个。轮盘和蓝莓经济已下线。
 - **每日人品（`jrrp`）**：每日一次的人品查询。
 - **对战小游戏（`game`）**：群内 bet / 身份 / 膀胱等模式的回合制小游戏，限白名单群。
 - **娱乐指令（`joy`）**：杂七杂八的小指令合集。
@@ -19,7 +19,7 @@ xiaozu-bot 是一个基于 NoneBot 的模块化机器人仓库示例，包含若
 ## 适用场景
 
 - 游戏社区（例如 Geometry Dash 玩家群）：快速查询关卡、分享讨论、举办小游戏。
-- 群聊娱乐：猜图、轮盘、抓图、人品等互动功能活跃群气氛。
+- 群聊娱乐：猜图、抓图、人品、恶魔轮盘等互动功能活跃群气氛。
 - 语音互动与直播辅助：将文本转语音推送到群中或语音通道。
 - 本地私有化 AI：在本地部署 LLM，为群组或个人提供私有化问答服务。
 - 插件开发与学习：仓库提供插件示例，便于学习 NoneBot 插件开发模式。
@@ -88,8 +88,7 @@ python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没�
 这两个脚本靠 `scripts/_bootstrap.py` 绕开了插件包的 `__init__.py`，
 所以在没装 onebot 适配器 / htmlkit 的开发机上也能跑。
 
-注意：脚本都得在仓库根目录下跑，因为 `nlwapi.py` 和 `aredlapi.py` 里的
-数据路径是相对当前工作目录写的。
+数据路径现在都是相对文件本身算的，从哪个目录启动都行。
 
 ## gdlevelsearch 需要的两份「仓库里没有」的东西
 
@@ -101,9 +100,8 @@ python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没�
 二进制文件在 7b2f1bb 那次提交里被特意清出仓库了。少了它们，
 `create_image_from_gdlevel` 会直接 `OSError: cannot open resource`。
 
-> 注意大小写：文件名是 `PUSAB.TTF` / `ARIAL.TTF`，而 `draw.py` 里写的是
-> `pusab.ttf` / `arial.ttf`。macOS 和 Windows 的文件系统不区分大小写所以没事，
-> 但要是哪天挪到 Linux 上就会找不到文件。
+> 文件名大小写要和 `draw.py` 里一致（`PUSAB.TTF` / `ARIAL.TTF`）。
+> 实在缺了也不会整个挂掉，会退回 PIL 默认字体，只是难看。
 
 **`xiaozu_bot/plugins/gdlevelsearch/data/*.json`** —— 关卡数据缓存，
 跑一次 `python scripts/run_updater.py` 就有了（见下）。没有这些 json 的话
@@ -139,7 +137,7 @@ python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没�
 
 ## 关键配置与外部服务
 
-- 本地存储：`JsonRedis`，各插件的 `data/storage.json`（`jrrp`, `roulette`, `zhua`, `zhua_api`, `game`, `guess` 使用）。这些文件都在 `.gitignore` 里。
+- 本地存储：`JsonRedis`，各插件的 `data/storage.json`（`jrrp`, `zhua`, `game`, `guess`, `gdlevelsearch` 使用）。这些文件都在 `.gitignore` 里。
 - 本地 LLM：示例默认 `http://127.0.0.1:1234`，可替换为你的模型服务地址。
 - 本地消息转发：示例使用 `http://localhost:3000` 作为本地转发/桥接端点（用于发送音频、转发命令结果等）。
 - TTS：`say` 插件使用 `mlx_audio` 模型，需预先准备模型与依赖。
@@ -174,7 +172,6 @@ python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没�
 - `guess start` / `guess giveup` — 猜图小游戏（插件 `guess`）
 - `zhua` — 随机抓图（插件 `zhua`）
 - `jrrp` — 今日人品查询（插件 `jrrp`）
-- `roulette` / `roulette_pool` — 抽奖与奖池（插件 `roulette`）
 
 ## 注意事项
 
