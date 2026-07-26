@@ -6,11 +6,13 @@ xiaozu-bot 是一个基于 NoneBot 的模块化机器人仓库示例，包含若
 
 - **AI 聊天（`ai`）**：对接本地 LLM（LM Studio 风格 API），支持多轮上下文对话与简单会话管理。
 - **语音合成 / TTS（`say`）**：使用 `mlx_audio` 生成语音并通过本地转发接口发送群/私聊语音消息。
-- **Geometry Dash 关卡检索（`gdlevelsearch`）**：整合 AREDL、GDDL、NLW、IDS、LW、HDS 等数据源并提供本地缓存以加速查询。
+- **Geometry Dash 关卡检索（`gdlevelsearch`）**：整合 AREDL、GDDL、NLW、IDS、LW、HDS、plat chart 等数据源，结果渲染成一张图片发出；带本地缓存和每日自动更新（见下面「数据更新」）。
 - **猜图 / 猜关卡（`guess`）**：带题库与图片资源的互动小游戏。
 - **抓图 / 表情包（`zhua`）**：从本地图库随机/指定发送图片与描述。
 - **轮盘 / 奖池（`roulette` + `zhua_api`）**：示例性抽奖与虚拟货币交互逻辑（可扩展）。
-- **每日人品（`jrrp`）**：每日一次的人品查询，使用 Redis 存储结果。
+- **每日人品（`jrrp`）**：每日一次的人品查询。
+- **对战小游戏（`game`）**：群内 bet / 身份 / 膀胱等模式的回合制小游戏，限白名单群。
+- **娱乐指令（`joy`）**：杂七杂八的小指令合集。
 - **图片/文本渲染（`imageinfo`）**：将 HTML/Markdown/文本渲染为图片并发送（依赖 `nonebot_plugin_htmlkit`）。
 - **帮助命令（`xiaozubot_help`）**：内置简单帮助信息。
 
@@ -24,15 +26,22 @@ xiaozu-bot 是一个基于 NoneBot 的模块化机器人仓库示例，包含若
 
 ## 快速开始
 
-要求：Python 3.10+。可选但推荐：Redis（部分插件依赖）、本地 LLM（若使用 AI）、本地消息转发/桥接服务（示例中使用 `http://localhost:3000`）。
+要求：Python 3.10+。可选：本地 LLM（若使用 AI）、本地消息转发/桥接服务（示例中使用 `http://localhost:3000`）。
 
-安装依赖（示例）：
+不再需要 Redis —— 所有需要持久化的插件都改用 `xiaozu_bot/utils/json_storage.py`
+里的 `JsonRedis`，数据落在各插件自己的 `data/storage.json`。
+
+安装依赖：
 
 ```bash
-python -m pip install -U pip
-python -m pip install "nonebot2[fastapi,httpx,websockets]>=2.5.0" nonebot-adapter-onebot nonebot-plugin-apscheduler nonebot-plugin-localstore nonebot-plugin-htmlkit requests httpx redis
-# 或使用 Poetry：
-# poetry install
+python -m pip install -e .
+```
+
+可选的两组额外依赖：
+
+```bash
+python -m pip install -e ".[tts]"      # say 插件的 mlx_audio，只能装在 Apple Silicon 上
+python -m pip install -e ".[migrate]"  # 只有从旧 Redis 迁移数据时才要
 ```
 
 运行机器人（使用 NoneBot CLI）：
@@ -49,9 +58,54 @@ nb plugin create
 # 插件文件放在 xiaozu_bot/plugins 下
 ```
 
+## 改完怎么验（不用重启 bot）
+
+`scripts/` 下有几个能单独跑的入口，都不需要连 QQ：
+
+```bash
+python bot.py
+```
+
+只是想确认插件都能正常加载的话，这个就够了 —— 它会把所有插件load 一遍并打日志，
+看到 `Succeeded to load plugin` 就可以 Ctrl-C。import 错误、少装依赖、
+注册失败都能在这一步暴露出来。
+
+```bash
+python scripts/run_updater.py            # 跑一遍抓取流水线，逐个任务报成败
+python scripts/run_updater.py nlw ids    # 只跑指定的几个
+python scripts/run_updater.py --continue # 中间挂了也继续跑后面的
+```
+
+```bash
+python scripts/try_search.py Tartarus          # 走完整搜索 + 出图，结果写成 png
+python scripts/try_search.py 51657783          # 按 id 查
+python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没有生效
+```
+
+`try_search.py` 走的是和 bot 里一样的 `search_by_name` / `create_image_from_gdlevel`，
+只是最后一步 `bot.send` 换成写文件，所以出来的图应该和群里收到的一样。
+
+这两个脚本靠 `scripts/_bootstrap.py` 绕开了插件包的 `__init__.py`，
+所以在没装 onebot 适配器 / htmlkit 的开发机上也能跑。
+
+注意：脚本都得在仓库根目录下跑，因为 `nlwapi.py` 和 `aredlapi.py` 里的
+数据路径是相对当前工作目录写的。
+
+## 数据更新
+
+`gdlevelsearch` 的关卡数据来自 `xiaozu_bot/plugins/gdlevelsearch/data/*.json`，
+由 `updater/` 下的十个抓取任务生成：
+
+- 每天凌晨 3 点自动跑一次（`updater/__init__.py` 里注册的定时任务）
+- 超级用户可以发 `*gdsearch_update` 手动触发
+
+两条路径跑完都会调 `reload_all()` 把新数据读进内存，**不需要重启 bot**。
+各个 api 模块是在 import 时把数据读进模块级 list/dict 的，
+所以少了这一步的话，抓回来的新 json 要等下次重启才生效。
+
 ## 关键配置与外部服务
 
-- Redis：默认 `localhost:6379`（`jrrp`, `roulette`, `zhua` 等使用）。
+- 本地存储：`JsonRedis`，各插件的 `data/storage.json`（`jrrp`, `roulette`, `zhua`, `zhua_api`, `game`, `guess` 使用）。这些文件都在 `.gitignore` 里。
 - 本地 LLM：示例默认 `http://127.0.0.1:1234`，可替换为你的模型服务地址。
 - 本地消息转发：示例使用 `http://localhost:3000` 作为本地转发/桥接端点（用于发送音频、转发命令结果等）。
 - TTS：`say` 插件使用 `mlx_audio` 模型，需预先准备模型与依赖。
@@ -84,7 +138,7 @@ nb plugin create
 
 ## 注意事项
 
-- 部分功能依赖外部服务（Redis、LM、消息桥接等），请确认环境可用。
+- 部分功能依赖外部服务（LM、消息桥接等），请确认环境可用。
 - 仓库中可能包含示例/调试用的硬编码值，生产部署前请替换或移除敏感信息。
 
 ## 贡献与反馈
