@@ -152,6 +152,9 @@ python scripts/try_search.py --reload Tartarus # 顺便验 reload_all() 有没�
 - `gdfullsearch <关键词> [-a] [-d [难度]] [-u <难度>]` — 直连 GD 服务器搜索，能搜到服务器上的任意关卡；
   默认只搜 rated，`-a` 连未评级的一起搜，`-d` 只搜 demon，`-u` 只搜非 demon。
   结果分页显示，输入序号选中、`n` 下一页、`p` 上一页、`结束` 取消
+- `gdratings <关卡名或id> [-s <排序>] [-asc] [-v]` — 看这关在 GDDL 上每个人提交的 tier / enjoyment，
+  分页显示（`n` / `p` / `结束`）。`-s` 可选 tier / enj / date / progress / attempts / rr，
+  `-asc` 正序，`-v` 只看通关的人
 - `guess start` / `guess giveup` — 猜图小游戏（插件 `guess`）
 - `zhua` — 随机抓图（插件 `zhua`）
 - `jrrp` — 今日人品查询（插件 `jrrp`）
