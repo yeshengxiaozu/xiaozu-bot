@@ -1,7 +1,6 @@
 import json
 import random
 import re
-from typing import Union
 
 import emoji
 import httpx
@@ -72,9 +71,9 @@ ai_cmd = on_command("ai", priority=5)
 
 
 @ai_cmd.handle()
-async def handle_ai(  # noqa: C901, PLR0912, PLR0915
+async def handle_ai(
     bot: Bot,
-    event: Union[GroupMessageEvent, PrivateMessageEvent],
+    event: GroupMessageEvent | PrivateMessageEvent,
     args: Message = CommandArg(),
 ) -> None:
     if isinstance(event, GroupMessageEvent) and event.group_id in PROHIBITED_GROUP:
@@ -169,7 +168,7 @@ async def handle_ai(  # noqa: C901, PLR0912, PLR0915
             resp.raise_for_status()
             try:
                 data = resp.json()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 # fallback: try to decode text
                 text = resp.text
                 logger.exception("Failed to parse JSON from API response")
@@ -215,7 +214,7 @@ async def handle_ai(  # noqa: C901, PLR0912, PLR0915
             await ai_cmd.finish(
                 f"API请求失败: {e.response.status_code if e.response is not None else e}"
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.exception("Request to AI API failed")
             await ai_cmd.finish(f"请求失败: {e}")
 

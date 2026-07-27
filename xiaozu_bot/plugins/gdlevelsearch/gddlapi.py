@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union
+from typing import Any
 
 import requests
 from nonebot import logger
@@ -62,13 +62,13 @@ Song SongDTO
 class LevelMeta:
     ID: int
     Name: str
-    Description: Optional[str] = None
+    Description: str | None = None
     SongID: int
     Length: int #[1, 2, 3, 4, 5, 6] for tiny, short, medium, long, XL, plat
     IsTwoPlayer: bool
     Difficulty: str #[Official, Easy, Medium, Hard, Insane, Extreme]
     PublisherID: int
-    UploadedAt: Optional[str] = None
+    UploadedAt: str | None = None
     Song: SongInfo
 
     def __init__(self, jsondict: dict[str, Any]) -> None:
@@ -107,21 +107,21 @@ Meta	LevelMetaDTO
 """
 class GDDLLevel:
     ID: int
-    Rating: Optional[float] = None
-    Enjoyment: Optional[float] = None
-    Deviation: Optional[float] = None
+    Rating: float | None = None
+    Enjoyment: float | None = None
+    Deviation: float | None = None
     RatingCount: int
     EnjoymentCount: int
     SubmissionCount: int
-    TwoPlayerRating: Optional[float] = None
-    TwoPlayerEnjoyment: Optional[float] = None
-    TwoPlayerDeviation: Optional[float] = None
-    DefaultRating: Optional[int] = None
-    Showcase: Optional[str] = None
+    TwoPlayerRating: float | None = None
+    TwoPlayerEnjoyment: float | None = None
+    TwoPlayerDeviation: float | None = None
+    DefaultRating: int | None = None
+    Showcase: str | None = None
     Meta: LevelMeta
     Tags: list[dict[str,str]]
 
-    def __init__(self, jsondict: dict[str, Any], tags: Optional[list[dict[str, str]]] = None) -> None:
+    def __init__(self, jsondict: dict[str, Any], tags: list[dict[str, str]] | None = None) -> None:
         if tags is None:
             tags = []
         self.ID = jsondict["ID"]
@@ -205,14 +205,14 @@ class SubmissionPage:
 
 class Gddl:
     @staticmethod
-    def getsubmissions(  # noqa: PLR0913
-        level_id: Union[str, int],
+    def getsubmissions(
+        level_id: str | int,
         page: int = 0,
         limit: int = GDDL_SUBMISSION_LIMIT,
-        sort: Optional[str] = None,
-        sort_direction: Optional[str] = None,
-        progress_filter: Optional[str] = None,
-    ) -> Optional[SubmissionPage]:
+        sort: str | None = None,
+        sort_direction: str | None = None,
+        progress_filter: str | None = None,
+    ) -> SubmissionPage | None:
         """拿某关卡的提交评分列表（就是网页上「Submitted ratings」那块）。
 
         page 从 0 开始，limit 只能 1-30。
@@ -261,7 +261,7 @@ class Gddl:
         return SubmissionPage(response.json())
 
     @staticmethod
-    def getspread(level_id: Union[str, int]) -> Optional[dict[str, Any]]:
+    def getspread(level_id: str | int) -> dict[str, Any] | None:
         """拿某关卡的 tier / enjoyment 分布直方图"""
         url = f"https://gdladder.com/api/level/{level_id}/submissions/spread"
         headers = {
@@ -279,7 +279,7 @@ class Gddl:
         return response.json()
 
     @staticmethod
-    def getleveltags(level_id: Union[str, int]) -> list[dict[str, Any]]:
+    def getleveltags(level_id: str | int) -> list[dict[str, Any]]:
         """??????gddl api?????????????????????tag"""
         url = f"https://gdladder.com/api/level/{level_id}/tags"
         headers = {
@@ -321,9 +321,9 @@ class Gddl:
 
     @staticmethod
     def getlevelbyid(
-        level_id: Union[str, int],
-        with_tags: bool = True,  # noqa: FBT001, FBT002
-    ) -> Optional[GDDLLevel]:
+        level_id: str | int,
+        with_tags: bool = True,
+    ) -> GDDLLevel | None:
         """??????gddl api????????????id????????????????????????"""
         url = f"https://gdladder.com/api/level/{level_id}"
         headers = {
@@ -350,7 +350,7 @@ class Gddl:
         limit: int = 1,
         sort: str = "ID",
         **filters: Any,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """按条件搜 GDDL，返回原始响应（带 total / limit / page / levels）。
 
         filters 直接透传给接口，常用的有 minRating / maxRating（1-39）、
@@ -376,7 +376,7 @@ class Gddl:
         return response.json()
 
     @staticmethod
-    def getlevelbyindex(index: int, **filters: Any) -> Optional[GDDLLevel]:
+    def getlevelbyindex(index: int, **filters: Any) -> GDDLLevel | None:
         """按 ID 升序取符合条件的第 index 个关卡（从 0 开始）。
 
         用 sort=ID 而不是 sort=random，这样同样的 index 每次拿到的都是同一关，
@@ -391,9 +391,9 @@ class Gddl:
     def getrandomlevelbytier(
         low: int,
         high: int = -1,
-        enjoyment_min: Optional[float] = None,
-        enjoyment_max: Optional[float] = None,
-    ) -> Optional[GDDLLevel]:
+        enjoyment_min: float | None = None,
+        enjoyment_max: float | None = None,
+    ) -> GDDLLevel | None:
         """在指定 tier 区间里随机取一关，可以再按 enjoyment 卡一道。
 
         tier 用 ±0.5 展开成区间，这样传 20 能把 19.5-20.5 的都算进去。

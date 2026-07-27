@@ -1,6 +1,5 @@
 import random
 from pathlib import Path
-from typing import Union
 
 from nonebot import get_plugin_config, on_command
 from nonebot.adapters.onebot.v11 import (
@@ -106,7 +105,7 @@ zhua_test = on_command("zhua_test", permission=SUPERUSER)
 
 
 @zhua.handle()
-async def handle_zhua(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+async def handle_zhua(event: GroupMessageEvent | PrivateMessageEvent) -> None:
     user_id = event.user_id
     if r.get(f"zhua_cd_{user_id}") == "waiting":
         t = r.ttl(f"zhua_cd_{user_id}")
@@ -153,6 +152,6 @@ async def handle_show(arg: Message = CommandArg()) -> None:
 async def handle_zhua_test() -> None:
     file_names = []
     folder_path = DATA_DIR
-    file_names = [f.name for f in folder_path.iterdir() if f.is_file()]  # noqa: ASYNC240
+    file_names = [f.name for f in folder_path.iterdir() if f.is_file()]
     await zhua_test.send(str([f'["{i}"] = ""' for i in file_names]))
     await zhua_test.finish()

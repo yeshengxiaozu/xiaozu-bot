@@ -1,10 +1,15 @@
 import asyncio
 import random
 from pathlib import Path
-from typing import Union
 
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message, MessageSegment, PrivateMessageEvent
+from nonebot.adapters.onebot.v11 import (
+    Bot,
+    GroupMessageEvent,
+    Message,
+    MessageSegment,
+    PrivateMessageEvent,
+)
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
@@ -55,7 +60,7 @@ crop_width_hard = 128
 crop_height_hard = 128
 crop_width_ultra = 64
 crop_height_ultra = 64
-def formalize(str: str) -> str:  # noqa: A002
+def formalize(str: str) -> str:
     str = str.lower()  # noqa: A001
     for s in [" ",".",",","-","'","!","，","！","…","。",":","：","+","_","""
 """] :
@@ -77,12 +82,12 @@ for map_info in maps:
         *(formalize(a) for a in map_info["alias"]),
     }
 
-def getid(event: Union[GroupMessageEvent,PrivateMessageEvent]) -> str:
+def getid(event: GroupMessageEvent | PrivateMessageEvent) -> str:
     if isinstance(event,PrivateMessageEvent) or False:
         return str(event.user_id)
     return "g" + str(event.group_id)
 
-def get_variance(image) -> tuple[float,float,float]:  # noqa: ANN001
+def get_variance(image) -> tuple[float,float,float]:
     # 原来是 image.getdata() 逐像素手算 E[x²]-E[x]²。Pillow 12 把 getdata()
     # 标成了废弃（Pillow 14 移除），而 pytest 那边配了
     # `error::DeprecationWarning:xiaozu_bot`，于是一升 Pillow 就全挂。
@@ -101,7 +106,7 @@ async def _list_files(folder_path: Path) -> list[str]:
     return await asyncio.to_thread(sync_list)
 
 
-async def _pick_random_shot(matcher: Union[Matcher, type[Matcher]]) -> tuple[dict, Path]:
+async def _pick_random_shot(matcher: Matcher | type[Matcher]) -> tuple[dict, Path]:
     """随机挑一张题图，返回 (那一条 map 记录, 图片完整路径)。
 
     **无放回**地过一遍 maps：抽中的目录空着就换下一条，122 条全都空才算题库是空的。
@@ -135,7 +140,7 @@ def isnonsense(image: Image.Image) -> bool:
     return sum(get_variance(image)) < NOISE_THRESHOLD
 
 
-async def can_start(bot: Bot, matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+async def can_start(bot: Bot, matcher: Matcher, event: GroupMessageEvent | PrivateMessageEvent) -> None:
     session_id = getid(event)
     if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
         await bot.call_api(
@@ -179,7 +184,7 @@ def _crop_and_save(
 
 
 async def guessstart(
-    crop_size: tuple[int, int], matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]
+    crop_size: tuple[int, int], matcher: Matcher, event: GroupMessageEvent | PrivateMessageEvent
 ) -> None:
     session_id = getid(event)
     crop_width, crop_height = crop_size
@@ -212,28 +217,28 @@ async def guessstart(
 
 
 @guess_start.handle()
-async def handle_guess_start(bot: Bot, matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+async def handle_guess_start(bot: Bot, matcher: Matcher, event: GroupMessageEvent | PrivateMessageEvent) -> None:
     await can_start(bot, matcher, event)
     await guessstart((256, 256), matcher, event)
     await guess_start.finish()
 
 
 @guess_start_hard.handle()
-async def handle_guess_start_hard(bot: Bot,  matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+async def handle_guess_start_hard(bot: Bot,  matcher: Matcher, event: GroupMessageEvent | PrivateMessageEvent) -> None:
     await can_start(bot, matcher, event)
     await guessstart((128, 128), matcher, event)
     await guess_start_hard.finish()
 
 
 @guess_start_ultra.handle()
-async def handle_guess_start_ultra(bot: Bot,  matcher: Matcher, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+async def handle_guess_start_ultra(bot: Bot,  matcher: Matcher, event: GroupMessageEvent | PrivateMessageEvent) -> None:
     await can_start(bot, matcher, event)
     await guessstart((64, 64), matcher, event)
     await guess_start_ultra.finish()
 
 
 @guess_giveup.handle()
-async def handle_guess_giveup(bot: Bot, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+async def handle_guess_giveup(bot: Bot, event: GroupMessageEvent | PrivateMessageEvent) -> None:
     session_id = getid(event)
     if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
         await bot.call_api(
@@ -260,7 +265,7 @@ async def handle_guess_giveup(bot: Bot, event: Union[GroupMessageEvent, PrivateM
         [(pos[0], pos[1]), (pos[2], pos[3])], fill=None, outline="red", width=4
     )
 
-    PICTURES_DIR.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+    PICTURES_DIR.mkdir(parents=True, exist_ok=True)
     cropped_path = PICTURES_DIR / f"{session_id}.png"
     image.save(cropped_path)
 
@@ -272,7 +277,7 @@ async def handle_guess_giveup(bot: Bot, event: Union[GroupMessageEvent, PrivateM
 
 
 @guess.handle()
-async def handle_guess(bot: Bot, event: Union[GroupMessageEvent, PrivateMessageEvent], arg: Message = CommandArg()) -> None:
+async def handle_guess(bot: Bot, event: GroupMessageEvent | PrivateMessageEvent, arg: Message = CommandArg()) -> None:
     session_id = getid(event)
     guess_input = formalize(str(arg))
     answer = r.hget(ANSWER_KEY, session_id)
@@ -312,7 +317,7 @@ async def handle_guess(bot: Bot, event: Union[GroupMessageEvent, PrivateMessageE
         [(pos[0], pos[1]), (pos[2], pos[3])], fill=None, outline="red", width=4
     )
 
-    PICTURES_DIR.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+    PICTURES_DIR.mkdir(parents=True, exist_ok=True)
     cropped_path = PICTURES_DIR / f"{session_id}.png"
     image.save(cropped_path)
 
@@ -345,7 +350,7 @@ async def handle_guess_test() -> None:
         bottom = top + crop_height
         cropped_image = image.crop((left, top, right, bottom))
 
-        PICTURES_DIR.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+        PICTURES_DIR.mkdir(parents=True, exist_ok=True)
         cropped_path = PICTURES_DIR / "test.png"
         cropped_image.save(cropped_path)
         await guess_test.send(
@@ -356,14 +361,14 @@ async def handle_guess_test() -> None:
 
 
 @guess_removecooldown.handle()
-async def handle_guess_removecooldown(event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+async def handle_guess_removecooldown(event: GroupMessageEvent | PrivateMessageEvent) -> None:
     session_id = getid(event)
     r.set(f"{COOLDOWN_PREFIX}{session_id}", "removed", ex=1)
     await guess_removecooldown.finish("已经移除你（或你所在群）的生成题目cd！")
 
 
 @guess_cheat.handle()
-async def handle_guess_cheat(bot: Bot, event: Union[GroupMessageEvent, PrivateMessageEvent]) -> None:
+async def handle_guess_cheat(bot: Bot, event: GroupMessageEvent | PrivateMessageEvent) -> None:
     session_id = getid(event)
     answer = r.hget(ANSWER_KEY, session_id)
     await bot.call_api(

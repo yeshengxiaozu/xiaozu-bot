@@ -6,7 +6,6 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 from nonebot import logger
 
@@ -55,8 +54,8 @@ class FullSearchQuery:
 
     query: str
     rated_only: bool = True
-    diff: Optional[int] = None
-    demon_filter: Optional[int] = None
+    diff: int | None = None
+    demon_filter: int | None = None
 
     def as_api_kwargs(self) -> dict:
         """转成 search_levels_page 的参数"""
@@ -104,8 +103,8 @@ def parse_args(text: str) -> FullSearchQuery:
         raise ArgError("请提供要搜索的关卡名\n\n" + USAGE)
 
     rated_only = True
-    diff: Optional[int] = None
-    demon_filter: Optional[int] = None
+    diff: int | None = None
+    demon_filter: int | None = None
     saw_demon_flag = False
     saw_nondemon_flag = False
     words: list[str] = []
@@ -190,7 +189,7 @@ class FullSearchSession:
     total: int = 0
     total_is_capped: bool = True
     # 已知的最后一页（翻到服务器返回 -1 才知道）
-    last_page: Optional[int] = None
+    last_page: int | None = None
     updated_at: float = field(default_factory=time.time)
 
     def touch(self) -> None:
@@ -205,7 +204,7 @@ class FullSearchSession:
         return self.pages.get(self.page, [])
 
     @property
-    def known_last_page(self) -> Optional[int]:
+    def known_last_page(self) -> int | None:
         """已知的最后一页页码，不知道就返回 None。
 
         两个来源：翻到越界（服务器回 -1）确知的，
@@ -292,7 +291,7 @@ class FullSearchSession:
         return "\n".join([head, *lines, " / ".join(hints)])
 
 
-def start_session(text: str) -> tuple[Optional[FullSearchSession], str]:
+def start_session(text: str) -> tuple[FullSearchSession | None, str]:
     """解析参数并取第一页。
 
     返回 (会话, 出错时的消息)。搜不到东西时会话是 None。

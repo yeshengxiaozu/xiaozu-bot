@@ -19,14 +19,14 @@ import binascii
 import json
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import quote
 
 import pytest
 import requests
 
 from xiaozu_bot.plugins.gdlevelsearch import aredlapi, gdapi
-from xiaozu_bot.plugins.gdlevelsearch.aredlapi import AREDLLevel, Aredl
+from xiaozu_bot.plugins.gdlevelsearch.aredlapi import Aredl, AREDLLevel
 from xiaozu_bot.plugins.gdlevelsearch.gdapi import (
     GDLevel,
     GDUser,
@@ -462,7 +462,7 @@ class TestGDLevelFromServerResponse:
 # song_id / song_name / song_author / _get_song_display 读的是同一组输入
 # （song_info、official_song、custom_song_id），分支也一一对应，
 # 所以合成一张表：(song_info, official_song, custom_song_id) -> 四个输出。
-SONG_TABLE: list[tuple[Any, Any, Any, Any, str, str, Optional[str]]] = [
+SONG_TABLE: list[tuple[Any, Any, Any, Any, str, str, str | None]] = [
     # song_info 存在时压过一切（song_id 仍然只看 custom_song_id）
     (
         {"name": "NONG", "artist_name": "Nobody", "id": 1},
@@ -637,7 +637,7 @@ class TestDifficultyLabel:
 # ==========================================================================
 class TestDecryptPassword:
     @pytest.mark.parametrize("value", [None, ""])
-    def test_falsy_password_returns_none(self, value: Optional[str]) -> None:
+    def test_falsy_password_returns_none(self, value: str | None) -> None:
         assert make_level(password=value).decrypt_password() is None
 
     @pytest.mark.parametrize("plain", ["1123456", "0", "1000000", "1"])

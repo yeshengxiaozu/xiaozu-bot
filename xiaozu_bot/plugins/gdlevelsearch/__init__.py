@@ -1,21 +1,19 @@
 import asyncio
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Optional
 
 import requests
 from nonebot import get_driver, logger, require
 from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
 from nonebot.permission import SUPERUSER
 
-from . import aredlapi, nlwapi, platapi
+from . import aredlapi, icons, nlwapi, platapi
 from .aredlapi import Aredl  # noqa: F401
 from .dailydemon import describe_conditions, get_daily_demon
 from .draw import create_image_from_gdlevel
 from .fullsearch import SESSION_TIMEOUT, ArgError, FullSearchSession
 from .fullsearch import start_session as start_fullsearch_session
 from .gdapi import GDLevel, get_level_by_id, get_user_by_name
-from . import icons
 from .gddlapi import Gddl
 from .imageinfo import send_ttp  # noqa: F401
 from .nlwapi import Nlw
@@ -62,8 +60,9 @@ async def _refresh_aredl_on_startup() -> None:
 # 必须放在 reload_all 定义之后 —— updater 的定时任务要回头调它。
 from . import updater  # noqa: E402, F401, RUF100
 
+
 # fallback function since I should already get it using gdapi if this get called we f*cked up
-def get_creator(level_id: int) -> Optional[str]:
+def get_creator(level_id: int) -> str | None:
     """通过GDhistory API获取关卡作者信息，没有官方api靠谱且原则上不应该被调用"""
     logger.warning("get_creator got called: " + str(level_id))
     try:
@@ -71,17 +70,17 @@ def get_creator(level_id: int) -> Optional[str]:
             f"https://history.geometrydash.eu/api/v1/level/{level_id}", timeout=10
         )
         return data.json()["cache_username"]
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
 # nice little function that extract exactly what i need
-def get_difficulty(level_id: int) -> Optional[str]:
+def get_difficulty(level_id: int) -> str | None:
     """通过GD API获取关卡难度标签，由于会造成api调用最好尽可能少被调用"""
     logger.info("get_difficulty got called: " + str(level_id))
     try:
         data = get_level_by_id(level_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     return data.difficulty_label() if data else None
 
@@ -90,18 +89,18 @@ class SearchResult:
     """存储有关搜索结果的基本信息，方便用户进行筛选"""
     id: int
     name: str
-    creator: Optional[str] = None
-    tier: Optional[str] = None
-    difficulty: Optional[str] = None
+    creator: str | None = None
+    tier: str | None = None
+    difficulty: str | None = None
 
 
-def _add_search_result(  # noqa: PLR0913
+def _add_search_result(
     results: dict[int, SearchResult],
     level_id: int,
     name: str,
-    creator: Optional[str] = None,
-    tier: Optional[str] = None,
-    difficulty: Optional[str] = None,
+    creator: str | None = None,
+    tier: str | None = None,
+    difficulty: str | None = None,
 ):
     """向results中加入一条新的搜索结果"""
     if level_id is None:
@@ -174,7 +173,7 @@ def search_by_name(name: str) -> list[SearchResult]:
     return list(results.values())
 
 
-def getlevelinfo(level_id: int) -> Optional[GDLevel]:
+def getlevelinfo(level_id: int) -> GDLevel | None:
     """调用gdapi获取一个关卡的基本信息"""
     gdlevel = get_level_by_id(level_id)
     if not gdlevel:
@@ -182,7 +181,7 @@ def getlevelinfo(level_id: int) -> Optional[GDLevel]:
     return gdlevel
 
 from nonebot import on_command, on_message
-from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageEvent  # noqa: F811
+from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageEvent
 from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
@@ -235,7 +234,7 @@ async def handle_gdsearch(
     _clear_all_sessions(event)
 
     # ID 搜索
-    if len(name) > 4 and name.isdigit():  # noqa: PLR2004 yes its a magic number but it help user
+    if len(name) > 4 and name.isdigit():
         level = await asyncio.to_thread(getlevelinfo, int(name))
         if level:
             await send_result(bot, event, level)
@@ -389,7 +388,7 @@ async def handle_gdfullsearch(
         )
     except ArgError as e:
         await gdfullsearch.finish(str(e))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.exception("[gdfullsearch] 搜索失败")
         await gdfullsearch.finish(f"搜索出错了：{e}")
 
@@ -496,7 +495,7 @@ async def handle_gdratings(
         )
     except RatingsArgError as e:
         await gdratings.finish(str(e))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.exception("[gdratings] 查询失败")
         await gdratings.finish(f"查询出错了：{e}")
 
@@ -559,8 +558,8 @@ async def handle_gdrandom(bot: Bot, event: Event, arg: Message = CommandArg()) -
     try:
         tier_low = int(_num(args[0], "tier", 1, 39))
         tier_high = int(_num(args[1], "tier", 1, 39)) if len(args) > 1 else -1
-        enj_min = _num(args[2], "enjoyment", 0, 10) if len(args) > 2 else None  # noqa: PLR2004
-        enj_max = _num(args[3], "enjoyment", 0, 10) if len(args) > 3 else None  # noqa: PLR2004
+        enj_min = _num(args[2], "enjoyment", 0, 10) if len(args) > 2 else None
+        enj_max = _num(args[3], "enjoyment", 0, 10) if len(args) > 3 else None
     except ValueError as e:
         await gdrandom.finish(str(e))
 
@@ -682,7 +681,7 @@ async def handle_dailydemon(bot: Bot, event: Event) -> None:
     await dailydemon.finish()
 
 @gduser.handle()
-async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> None:  # noqa: ARG001
+async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> None:
     name = arg.extract_plain_text().strip()
     if not name:
         await gduser.finish("请输入想要搜索的用户名")
@@ -690,9 +689,9 @@ async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
     if not user:
         await gduser.finish("没有找到对应的用户")
     user_basic_info = f"{user.user_name}\n{user.stars}⭐ {user.moons}🌙 {user.demons_count}👿 {str(user.creator_points) + '🔧' if user.creator_points else ''}"
-    user_classic_nondemon = f"\nClassic: {user.classic_levels[0]}🤖 {user.classic_levels[1]}💙 {user.classic_levels[2]}💚 {user.classic_levels[3]}💛 {user.classic_levels[4]}🧡 {user.classic_levels[5]}💜;\n{user.classic_levels[6]} Daily; {user.classic_levels[7]} Gauntlet" if user.classic_levels else ""  # noqa: E501
-    user_plat_nondemon = f"\nPlatformer: {user.platformer_levels[0]}🤖 {user.platformer_levels[1]}💙 {user.platformer_levels[2]}💚 {user.platformer_levels[3]}💛 {user.platformer_levels[4]}🧡 {user.platformer_levels[5]}💜" if user.platformer_levels else ""  # noqa: E501
-    user_demon = f"\nClassic Demons: {user.demons_breakdown[0]} / {user.demons_breakdown[1]} / {user.demons_breakdown[2]} / {user.demons_breakdown[3]} / {user.demons_breakdown[4]};\n{user.demons_breakdown[10]} Weekly; {user.demons_breakdown[11]} Gauntlet\nPlatformer Demons: {user.demons_breakdown[5]} / {user.demons_breakdown[6]} / {user.demons_breakdown[7]} / {user.demons_breakdown[8]} / {user.demons_breakdown[9]}" if user.demons_breakdown else ""  # noqa: E501
+    user_classic_nondemon = f"\nClassic: {user.classic_levels[0]}🤖 {user.classic_levels[1]}💙 {user.classic_levels[2]}💚 {user.classic_levels[3]}💛 {user.classic_levels[4]}🧡 {user.classic_levels[5]}💜;\n{user.classic_levels[6]} Daily; {user.classic_levels[7]} Gauntlet" if user.classic_levels else ""
+    user_plat_nondemon = f"\nPlatformer: {user.platformer_levels[0]}🤖 {user.platformer_levels[1]}💙 {user.platformer_levels[2]}💚 {user.platformer_levels[3]}💛 {user.platformer_levels[4]}🧡 {user.platformer_levels[5]}💜" if user.platformer_levels else ""
+    user_demon = f"\nClassic Demons: {user.demons_breakdown[0]} / {user.demons_breakdown[1]} / {user.demons_breakdown[2]} / {user.demons_breakdown[3]} / {user.demons_breakdown[4]};\n{user.demons_breakdown[10]} Weekly; {user.demons_breakdown[11]} Gauntlet\nPlatformer Demons: {user.demons_breakdown[5]} / {user.demons_breakdown[6]} / {user.demons_breakdown[7]} / {user.demons_breakdown[8]} / {user.demons_breakdown[9]}" if user.demons_breakdown else ""
     user_info = user_basic_info + user_classic_nondemon + user_plat_nondemon + user_demon
     await gduser.finish(user_info)
 
@@ -725,11 +724,11 @@ from .updater.runner import run_all_async
 
 
 @update_cmd.handle()
-async def _handle(event: MessageEvent):  # noqa: ARG001
+async def _handle(event: MessageEvent):
     await update_cmd.send("🚀 开始执行手动更新...")
     try:
         result = await run_all_async()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         await update_cmd.finish(f"❌ 更新失败\n{e}")
     else:
         # 抓完立刻重载，这样不用重启就能查到新数据

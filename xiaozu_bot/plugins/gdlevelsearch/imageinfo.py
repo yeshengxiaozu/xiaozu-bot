@@ -1,5 +1,4 @@
 import base64
-from typing import Union
 
 from nonebot import on_command, require
 from nonebot.adapters.onebot.v11 import Bot, Event, GroupMessageEvent, Message
@@ -9,7 +8,7 @@ from nonebot.permission import SUPERUSER
 require("nonebot_plugin_htmlkit")
 
 
-def pic_msg_segment(data: bytes) -> dict[str, Union[str, dict[str, str]]]:
+def pic_msg_segment(data: bytes) -> dict[str, str | dict[str, str]]:
     return {
         "type": "image",
         "data": {"file": "base64://" + str(base64.b64encode(data))[2:-1]},

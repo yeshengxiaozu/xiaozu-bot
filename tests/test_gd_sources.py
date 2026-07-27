@@ -19,8 +19,16 @@ import asyncio
 import io
 import json
 import random
+
+# datetime 只在这里用来造固定日期，绝不取 now()
+from datetime import date
+
+# dailydemon 必须用 import_module 拿：gdlevelsearch/__init__.py:655 有一句
+# `dailydemon = on_command("dailydemon")`，把同名子模块在包命名空间里盖掉了，
+# `from ... import dailydemon` 拿到的是那个 Matcher，不是模块。
+from importlib import import_module
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 import pytest
@@ -48,15 +56,7 @@ from xiaozu_bot.plugins.gdlevelsearch.nlwapi import (
     Nlw,
     NLWlevel,
 )
-from xiaozu_bot.plugins.gdlevelsearch.platapi import PlatData, PlatInfo, Platapi
-
-# datetime 只在这里用来造固定日期，绝不取 now()
-from datetime import date  # noqa: E402
-
-# dailydemon 必须用 import_module 拿：gdlevelsearch/__init__.py:655 有一句
-# `dailydemon = on_command("dailydemon")`，把同名子模块在包命名空间里盖掉了，
-# `from ... import dailydemon` 拿到的是那个 Matcher，不是模块。
-from importlib import import_module  # noqa: E402
+from xiaozu_bot.plugins.gdlevelsearch.platapi import Platapi, PlatData, PlatInfo
 
 dailydemon = import_module("xiaozu_bot.plugins.gdlevelsearch.dailydemon")
 
@@ -217,12 +217,12 @@ class TestGddlConstants:
         assert GDDL_SUBMISSION_LIMIT == 10
         assert (GDDL_LIMIT_MIN, GDDL_LIMIT_MAX) == (1, 30)
         assert GDDL_PLAT_LENGTH == 6
-        assert gddlapi.SUBMISSION_SORTS == {
+        assert {
             "attempts", "dateAdded", "enjoyment", "rating",
             "progress", "refreshRate", "username",
-        }
-        assert gddlapi.SORT_DIRECTIONS == {"asc", "desc"}
-        assert gddlapi.PROGRESS_FILTERS == {"all", "victors", "incomplete"}
+        } == gddlapi.SUBMISSION_SORTS
+        assert {"asc", "desc"} == gddlapi.SORT_DIRECTIONS
+        assert {"all", "victors", "incomplete"} == gddlapi.PROGRESS_FILTERS
 
 
 # ==========================================================================
@@ -969,7 +969,7 @@ class TestNlwQueries:
 
     @pytest.mark.parametrize("description", [None, ""])
     def test_ids_legacy_but_hds_has_no_description_falls_back_to_ids(
-        self, description: Optional[str]
+        self, description: str | None
     ) -> None:
         """HDS 没描述就不算「更好的匹配」，还是退回 IDS（哪怕它是 Legacy）"""
         i = self._put(nlwapi.idslevels, nlwapi.idslevel_dict, IDSlevel,
@@ -1312,10 +1312,10 @@ class TestPlatapiFacade:
         六个模块级全局都指向了新对象。
         """
         path = write_plat([make_plat_row("777", "Reloaded Level")])
-        seen: list[Optional[str]] = []
+        seen: list[str | None] = []
         real_init = PlatData.__init__
 
-        def spy_init(self: PlatData, cache_file: Optional[str] = None) -> None:
+        def spy_init(self: PlatData, cache_file: str | None = None) -> None:
             seen.append(cache_file)
             real_init(self, cache_file=str(path))
 
@@ -1342,7 +1342,7 @@ class FakeGddl:
 
     def __init__(
         self,
-        search_payload: Optional[dict[str, Any]] = None,
+        search_payload: dict[str, Any] | None = None,
         by_index: Any = None,
         by_id: Any = None,
     ) -> None:
@@ -1353,7 +1353,7 @@ class FakeGddl:
         self.index_calls: list[int] = []
         self.id_calls: list[Any] = []
 
-    def searchlevels(self, **kwargs: Any) -> Optional[dict[str, Any]]:
+    def searchlevels(self, **kwargs: Any) -> dict[str, Any] | None:
         self.search_calls.append(kwargs)
         return self.search_payload
 
@@ -1905,7 +1905,7 @@ class TestIconCompose:
         assert sheet.size == sheet_size(3)
 
     def test_missing_icons_are_skipped(self) -> None:
-        items: list[tuple[icons.Form, Optional[Image.Image]]] = [
+        items: list[tuple[icons.Form, Image.Image | None]] = [
             (icons.FORMS[0], Image.new("RGBA", (60, 60), (255, 255, 255, 255))),
             (icons.FORMS[1], None),
             (icons.FORMS[2], None),

@@ -1,7 +1,7 @@
 # updater/runner.py
 
 import asyncio
-from typing import Callable
+from collections.abc import Callable
 
 from nonebot import logger
 
@@ -54,14 +54,14 @@ async def _run_job(name: str) -> tuple[str, Exception | None]:
     logger.info(f"[RUNNER] ▶ start job: {name}")
     try:
         await asyncio.to_thread(JOBS[name])
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.exception(f"[RUNNER] ✖ failed: {name}")
         return name, e
     logger.info(f"[RUNNER] ✔ success: {name}")
     return name, None
 
 
-async def run_all_async(stop_on_error: bool = True) -> dict:  # noqa: FBT001, FBT002
+async def run_all_async(stop_on_error: bool = True) -> dict:
     """跑完整条流水线。
 
     同一层的任务并发跑，层与层之间等前一层全部结束。
@@ -105,6 +105,6 @@ async def run_all_async(stop_on_error: bool = True) -> dict:  # noqa: FBT001, FB
         return results
 
 
-def run_all(stop_on_error: bool = True) -> dict:  # noqa: FBT001, FBT002
+def run_all(stop_on_error: bool = True) -> dict:
     """同步版，给脚本用。bot 里请用 run_all_async。"""
     return asyncio.run(run_all_async(stop_on_error))

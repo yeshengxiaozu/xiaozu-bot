@@ -1,9 +1,9 @@
 import json
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from .googlesheetapi import SheetAPI, persistently
 from .constants import PLAT_DIFF_ID, PLAT_DIFF_NAME
+from .googlesheetapi import SheetAPI, persistently
 
 try:
     from ..paths import staged, staged_or_published
@@ -17,11 +17,11 @@ class PlatDiff:
         id: str,
         creator: str,
         tags: str,
-        enjoyment: Optional[float],
-        video: Optional[str],
-        tier: Optional[str],
+        enjoyment: float | None,
+        video: str | None,
+        tier: str | None,
         sheet_index: int,
-    ):
+    ) -> None:
         self.name = name
         self.id = id
         self.creator = creator
@@ -31,7 +31,7 @@ class PlatDiff:
         self.tier = tier
         self.sheet_index = sheet_index
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             'sheetIndex': self.sheet_index,
             'tier': self.tier,
@@ -44,7 +44,7 @@ class PlatDiff:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PlatDiff':
+    def from_dict(cls, data: dict[str, Any]) -> 'PlatDiff':
         return cls(
             name=data.get('name', ''),
             id=data.get('id', ''),
@@ -57,7 +57,7 @@ class PlatDiff:
         )
 
     @staticmethod
-    def _parse_enjoyment(value: str) -> Optional[float]:
+    def _parse_enjoyment(value: str) -> float | None:
         if value is None:
             return None
         value = value.strip()
@@ -70,7 +70,7 @@ class PlatDiff:
 
 
 @persistently
-def fetch_plat_diff_cells(service, sheet_id: str, sheet_name: str) -> Dict[str, List[str]]:
+def fetch_plat_diff_cells(service, sheet_id: str, sheet_name: str) -> dict[str, list[str]]:
     names = SheetAPI.get_column_values(service, sheet_id, sheet_name, 'A')
     ids = SheetAPI.get_column_values(service, sheet_id, sheet_name, 'C')
     creators = SheetAPI.get_column_values(service, sheet_id, sheet_name, 'D')
@@ -88,7 +88,7 @@ def fetch_plat_diff_cells(service, sheet_id: str, sheet_name: str) -> Dict[str, 
     }
 
 
-def build_plat_diff_list(columns: Dict[str, List[str]]) -> List[PlatDiff]:
+def build_plat_diff_list(columns: dict[str, list[str]]) -> list[PlatDiff]:
     names = columns.get('names', [])
     ids = columns.get('ids', [])
     creators = columns.get('creators', [])
@@ -96,8 +96,8 @@ def build_plat_diff_list(columns: Dict[str, List[str]]) -> List[PlatDiff]:
     enjoyments = columns.get('enjoyments', [])
     videos = columns.get('videos', [])
 
-    entries: List[PlatDiff] = []
-    last_tier: Optional[str] = None
+    entries: list[PlatDiff] = []
+    last_tier: str | None = None
 
     for i in range(len(names)):
         name = names[i].strip() if i < len(names) else ''
@@ -113,7 +113,7 @@ def build_plat_diff_list(columns: Dict[str, List[str]]) -> List[PlatDiff]:
         #can't use upper name because there is literally a level called "tier 1" and it kinda fucks up the logic
         if name.startswith('TIER'):
             tier_label = name[4:].strip()
-            last_tier = tier_label if tier_label else None
+            last_tier = tier_label or None
             continue
 
         if not last_tier:
@@ -136,12 +136,12 @@ def build_plat_diff_list(columns: Dict[str, List[str]]) -> List[PlatDiff]:
 
 
 @persistently
-def fetch_plat_diff_levels(service, sheet_id: str, sheet_name: str) -> List[PlatDiff]:
+def fetch_plat_diff_levels(service, sheet_id: str, sheet_name: str) -> list[PlatDiff]:
     columns = fetch_plat_diff_cells(service, sheet_id, sheet_name)
     return build_plat_diff_list(columns)
 
 
-def save_plat_diff_cache(entries: List[PlatDiff]) -> None:
+def save_plat_diff_cache(entries: list[PlatDiff]) -> None:
     cache_path = staged('platdiff.json')
 
     payload = {
@@ -153,7 +153,7 @@ def save_plat_diff_cache(entries: List[PlatDiff]) -> None:
         json.dump(payload, f, indent=4)
 
 
-def load_plat_diff_cache() -> List[PlatDiff]:
+def load_plat_diff_cache() -> list[PlatDiff]:
     cache_path = staged_or_published('platdiff.json')
     if not cache_path.exists():
         return []

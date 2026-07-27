@@ -1,6 +1,8 @@
-from .googlesheetapi import SheetAPI,persistently
-from typing import Dict, List, Any
-import json,time
+import json
+import time
+from typing import Any
+
+from .googlesheetapi import SheetAPI, persistently
 
 try:
     from ..paths import staged
@@ -9,8 +11,9 @@ except ImportError:
 
 from .constants import PLAT_RANK_ID
 
+
 @persistently
-def fetch_plat_rank_cells(service, sheet_name: str) -> Dict[str, list]:
+def fetch_plat_rank_cells(service, sheet_name: str) -> dict[str, list]:
     names = SheetAPI.get_column_values(service, PLAT_RANK_ID, sheet_name, 'A')
     weights = SheetAPI.get_column_values(service, PLAT_RANK_ID, sheet_name, 'B')
 
@@ -19,7 +22,7 @@ def fetch_plat_rank_cells(service, sheet_name: str) -> Dict[str, list]:
         "weights": weights
     }
 
-def build_level_list(columns: Dict[str, list]) -> List[Dict[str, Any]]:
+def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
     names = columns['names']
     weights = columns['weights']
 
@@ -33,7 +36,7 @@ def build_level_list(columns: Dict[str, list]) -> List[Dict[str, Any]]:
             continue
         if not current_section:
             continue
-        
+
         level_objs.append({
             'sheetIndex': i,
             'name': name,
@@ -44,7 +47,7 @@ def build_level_list(columns: Dict[str, list]) -> List[Dict[str, Any]]:
     return level_objs
 
 @persistently
-def fetch_levels(service, sheet_name: str) -> List[Dict[str, Any]]:
+def fetch_levels(service, sheet_name: str) -> list[dict[str, Any]]:
     cols = fetch_plat_rank_cells(service, sheet_name)
     return build_level_list(cols)
 

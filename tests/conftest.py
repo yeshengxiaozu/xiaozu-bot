@@ -22,8 +22,9 @@ import random as _random
 import socket as _socket
 import sys
 import urllib.request as _urllib_request
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 import pytest
 
@@ -38,6 +39,13 @@ if str(REPO_ROOT) not in sys.path:
 # --------------------------------------------------------------------------
 # 2. nonebot 初始化（全进程只做一次）+ 日志静音
 # --------------------------------------------------------------------------
+# 下面每行结尾的 E402 抑制标记是**故意**留着的。E402 本身在 pyproject 的全局
+# ignore 里，所以它们确实"没有作用"，ruff 的 RUF100 会想把它们删掉 ——
+# pyproject 里给 tests/conftest.py 单独配了 RUF100 的 per-file-ignore 就是为了保住它们。
+# 它们是这份文件里 import 顺序不能乱（先 sys.path、再 nonebot.init()、
+# 最后才 import 适配器和仓库代码）唯一的**行内**标记。
+# （注意：这段说明里不能写出完整的抑制指令字面量，ruff 会把注释里的它
+#   也当成一条真指令去解析，然后报 "Invalid noqa directive"。）
 import nonebot  # noqa: E402
 from nonebot.log import logger as _nb_logger  # noqa: E402
 from nonebot.log import logger_id as _nb_logger_id  # noqa: E402
@@ -99,9 +107,11 @@ _init_nonebot_once()
 # --------------------------------------------------------------------------
 import httpx  # noqa: E402
 import requests  # noqa: E402
-from nonebot.adapters.onebot.v11 import Adapter, Bot, Message  # noqa: E402
 from nonebot.adapters.onebot.v11 import (  # noqa: E402
+    Adapter,
+    Bot,
     GroupMessageEvent,
+    Message,
     PrivateMessageEvent,
 )
 from nonebot.adapters.onebot.v11.event import Sender  # noqa: E402
@@ -130,7 +140,7 @@ _PROXY_ENV_VARS = (
 )
 
 
-def _is_loopback(host: Optional[str]) -> bool:
+def _is_loopback(host: str | None) -> bool:
     """判断一个主机名/地址是不是环回地址。
 
     Windows 上 asyncio 的 ProactorEventLoop 自建 self-pipe 时会往
@@ -272,9 +282,9 @@ class FakeResponse:
         self,
         status_code: int = 200,
         json_data: Any = _UNSET,
-        text: Optional[str] = None,
-        content: Optional[bytes] = None,
-        headers: Optional[dict[str, str]] = None,
+        text: str | None = None,
+        content: bytes | None = None,
+        headers: dict[str, str] | None = None,
         url: str = "https://example.invalid/",
         encoding: str = "utf-8",
     ) -> None:
@@ -301,10 +311,10 @@ class FakeResponse:
 
     @property
     def ok(self) -> bool:
-        return self.status_code < 400  # noqa: PLR2004
+        return self.status_code < 400
 
     def raise_for_status(self) -> None:
-        if self.status_code >= 400:  # noqa: PLR2004
+        if self.status_code >= 400:
             raise requests.HTTPError(f"{self.status_code} for {self.url}", response=self)
 
     def __repr__(self) -> str:
@@ -337,8 +347,7 @@ def make_httpx_response() -> Callable[..., httpx.Response]:
         **kwargs: Any,
     ) -> httpx.Response:
         request = httpx.Request(method, url)
-        response = httpx.Response(status_code, request=request, **kwargs)
-        return response
+        return httpx.Response(status_code, request=request, **kwargs)
 
     return _make
 
@@ -353,7 +362,7 @@ class RequestsRouter:
     """
 
     def __init__(self) -> None:
-        self.routes: list[tuple[Optional[str], str, Any]] = []
+        self.routes: list[tuple[str | None, str, Any]] = []
         self.calls: list[dict[str, Any]] = []
 
     def add(
@@ -361,7 +370,7 @@ class RequestsRouter:
         url: str,
         response: Any = None,
         *,
-        method: Optional[str] = None,
+        method: str | None = None,
         **response_kwargs: Any,
     ) -> "RequestsRouter":
         """登记一条路由。
@@ -395,7 +404,7 @@ class RequestsRouter:
         call = {"method": method.upper(), "url": url, **kwargs}
         self.calls.append(call)
 
-        def _usable(route_method: Optional[str]) -> bool:
+        def _usable(route_method: str | None) -> bool:
             return route_method is None or route_method == method.upper()
 
         exact = [r for r in self.routes if _usable(r[0]) and r[1] == url]
@@ -467,7 +476,7 @@ class HttpxRouter:
     """按 URL 分发的 httpx 桩，同步/异步都走它。没登记过的 URL 抛 NetworkBlocked。"""
 
     def __init__(self) -> None:
-        self.routes: list[tuple[Optional[str], str, Any]] = []
+        self.routes: list[tuple[str | None, str, Any]] = []
         self.requests: list[httpx.Request] = []
 
     def add(
@@ -475,7 +484,7 @@ class HttpxRouter:
         url: str,
         response: Any = None,
         *,
-        method: Optional[str] = None,
+        method: str | None = None,
         status_code: int = 200,
         **response_kwargs: Any,
     ) -> "HttpxRouter":
@@ -502,7 +511,7 @@ class HttpxRouter:
         self.requests.append(request)
         url = str(request.url)
 
-        def _usable(route_method: Optional[str]) -> bool:
+        def _usable(route_method: str | None) -> bool:
             return route_method is None or route_method == request.method.upper()
 
         exact = [r for r in self.routes if _usable(r[0]) and r[1] == url]
@@ -571,9 +580,9 @@ def make_json_redis(tmp_path: Path) -> Callable[..., JsonRedis]:
     counter = {"n": 0}
 
     def _make(
-        name: Optional[str] = None,
+        name: str | None = None,
         *,
-        initial: Optional[dict[str, Any]] = None,
+        initial: dict[str, Any] | None = None,
         auto_save: bool = True,
     ) -> JsonRedis:
         if name is None:
@@ -605,7 +614,7 @@ def patch_storage(
     def _patch(
         module: Any,
         *,
-        initial: Optional[dict[str, Any]] = None,
+        initial: dict[str, Any] | None = None,
         attr: str = "r",
     ) -> JsonRedis:
         filename = f"{module.__name__.replace('.', '_')}_{attr}.json"
@@ -621,7 +630,7 @@ def patch_storage(
 # --------------------------------------------------------------------------
 # OneBot V11 事件 / Bot
 # --------------------------------------------------------------------------
-def _as_message(message: Union[str, Message]) -> Message:
+def _as_message(message: str | Message) -> Message:
     return message if isinstance(message, Message) else Message(message)
 
 
@@ -637,7 +646,7 @@ def make_group_event() -> Callable[..., GroupMessageEvent]:
     """
 
     def _make(
-        message: Union[str, Message] = "",
+        message: str | Message = "",
         *,
         user_id: int = DEFAULT_USER_ID,
         group_id: int = DEFAULT_GROUP_ID,
@@ -683,7 +692,7 @@ def make_private_event() -> Callable[..., PrivateMessageEvent]:
     """
 
     def _make(
-        message: Union[str, Message] = "",
+        message: str | Message = "",
         *,
         user_id: int = DEFAULT_USER_ID,
         self_id: int = int(BOT_SELF_ID),
@@ -812,7 +821,7 @@ def repo_root() -> Path:
 # ==========================================================================
 
 
-def _as_message(value: Union[None, str, "Message"]) -> "Message":
+def _as_message(value: str | "Message" | None) -> "Message":
     from nonebot.adapters.onebot.v11 import Message
 
     if value is None:
@@ -842,7 +851,7 @@ async def run_handler(
     bot: "FakeBot",
     event: Any = None,
     *,
-    arg: Union[None, str, "Message"] = None,
+    arg: str | "Message" | None = None,
     index: int = 0,
 ) -> bool:
     """直接调用某个 matcher 的第 index 个 handler。

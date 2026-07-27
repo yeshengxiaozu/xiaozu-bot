@@ -101,15 +101,14 @@ def publish() -> list[str]:
 
         new_n = _entry_count(src)
         old_n = _entry_count(dst) if dst.exists() else None
-        if new_n is not None and old_n:
-            if new_n < old_n * MIN_KEEP_RATIO:
-                logger.error(
-                    f"[UPDATER] 拒绝发布 {name}：新数据只有 {new_n} 条，"
-                    f"旧数据有 {old_n} 条（不到 {MIN_KEEP_RATIO:.0%}）。"
-                    f"多半是上游表格改了格式导致解析失败，"
-                    f"已保留旧数据，新文件留在 staging 里可以自己看一眼。"
-                )
-                continue
+        if new_n is not None and old_n and new_n < old_n * MIN_KEEP_RATIO:
+            logger.error(
+                f"[UPDATER] 拒绝发布 {name}：新数据只有 {new_n} 条，"
+                f"旧数据有 {old_n} 条（不到 {MIN_KEEP_RATIO:.0%}）。"
+                f"多半是上游表格改了格式导致解析失败，"
+                f"已保留旧数据，新文件留在 staging 里可以自己看一眼。"
+            )
+            continue
 
         os.replace(src, dst)
         moved.append(name)

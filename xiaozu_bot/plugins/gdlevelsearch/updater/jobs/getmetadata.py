@@ -10,6 +10,7 @@ except ImportError:
 
 from .metadata import enrich_levels_with_ids
 
+
 def load_json_file(filepath):
     """读取 JSON 文件"""
     path = Path(filepath)
@@ -26,7 +27,7 @@ def save_json_file(filepath, data):
     try:
         with path.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
-    except IOError as e:
+    except OSError as e:
         logger.error(f"[GETMETADATA] 写入缓存失败: {filepath}: {e}")
 
 def test():

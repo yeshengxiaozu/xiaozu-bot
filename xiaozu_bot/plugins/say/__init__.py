@@ -1,6 +1,5 @@
 import asyncio
 import os
-from typing import Union
 
 from nonebot import get_plugin_config, on_command
 from nonebot.adapters.onebot.v11 import (
@@ -77,7 +76,7 @@ def sync_generate_audio(text: str, instruct: str | None, output_dir: str) -> str
 @say.handle()
 async def handle_function(
     bot: Bot,
-    event: Union[GroupMessageEvent, PrivateMessageEvent],
+    event: GroupMessageEvent | PrivateMessageEvent,
     arg: Message = CommandArg(),
 ):
     if isinstance(event, GroupMessageEvent) and event.group_id == 569801410:
@@ -115,7 +114,7 @@ async def handle_function(
 @say_instructed.handle()
 async def handle_function(
     bot: Bot,
-    event: Union[GroupMessageEvent, PrivateMessageEvent],
+    event: GroupMessageEvent | PrivateMessageEvent,
     arg: Message = CommandArg(),
 ):
     if event.get_user_id() not in ["3251605531", "2638056139"]:

@@ -251,7 +251,7 @@ REF_PDIFF = [
 ]
 
 @references.handle()
-async def handle_references(arg: Message = CommandArg()) -> None:  # noqa: C901
+async def handle_references(arg: Message = CommandArg()) -> None:
     args = arg.extract_plain_text().strip().split()
     if len(args) == 0:
         await references.finish("use *references nlw/plat/gddl/hds/ids <page>")

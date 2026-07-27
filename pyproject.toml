@@ -213,9 +213,108 @@ ignore = [
     "Q000",    # bad-quotes-inline-string —— 557 条；引号风格是 `ruff format` 的活，不是 lint 的
     "N802",    # invalid-function-name —— 413 条，基本都是既有的 handler 命名
     "E501",    # line-too-long —— 338 条，纯观感
+
+    # --- 第二批：跑完 `ruff check --fix` 之后剩下的房规 ---
+    # 判断标准是「这是本仓库刻意的写法，还是欠债」。下面每一条都属于前者，
+    # 而且都是逐条读过代码之后才关的，不是嫌多。
+    "TID252",  # relative-imports —— 在这个 PEP 420 插件树里父级相对 import 就是对的写法。
+               # 而且 updater/jobs/*.py 那一圈 `try: from ..paths import X /
+               # except ImportError: from updater.paths import X` 正是
+               # `python scripts/run_updater.py`（不起 bot 单独抓数据）能跑的前提。
+    "BLE001",  # blind-except —— 11 处全都是 `except Exception:` + `logger.exception` + 注释，
+               # 是「一个数据源挂了别连累另外两个」的正确写法。一个要长期在线的 bot
+               # 需要的就是这个，不该被 linter 逼着改成精确捕获。
+    "PLW0603", # global-statement —— 模块级缓存单例（notify 的去重键、say 的懒加载模型、
+               # platapi 的 reload 重绑）。7 条里有 5 条来自 platapi.py 同一行 global。
+    "TRY003",  # raise-vanilla-args —— 本仓库习惯在 raise 处直接写中文的用户可见消息，
+               # 而不是为每种错误定义一个异常类。对这个体量的项目是合适的。
+    "PLR2004", # magic-value-comparison —— game / joy / jrrp 本来就是数值逻辑，
+               # 把 `hp <= 0` 里的 0 抽成常量并不会让它更好读。
+    "PLR0913", # too-many-arguments —— 记录型构造器，draw.py 的 create_level_image 有 26 个参数，
+               # 那是「一张图要画的所有字段」，拆开只会更糟。
+    "PLR0917", # too-many-positional-arguments —— 和 PLR0913 几乎重复，而且它会**穿过**
+               # 已有的 `# noqa: PLR0913` 再报一遍（draw.py:311、platapi.py:11 都中枪），
+               # 属于双重计数。
+
+    # --- 第三批：把 lint 变成门禁前的最后一批 ---
+    # 到这一步存量已经从 1232 降到 ~100，剩下的全是「结构性的、改了没好处」的。
+    # 因为下面要把 lint 设成阻塞门禁（非零退出码就红），所以必须清到 0 —— 剩下的
+    # 这些不是"以后再修"，是**明确决定不修**。
+    "FBT001", # boolean-type-hint-positional-argument
+    "FBT002", # boolean-default-value-positional-argument
+    "FBT003", # boolean-positional-value-in-call
+              # 上面三条：updater/jobs 下的 nlw/ids/lw/hds 四个抓取任务**故意**保持
+              # 同一个签名 fetch_levels(service, sheet_name, platformer, pending)，
+              # 好让 runner 统一调。为了满足 linter 把它们改成关键字-only，
+              # 反而会打破这份对称。
+    "F811",   # redefined-while-unused —— joy/say 里那 8 个重名的 handle_function 是
+              # NoneBot 的惯用写法：每个都挂在**不同的** matcher 装饰器上，
+              # 装饰器已经把函数对象拿走了，模块级的名字重不重名无所谓。
+              # （唯一一条真问题 —— metadata.py 里 `import http` 被 requests.Session()
+              #   盖掉 —— 已经在这轮删掉了。）
+    "ARG001", # unused-function-argument —— 剩下的全是框架/对称签名要求的形参：
+              # NoneBot handler 的 bot/event/arg（按类型注入，用不用得上都得声明），
+              # 以及上面说的四个抓取任务里只有 lw 会用的 pending。
+              # 注意 pending **不能**改名成 _pending：调用方是按关键字传的。
+    "TC003",  # typing-only-standard-library-import —— 把只在注解里用到的 import 挪进
+              # TYPE_CHECKING 块，对一个不跑类型检查的仓库来说是纯增加噪音。
+    "N803",   # invalid-argument-name —— sheet_ID 这种；N802 已经关了，保持一致。
+    "N801",   # invalid-class-name
+    "N818",   # error-suffix-on-exception-name
+    "A002",   # builtin-argument-shadowing —— PlatInfo/PlatDiff 的 __init__ 参数叫 id，
+              # 是因为上游 JSON 里那个字段就叫 id（data.get('id')），跟着叫更好懂。
+              # 而且这两个类是按关键字构造的（id=...），改名要连着改 4 个文件和属性名，
+              # 为一条纯观感的规则不值得。
+    "C901",   # complex-structure
+    "PLR0912", # too-many-branches
+    "PLR0911", # too-many-return-statements
+    "PLR0915", # too-many-statements
+              # 上面四条：阈值已经放宽过一轮（见下面 mccabe/pylint 段）。还超的那几个
+              # 里最夸张的是 game 的 prop_demon_handle（复杂度 73），它确实该重构，
+              # 但那是改 live 的游戏逻辑，应该单独做，不该由 lint 卡着不让合并。
+    "PERF203", # try-except-in-loop —— 逐个数据源抓取时「单个失败不影响其他」正是要
+              # 在循环里 try 的。
+    "TRY300",  # try-consider-else
+    "TRY301",  # raise-within-try
+    "PTH105", "PTH107", "PTH109", "PTH118", "PTH123",
+              # os.replace / os.remove / os.getcwd / os.path.join / open —— 这几个都是
+              # **刻意**用 os 层的：paths.publish() 和 JsonRedis._save() 靠 os.replace
+              # 的原子性保证「不会读到写一半的文件」，注释里写得很清楚。
+              # Path.replace 底层是同一个系统调用，但把这些改掉只是换个写法、
+              # 没有任何收益，反而会让那几段注释对不上代码。
+    "F403", "F405",
+              # star import —— roulette 的 `from .const import *` 是把常量表整个拉进来，
+              # 这个用法在这里是清楚的。
+    "B007",   # unused-loop-control-variable
+    "ANN002", "ANN003", "ANN205",  # *args/**kwargs/staticmethod 的类型标注，
+              # 和已经关掉的 ANN001/ANN201 是一回事
+    "RUF043", # pytest-raises-ambiguous-pattern
+    "PLC3002", # unnecessary-direct-lambda-call
+    "PLW2901", # redefined-loop-name
+    "PIE810", # multiple-starts-ends-with
+    "DTZ005", # call-datetime-now-without-tzinfo —— 这个 bot 全程用本地时间，
+              # 每日人品、对局超时都是按本地时区算的，加 tz 反而要改语义
+    "SIM105", # suppressible-exception
 ]
 
-allowed-confusables = ["，", "。", "“", "”", "：", "；", "？", "！", "【", "】", "《", "》", "…", "—", "（", "）", "、"]
+# 追加了三个字符：
+#   ×  (U+00D7)  帮助文本里的乘号，xiaozubot_help/commands.py 用了 6 次
+#   𝕏  (U+1D54F) constants.py 里那个推特/X 的 logo 字形
+#   １ (U+FF11)  tests 里**故意**测全角数字输入的那条用例，是断言的一部分
+allowed-confusables = ["，", "。", "“", "”", "：", "；", "？", "！", "【", "】", "《", "》", "…", "—", "（", "）", "、", "×", "𝕏", "１"]
+
+# 复杂度阈值。默认值（10 / 12 / 50）对这个仓库偏严：
+# 一个多几个 elif 的 handler 就会中招，而那类函数拆开并不会更好读。
+# 调到下面这组之后，剩下报出来的才是真正该拆的。
+# 唯一的巨兽是 game 的 prop_demon_handle（复杂度 73、91 个分支、320 条语句，
+# 一整条 `elif item_name == ...` 的道具分发链）—— 它值得单独重构一次，
+# 但那是改 live 的游戏逻辑，不该由 lint 来推动，所以这里不为它放宽。
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.pylint]
+max-branches = 15
+max-statements = 80
 
 # 测试代码和生产代码的标准本来就不一样：
 # 用例函数不写类型标注、断言里直接写字面量数字、大量使用 assert，
@@ -231,7 +330,33 @@ allowed-confusables = ["，", "。", "“", "”", "：", "；", "？", "！", "
     "PLR2004", # magic-value-comparison —— 断言里当然全是字面量
     "S101",    # assert —— 用例的全部意义就是 assert
     "PLR0915", # too-many-statements —— 长一点的场景用例可以接受
+
+    # ARG 这一族**必须**在 tests/ 里关掉，不是图省事：
+    # 109 条 ARG002 里有 103 条是 pytest 的 fixture 名 —— 用例函数把 fixture 写进
+    # 参数列表就是为了触发它的副作用（monkeypatch、建临时目录），函数体里当然不用它。
+    # 而 pytest 是**严格按参数名**解析 fixture 的，照 linter 说的改成 `_name`
+    # 直接就是 `fixture '_name' not found`，整批用例挂掉。
+    # 剩下的 ARG005 是 monkeypatch 用的 lambda 桩，形参个数必须和被替换的函数对齐。
+    "ARG",
+    "SIM300",  # yoda-conditions —— 自动修会把 `assert runner.JOBS == {...}` 倒过来写成
+               # `assert {...} == runner.JOBS`，断言的可读性反而变差了
+    "RUF059",  # unused-unpacked-variable —— `a, _b = ...` 在用例里很正常
+    "DTZ001",  # 用例 fixture 里用不带时区的 datetime 是对的
+    "ASYNC240", # 用例里在 async 函数中碰 Path 无所谓，不是真的在跑事件循环
+    "RUF012",  # mutable-class-default —— 用例里的类属性容器
+    "B905",    # zip 不写 strict —— 用例里两边长度是自己造的
 ]
+
+# conftest.py 里那 13 个 `# noqa: E402` 必须留着。
+# E402 本来就在全局 ignore 里，所以这些 noqa 确实"没用"，RUF100 会想删掉它们 ——
+# 但它们是那份**载荷性 import 顺序**（先塞 sys.path、再 nonebot.init()、
+# 最后才 import 适配器和仓库代码）唯一的现场标记。删了之后，
+# 下一个动这个文件的人没有任何提示告诉他这里的顺序不能乱。
+"tests/conftest.py" = ["RUF100"]
+
+# scripts/ 是命令行工具，print 就是它的输出方式，不是调试残留。
+# 63 条 T201 里有 62 条在这儿。
+"scripts/*" = ["T201", "ASYNC240"]
 
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true

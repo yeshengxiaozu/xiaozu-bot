@@ -16,13 +16,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 from PIL import Image
 
-from tests.conftest import DEFAULT_USER_ID, FakeBot
-from tests.conftest import run_handler, sent_texts
+from tests.conftest import DEFAULT_USER_ID, FakeBot, run_handler, sent_texts
 from xiaozu_bot.plugins import gdlevelsearch
 from xiaozu_bot.plugins.gdlevelsearch import SearchResult, icons
 from xiaozu_bot.plugins.gdlevelsearch.gdapi import GDLevel, GDUser
@@ -39,7 +38,7 @@ def gddl_level(
     level_id: int,
     name: str,
     *,
-    rating: Optional[float] = None,
+    rating: float | None = None,
     difficulty: str = "Extreme",
     length: int = 3,
 ) -> GDDLLevel:
@@ -73,8 +72,8 @@ def gddl_level(
 
 
 def nlw_level(
-    level_id: Any, name: str, *, creator: Optional[str] = "Someone",
-    tier: Optional[str] = "5", source: str = "NLW",
+    level_id: Any, name: str, *, creator: str | None = "Someone",
+    tier: str | None = "5", source: str = "NLW",
 ) -> NlwLevel:
     level = NlwLevel(
         {
@@ -108,13 +107,13 @@ def gd_level(**attrs: Any) -> GDLevel:
 class FakeGddl:
     """替掉模块级的 Gddl 门面。只实现 search_by_name / gdrandom 真会调的两个方法。"""
 
-    def __init__(self, levels: Optional[list[GDDLLevel]] = None) -> None:
+    def __init__(self, levels: list[GDDLLevel] | None = None) -> None:
         self.levels = levels
         self.names: list[str] = []
         self.random_calls: list[tuple] = []
         self.random_result: Any = None
 
-    def getlevelsbyname(self, name: str) -> Optional[list[GDDLLevel]]:
+    def getlevelsbyname(self, name: str) -> list[GDDLLevel] | None:
         self.names.append(name)
         return self.levels
 
@@ -124,7 +123,7 @@ class FakeGddl:
 
 
 class FakeNlw:
-    def __init__(self, levels: Optional[list[NlwLevel]] = None) -> None:
+    def __init__(self, levels: list[NlwLevel] | None = None) -> None:
         self.levels = levels or []
         self.names: list[str] = []
 
@@ -134,11 +133,11 @@ class FakeNlw:
 
 
 class FakePlatapi:
-    def __init__(self, info: Optional[PlatInfo] = None) -> None:
+    def __init__(self, info: PlatInfo | None = None) -> None:
         self.info = info
         self.names: list[str] = []
 
-    def getlevelbyname(self, name: str) -> Optional[PlatInfo]:
+    def getlevelbyname(self, name: str) -> PlatInfo | None:
         self.names.append(name)
         return self.info
 
@@ -347,9 +346,9 @@ def sources(monkeypatch: pytest.MonkeyPatch) -> Any:
     """一次把三个数据源门面都换掉，返回它们方便断言"""
 
     def _install(
-        gddl: Optional[list[GDDLLevel]] = None,
-        nlw: Optional[list[NlwLevel]] = None,
-        plat: Optional[PlatInfo] = None,
+        gddl: list[GDDLLevel] | None = None,
+        nlw: list[NlwLevel] | None = None,
+        plat: PlatInfo | None = None,
     ) -> tuple[FakeGddl, FakeNlw, FakePlatapi]:
         fake_gddl = FakeGddl(gddl)
         fake_nlw = FakeNlw(nlw)
@@ -912,7 +911,7 @@ class TestHandleGdsearch:
 # gdsearch 的序号选择器
 # ==========================================================================
 class TestHandleChoice:
-    def _prime(self, results: Optional[list[SearchResult]] = None) -> list[SearchResult]:
+    def _prime(self, results: list[SearchResult] | None = None) -> list[SearchResult]:
         results = results or [
             SearchResult(11, "First"), SearchResult(22, "Second"),
         ]
@@ -1296,7 +1295,6 @@ class TestHandleGdiconArgs:
 
         async def fake_fetch_one(u: GDUser, form: Any) -> None:
             asked.append(form)
-            return None
 
         monkeypatch.setattr(icons, "fetch_one", fake_fetch_one)
 

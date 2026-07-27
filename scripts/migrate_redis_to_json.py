@@ -40,7 +40,7 @@ PLANS = {
 }
 
 
-def main() -> int:  # noqa: C901, PLR0912
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true", help="真的写文件（默认只看不写）")
     parser.add_argument("--force", action="store_true", help="覆盖已存在的 storage.json")
@@ -62,7 +62,7 @@ def main() -> int:  # noqa: C901, PLR0912
     )
     try:
         src.ping()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"! 连不上 Redis ({args.host}:{args.port}): {e}", file=sys.stderr)
         print("  Redis 没在跑的话，说明没有数据要搬，直接用空的 json 起就行。")
         return 1
@@ -104,9 +104,9 @@ def main() -> int:  # noqa: C901, PLR0912
         total += count
         print(f"-- {plugin}: {len(moved)} 个键 + {len(hashes)} 张哈希表，共 {count} 项")
         for key, value, ttl in moved[:5]:
-            shown = f"{value[:40]}..." if len(str(value)) > 40 else value  # noqa: PLR2004
+            shown = f"{value[:40]}..." if len(str(value)) > 40 else value
             print(f"     {key} = {shown}" + (f"  (ttl {ttl}s)" if ttl else ""))
-        if len(moved) > 5:  # noqa: PLR2004
+        if len(moved) > 5:
             print(f"     ... 另外 {len(moved) - 5} 个")
         for name, fields in hashes:
             print(f"     {name}: {len(fields)} 个字段")
@@ -131,7 +131,7 @@ def main() -> int:  # noqa: C901, PLR0912
         print(f"\n== 有 {len(leftover)} 个键不在迁移范围内，会留在 Redis 里不动：")
         for key in leftover[:20]:
             print(f"   {key}  (type={src.type(key)})")
-        if len(leftover) > 20:  # noqa: PLR2004
+        if len(leftover) > 20:
             print(f"   ... 另外 {len(leftover) - 20} 个")
         print("   现在的代码没有读这些键的地方，确认过就不用管。")
 

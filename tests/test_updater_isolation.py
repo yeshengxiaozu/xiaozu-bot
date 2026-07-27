@@ -14,7 +14,6 @@ conftest 的 no_network 是 autouse 的，所以这个文件里的「断网」�
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from typing import Any

@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 from nonebot import logger
 
@@ -8,40 +8,40 @@ from nonebot import logger
 class PlatInfo:
     """Represents one level entry from plat_combined.json."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         level_id: str,
         name: str,
-        tier: Optional[str],
-        tpl: Optional[str],
-        pemonlist: Optional[str],
-        creator: Optional[str],
+        tier: str | None,
+        tpl: str | None,
+        pemonlist: str | None,
+        creator: str | None,
         tags: list[str],
-        enjoyment: Optional[float],
-        video: Optional[str],
-        weight: Optional[str],
-        section: Optional[str],
-        derived_from: Optional[str],
+        enjoyment: float | None,
+        video: str | None,
+        weight: str | None,
+        section: str | None,
+        derived_from: str | None,
         derived_levels: list[str],
     ) -> None:
         self.id: str = level_id
         self.name: str = name
-        self.tier: Optional[str] = tier
-        self.tpl: Optional[str] = tpl
-        self.pemonlist: Optional[str] = pemonlist
-        self.creator: Optional[str] = creator
+        self.tier: str | None = tier
+        self.tpl: str | None = tpl
+        self.pemonlist: str | None = pemonlist
+        self.creator: str | None = creator
         self.tags: list[str] = tags
-        self.enjoyment: Optional[float] = enjoyment
-        self.video: Optional[str] = video
-        self.weight: Optional[str] = weight
-        self.section: Optional[str] = section
-        self.derived_from: Optional[str] = derived_from
+        self.enjoyment: float | None = enjoyment
+        self.video: str | None = video
+        self.weight: str | None = weight
+        self.section: str | None = section
+        self.derived_from: str | None = derived_from
         self.derived_levels: list[str] = derived_levels
         self.is_main: bool = derived_from is None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PlatInfo":
-        def to_str(value: Any) -> Optional[str]:
+        def to_str(value: Any) -> str | None:
             if value is None:
                 return None
             return str(value).strip()
@@ -108,7 +108,7 @@ class PlatInfo:
 class PlatData:
     """Loads plat_combined.json and exposes lookup helpers."""
 
-    def __init__(self, cache_file: Optional[str] = None) -> None:
+    def __init__(self, cache_file: str | None = None) -> None:
         self.cache_file = cache_file or (
             Path(__file__).parent / "data" / "plat_combined.json"
         )
@@ -152,7 +152,7 @@ class PlatData:
                 entries.append(entry)
         return entries
 
-    def _load_json(self, filepath: Path) -> Optional[dict[str, Any]]:
+    def _load_json(self, filepath: Path) -> dict[str, Any] | None:
         try:
             with Path.open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
@@ -161,10 +161,10 @@ class PlatData:
         except json.JSONDecodeError:
             return None
 
-    def getlevelbyid(self, level_id: str) -> Optional[PlatInfo]:
+    def getlevelbyid(self, level_id: str) -> PlatInfo | None:
         return self.by_id.get(str(level_id).strip())
 
-    def getlevelbyname(self, name: str) -> Optional[PlatInfo]:
+    def getlevelbyname(self, name: str) -> PlatInfo | None:
         return self.by_name.get(name.strip().lower())
 
     def to_dict(self) -> dict[str, Any]:
@@ -178,11 +178,11 @@ platdata_by_id: dict[str, PlatInfo] = platdata.by_id
 platdata_by_name: dict[str, PlatInfo] = platdata.by_name
 
 
-def fetch(cache_file: Optional[str] = None) -> list[PlatInfo]:
+def fetch(cache_file: str | None = None) -> list[PlatInfo]:
     """Reload plat data from JSON and return PlatInfo entries."""
     # platdata_by_name 之前漏在这里没重新赋值，导致 fetch 之后
     # getderivedlevels 用的还是旧表
-    global platdata, platdata_entries, platdata_main_entries, platdata_derived_entries, platdata_by_id, platdata_by_name  # noqa: PLW0603, E501
+    global platdata, platdata_entries, platdata_main_entries, platdata_derived_entries, platdata_by_id, platdata_by_name
     platdata = PlatData(cache_file=cache_file) if cache_file else PlatData()
     platdata_entries = platdata.entries
     platdata_main_entries = platdata.main_entries
@@ -199,14 +199,14 @@ def reload() -> None:
 
 class Platapi:
     @staticmethod
-    def getlevelbyid(level_id: Optional[Union[str, int]]) -> Optional[PlatInfo]:
+    def getlevelbyid(level_id: str | int | None) -> PlatInfo | None:
         """Get a main PlatInfo entry by its id."""
         if not level_id:
             return None
         return platdata.getlevelbyid(str(level_id))
 
     @staticmethod
-    def getlevelbyname(name: str) -> Optional[PlatInfo]:
+    def getlevelbyname(name: str) -> PlatInfo | None:
         """Get a main PlatInfo entry by its name."""
         return platdata.getlevelbyname(name)
 

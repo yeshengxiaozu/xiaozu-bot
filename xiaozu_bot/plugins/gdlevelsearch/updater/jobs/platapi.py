@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 try:
     from ..paths import DATA_DIR
@@ -15,36 +15,36 @@ class PlatInfo:
         self,
         id: str,
         name: str,
-        tier: Optional[str],
-        tpl: Optional[str],
-        pemonlist: Optional[str],
-        creator: Optional[str],
-        tags: List[str],
-        enjoyment: Optional[float],
-        video: Optional[str],
-        weight: Optional[str],
-        section: Optional[str],
-        derived_from: Optional[str],
-        derived_levels: List[str],
-    ):
+        tier: str | None,
+        tpl: str | None,
+        pemonlist: str | None,
+        creator: str | None,
+        tags: list[str],
+        enjoyment: float | None,
+        video: str | None,
+        weight: str | None,
+        section: str | None,
+        derived_from: str | None,
+        derived_levels: list[str],
+    ) -> None:
         self.id: str = id
         self.name: str = name
-        self.tier: Optional[str] = tier
-        self.tpl: Optional[str] = tpl
-        self.pemonlist: Optional[str] = pemonlist
-        self.creator: Optional[str] = creator
-        self.tags: List[str] = tags
-        self.enjoyment: Optional[float] = enjoyment
-        self.video: Optional[str] = video
-        self.weight: Optional[str] = weight
-        self.section: Optional[str] = section
-        self.derived_from: Optional[str] = derived_from
-        self.derived_levels: List[str] = derived_levels
+        self.tier: str | None = tier
+        self.tpl: str | None = tpl
+        self.pemonlist: str | None = pemonlist
+        self.creator: str | None = creator
+        self.tags: list[str] = tags
+        self.enjoyment: float | None = enjoyment
+        self.video: str | None = video
+        self.weight: str | None = weight
+        self.section: str | None = section
+        self.derived_from: str | None = derived_from
+        self.derived_levels: list[str] = derived_levels
         self.is_main: bool = derived_from is None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PlatInfo':
-        def to_str(value: Any) -> Optional[str]:
+    def from_dict(cls, data: dict[str, Any]) -> 'PlatInfo':
+        def to_str(value: Any) -> str | None:
             if value is None:
                 return None
             return str(value).strip()
@@ -82,7 +82,7 @@ class PlatInfo:
             derived_levels=derived_levels,
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             'id': self.id,
             'name': self.name,
@@ -103,15 +103,15 @@ class PlatInfo:
 class PlatData:
     """Loads plat_combined.json and exposes lookup helpers."""
 
-    def __init__(self, cache_file: Optional[str] = None):
+    def __init__(self, cache_file: str | None = None) -> None:
         self.cache_file = cache_file or str(DATA_DIR / 'plat_combined.json')
-        self.entries: List[PlatInfo] = []
-        self.main_entries: List[PlatInfo] = []
-        self.derived_entries: List[PlatInfo] = []
-        self.by_id: Dict[str, PlatInfo] = {}
+        self.entries: list[PlatInfo] = []
+        self.main_entries: list[PlatInfo] = []
+        self.derived_entries: list[PlatInfo] = []
+        self.by_id: dict[str, PlatInfo] = {}
         self.load()
 
-    def load(self) -> List[PlatInfo]:
+    def load(self) -> list[PlatInfo]:
         self.entries = self._fetch()
         self.main_entries = [entry for entry in self.entries if entry.is_main]
         self.derived_entries = [entry for entry in self.entries if not entry.is_main]
@@ -123,13 +123,13 @@ class PlatData:
 
         return self.entries
 
-    def _fetch(self) -> List[PlatInfo]:
+    def _fetch(self) -> list[PlatInfo]:
         payload = self._load_json(self.cache_file)
         if not payload:
             return []
 
         raw_entries = payload.get('levels', [])
-        entries: List[PlatInfo] = []
+        entries: list[PlatInfo] = []
         for item in raw_entries:
             if not isinstance(item, dict):
                 continue
@@ -138,7 +138,7 @@ class PlatData:
                 entries.append(entry)
         return entries
 
-    def _load_json(self, filepath: str) -> Optional[Dict[str, Any]]:
+    def _load_json(self, filepath: str) -> dict[str, Any] | None:
         path = Path(filepath)
         try:
             with path.open('r', encoding='utf-8') as f:
@@ -148,18 +148,18 @@ class PlatData:
         except json.JSONDecodeError:
             return None
 
-    def getlevelbyid(self, level_id: str) -> Optional[PlatInfo]:
+    def getlevelbyid(self, level_id: str) -> PlatInfo | None:
         return self.by_id.get(str(level_id).strip())
 
 
 platdata = PlatData()
-platdata_entries: List[PlatInfo] = platdata.entries
-platdata_main_entries: List[PlatInfo] = platdata.main_entries
-platdata_derived_entries: List[PlatInfo] = platdata.derived_entries
-platdata_by_id: Dict[str, PlatInfo] = platdata.by_id
+platdata_entries: list[PlatInfo] = platdata.entries
+platdata_main_entries: list[PlatInfo] = platdata.main_entries
+platdata_derived_entries: list[PlatInfo] = platdata.derived_entries
+platdata_by_id: dict[str, PlatInfo] = platdata.by_id
 
 
-def fetch(cache_file: Optional[str] = None) -> List[PlatInfo]:
+def fetch(cache_file: str | None = None) -> list[PlatInfo]:
     """Reload plat data from JSON and return PlatInfo entries."""
     global platdata, platdata_entries, platdata_main_entries, platdata_derived_entries, platdata_by_id
     platdata = PlatData(cache_file=cache_file) if cache_file else PlatData()
@@ -170,6 +170,6 @@ def fetch(cache_file: Optional[str] = None) -> List[PlatInfo]:
     return platdata_entries
 
 
-def getlevelbyid(level_id: str) -> Optional[PlatInfo]:
+def getlevelbyid(level_id: str) -> PlatInfo | None:
     """Get a main PlatInfo entry by its id."""
     return platdata.getlevelbyid(level_id)

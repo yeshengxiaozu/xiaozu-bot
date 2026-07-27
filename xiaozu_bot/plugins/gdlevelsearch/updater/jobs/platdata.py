@@ -1,8 +1,9 @@
-from .googlesheetapi import SheetAPI, persistently
-from typing import Dict, List, Any
 import json
 import time
+from typing import Any
+
 from .constants import PLAT_DATA_ID, PLAT_DATA_SHEET_NAME
+from .googlesheetapi import SheetAPI, persistently
 
 try:
     from ..paths import staged
@@ -11,7 +12,7 @@ except ImportError:
 
 
 @persistently
-def fetch_platdata_cells(service, sheet_id: str, sheet_name: str) -> Dict[str, list]:
+def fetch_platdata_cells(service, sheet_id: str, sheet_name: str) -> dict[str, list]:
     """
     从 Google Sheet 中读取指定列的数据
     A列: ID
@@ -35,7 +36,7 @@ def fetch_platdata_cells(service, sheet_id: str, sheet_name: str) -> Dict[str, l
     }
 
 
-def build_data_objects(columns: Dict[str, list]) -> List[Dict[str, Any]]:
+def build_data_objects(columns: dict[str, list]) -> list[dict[str, Any]]:
     """
     将列数据转换为对象列表
     第一行为表头，后续行为数据
@@ -78,20 +79,20 @@ def fetch():
     主函数：获取数据并保存到 JSON 文件
     """
     service = SheetAPI.get_service()
-    
+
     # 读取指定列的数据
     columns = fetch_platdata_cells(service, PLAT_DATA_ID, PLAT_DATA_SHEET_NAME)
-    
+
     # 构建数据对象列表
     data = build_data_objects(columns)
-    
+
     # 保存到 JSON 文件
     output_data = {
         "timestamp": time.time(),
         "data": data,
         "row_count": len(data)
     }
-    
+
     output_path = staged("platdata.json")
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=4)
