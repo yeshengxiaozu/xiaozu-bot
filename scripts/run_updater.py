@@ -69,7 +69,7 @@ def main() -> int:
             print(f"-- {name} ... ", end="", flush=True)
             try:
                 runner.JOBS[name]()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 failed.append((name, e))
                 print(f"失败 ({time.time() - job_started:.1f}s): {type(e).__name__}: {e}")
                 if not args.keep_going:
@@ -90,7 +90,7 @@ def main() -> int:
             print(f"   第 {i} 层（并发）：{', '.join(stage)}")
         try:
             results = asyncio.run(runner.run_all_async(stop_on_error=not args.keep_going))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"\n== 流水线失败：{e}")
             print(f"   没有发布，data/ 保持上一次的样子；中间产物留在 {STAGING_DIR} 方便排查")
             return 1

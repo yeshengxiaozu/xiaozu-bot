@@ -3,7 +3,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import requests
 from nonebot import logger
@@ -44,12 +44,12 @@ class AREDLLevel:
     level_id: int
     two_player: bool
     tags: list[str]
-    description: Optional[str]
-    song: Optional[int]
-    edel_enjoyment: Optional[float]
+    description: str | None
+    song: int | None
+    edel_enjoyment: float | None
     is_edel_pending: bool
-    gddl_tier: Optional[float]
-    nlw_tier: Optional[str]
+    gddl_tier: float | None
+    nlw_tier: str | None
 
     def __init__(self, jsondict: dict[str,Any]) -> None:
         self.id = jsondict["id"]
@@ -278,7 +278,7 @@ load_from_cache_only()
 
 class Aredl:
     @staticmethod
-    def getlevelbyid(level_id: int) -> Optional[AREDLLevel]:
+    def getlevelbyid(level_id: int) -> AREDLLevel | None:
         if level_id in aredl_dict:
             logger.trace(
                 f"Level ID {level_id} found in aredl_dict as #{aredl_dict[level_id].position}"

@@ -14,7 +14,8 @@ import importlib
 import pkgutil
 import random as _random
 import re
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from nonebot.adapters.onebot.v11 import Message
@@ -201,7 +202,7 @@ def make_state(
     hp: tuple[int, int] = (4, 4),
     hp_max: int = 6,
     item_max: int = 6,
-    clip: Optional[list[int]] = None,
+    clip: list[int] | None = None,
     turn: int = 0,
     items0: tuple[int, ...] = (),
     items1: tuple[int, ...] = (),
@@ -1881,11 +1882,11 @@ class TestHelpRegistryIntegrity:
                 assert key not in COMMANDS, f"{name} 的别名 {alias} 和命令名撞了"
                 assert key not in seen, f"别名 {alias} 被 {seen[key]} 和 {name} 同时占用"
                 seen[key] = name
-        assert helpmod.ALIASES == {a: n for a, n in seen.items()}
+        assert dict(seen.items()) == helpmod.ALIASES
 
     def test_别名表覆盖所有别名(self):
         expected = {a.lower(): n for n, c in COMMANDS.items() for a in c.aliases}
-        assert helpmod.ALIASES == expected
+        assert expected == helpmod.ALIASES
         assert helpmod.ALIASES  # 至少得有几个，否则这个测试没意义
 
     def test_每个分类都有命令(self):
@@ -2053,7 +2054,7 @@ class TestHelpOverview:
         合并成一条：标签集合精确相等 + 每条的 summary 都在。
         """
         text = helpmod._overview()
-        labels = set(re.findall(r"^ {2}(\S+)", text, flags=re.M))
+        labels = set(re.findall(r"^ {2}(\S+)", text, flags=re.MULTILINE))
         known = {c.prefix + n for n, c in COMMANDS.items()}
         assert labels == known, (
             f"总览多出来的：{labels - known}；漏掉的：{known - labels}"

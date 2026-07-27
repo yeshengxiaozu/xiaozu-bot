@@ -27,7 +27,6 @@ FRUITY_LEVELS_NLW = {
     'super probably levle': 'super probably level',
     '\U0001f31a FURY TECH': 'FURY TECH',
     '\U0001f31d Technopunk': 'Technopunk',
-    'Collect All Pets 🦝': 'Collect All Pets',
     'Instinct (Krazyman50)': 'Instinct',
 }
 

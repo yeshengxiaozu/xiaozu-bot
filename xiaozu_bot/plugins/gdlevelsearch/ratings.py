@@ -6,7 +6,6 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 from nonebot import logger
 
@@ -41,7 +40,7 @@ class RatingsQuery:
     """一次 gdratings 的查询条件"""
 
     target: str                      # 关卡名或 id，还没解析成 level_id
-    sort: Optional[str] = None
+    sort: str | None = None
     ascending: bool = False
     victors_only: bool = False
 
@@ -70,7 +69,7 @@ def parse_args(text: str) -> RatingsQuery:
     if not tokens:
         raise ArgError("请提供关卡名或 id\n\n" + USAGE)
 
-    sort: Optional[str] = None
+    sort: str | None = None
     ascending = False
     victors = False
     words: list[str] = []
@@ -111,7 +110,7 @@ def parse_args(text: str) -> RatingsQuery:
 MIN_ID_LEN = 4
 
 
-def resolve_level(target: str) -> tuple[Optional[int], Optional[str], str]:
+def resolve_level(target: str) -> tuple[int | None, str | None, str]:
     """把用户给的关卡名或 id 变成 level_id。
 
     返回 (level_id, 关卡名, 出错时的提示)。
@@ -140,7 +139,7 @@ def resolve_level(target: str) -> tuple[Optional[int], Optional[str], str]:
     for lv in pool[:10]:
         tier = f" t{round(lv.Rating, 2)}" if lv.Rating else ""
         lines.append(f"  {lv.Meta.Name}{tier} (ID: {lv.ID})")
-    if len(pool) > 10:  # noqa: PLR2004
+    if len(pool) > 10:
         lines.append(f"  ...还有 {len(pool) - 10} 个")
     return None, None, "\n".join(lines)
 
@@ -161,7 +160,7 @@ class RatingsSession:
 
     query: RatingsQuery
     level_id: int
-    level_name: Optional[str] = None
+    level_name: str | None = None
     page: int = 0
     pages: dict[int, list[Submission]] = field(default_factory=dict)
     total: int = 0
@@ -179,13 +178,13 @@ class RatingsSession:
     def current(self) -> list[Submission]:
         return self.pages.get(self.page, [])
 
-    def fetch(self, page: int) -> Optional[list[Submission]]:
+    def fetch(self, page: int) -> list[Submission] | None:
         """取某一页。取过的走缓存。请求失败返回 None。"""
         if page in self.pages:
             logger.debug(f"[gdratings] 第 {page + 1} 页用缓存")
             return self.pages[page]
 
-        result: Optional[SubmissionPage] = Gddl.getsubmissions(
+        result: SubmissionPage | None = Gddl.getsubmissions(
             self.level_id,
             page=page,
             limit=GDDL_SUBMISSION_LIMIT,
@@ -240,7 +239,7 @@ class RatingsSession:
         return "\n".join([head, *lines, " / ".join(hints)])
 
 
-def start_session(text: str) -> tuple[Optional[RatingsSession], str]:
+def start_session(text: str) -> tuple[RatingsSession | None, str]:
     """解析参数、定位关卡、取第一页。
 
     返回 (会话, 出错时的消息)。

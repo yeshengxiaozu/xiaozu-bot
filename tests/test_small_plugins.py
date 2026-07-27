@@ -17,24 +17,21 @@
 
 from __future__ import annotations
 
-import contextlib
-import inspect
 import os
 import random
 import re
 import sys
 import types
+from collections.abc import Callable
 from datetime import datetime as real_datetime
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Optional, Union
+from typing import Any, ClassVar
 from urllib.parse import unquote
 
 import httpx
 import pytest
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
 from nonebot.adapters.onebot.v11.event import PokeNotifyEvent
-from nonebot.exception import FinishedException
-from nonebot.matcher import current_bot, current_event
 from PIL import Image
 
 from tests.conftest import BOT_SELF_ID, DEFAULT_GROUP_ID, DEFAULT_USER_ID, FakeBot
@@ -53,8 +50,7 @@ MASTER_ID = 3251605531
 # 驱动 handler 的那几个工具（run_handler / sent_texts / only_text ...）现在住在
 # tests/conftest.py 里。挪过去的原因：别的测试文件也要用，原来是
 # `from tests.test_small_plugins import ...` 拿的，那样这个文件就删不掉了。
-from tests.conftest import (  # noqa: E402
-    matcher_context,
+from tests.conftest import (
     only_text,
     run_coro,
     run_handler,
@@ -265,7 +261,7 @@ class TestJrrp:
         monkeypatch.setattr(jrrp, "datetime", fake_module)
         monkeypatch.setattr(random, "randint", lambda a, b: 42)
 
-        recorded: list[tuple[str, Any, Optional[int]]] = []
+        recorded: list[tuple[str, Any, int | None]] = []
         real_set = store.set
 
         def spy(key, value, ex=None):
@@ -700,7 +696,7 @@ class TestZhuaDescriptions:
 
     def test_data_dir_is_relative_to_the_module(self):
         """图库路径必须相对本文件，不能相对 cwd"""
-        assert zhua.DATA_DIR == Path(zhua.__file__).resolve().parent / "data"
+        assert Path(zhua.__file__).resolve().parent / "data" == zhua.DATA_DIR
 
     async def test_duplicate_stem_is_resolved_by_insertion_order(
         self, fake_bot, make_group_event, monkeypatch

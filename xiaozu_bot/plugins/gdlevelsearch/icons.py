@@ -10,7 +10,7 @@ col1/col2 传什么都一样（RobTop 和 Riot 拿回来的图字节完全相同
 
 import asyncio
 import io
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 import httpx
 from nonebot import logger
@@ -59,7 +59,7 @@ FORM_BY_KEY = {f.key: f for f in FORMS}
 DEFAULT_FORM = "cube"
 
 
-def resolve_form(name: str) -> Optional[Form]:
+def resolve_form(name: str) -> Form | None:
     key = ALIASES.get(name.lower(), name.lower())
     return FORM_BY_KEY.get(key)
 
@@ -74,8 +74,8 @@ async def _fetch_icon(
     icon_id: int,
     col1: int,
     col2: int,
-    glow: bool,  # noqa: FBT001
-) -> Optional[Image.Image]:
+    glow: bool,
+) -> Image.Image | None:
     """取一个图标。失败返回 None，不抛。"""
     params = {
         "type": form.api_type,
@@ -89,13 +89,13 @@ async def _fetch_icon(
     for attempt in range(1, ICON_RETRIES + 1):
         try:
             resp = await client.get(ICON_BASE, params=params, timeout=ICON_TIMEOUT)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"[gdicon] {form.key} 第 {attempt} 次失败: {type(e).__name__}")
         else:
             if resp.status_code == HTTP_OK and resp.content:
                 try:
                     return Image.open(io.BytesIO(resp.content)).convert("RGBA")
-                except Exception:  # noqa: BLE001
+                except Exception:
                     logger.warning(f"[gdicon] {form.key} 拿到了但解不开")
                     return None
             logger.warning(f"[gdicon] {form.key} HTTP {resp.status_code}")
@@ -104,7 +104,7 @@ async def _fetch_icon(
     return None
 
 
-async def fetch_one(user: GDUser, form: Form) -> Optional[Image.Image]:
+async def fetch_one(user: GDUser, form: Form) -> Image.Image | None:
     """取单个 gamemode 的图标"""
     async with httpx.AsyncClient(follow_redirects=True) as client:
         return await _fetch_icon(
@@ -117,7 +117,7 @@ async def fetch_one(user: GDUser, form: Form) -> Optional[Image.Image]:
         )
 
 
-async def fetch_all(user: GDUser) -> list[tuple[Form, Optional[Image.Image]]]:
+async def fetch_all(user: GDUser) -> list[tuple[Form, Image.Image | None]]:
     """九个 gamemode 一起取。
 
     是并发不是连发 —— 九次请求同时出去，一轮就回来，
@@ -137,7 +137,10 @@ async def fetch_all(user: GDUser) -> list[tuple[Form, Optional[Image.Image]]]:
                 for f in FORMS
             )
         )
-    return list(zip(FORMS, results))
+    # strict=True：results 是按 FORMS 一一生成的，两边必然等长。
+    # 不写 strict 的话哪天上游改了、长度对不上，zip 会**静默截断**，
+    # 结果就是少画几个 gamemode 的图标而完全不报错。宁可当场炸。
+    return list(zip(FORMS, results, strict=True))
 
 
 # ---------------------------------------------------------------- 拼图
@@ -160,7 +163,7 @@ def _fit(img: Image.Image, box: int) -> Image.Image:
     )
 
 
-def compose_sheet(user: GDUser, items: list[tuple[Form, Optional[Image.Image]]]) -> Image.Image:
+def compose_sheet(user: GDUser, items: list[tuple[Form, Image.Image | None]]) -> Image.Image:
     """把九个图标拼成一张。
 
     纯色底，除了顶部居中的用户名之外不放任何文字 ——

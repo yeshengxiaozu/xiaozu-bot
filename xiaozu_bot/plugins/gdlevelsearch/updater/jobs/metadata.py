@@ -4,16 +4,17 @@
 """
 
 import json
-import os,http
+import os
 import time
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from threading import Lock
 
 import requests
+import urllib3
 from nonebot import logger
 from requests.adapters import HTTPAdapter, Retry
-import urllib3
+
 
 # 抄出来的ui函数
 def demon_type(cache_filter_difficulty):
@@ -50,7 +51,7 @@ adapter = HTTPAdapter(max_retries=retry_strategy)
 http.mount("https://", adapter)
 
 # 默认 verify 参数：优先使用 certifi，否则关闭验证（不推荐）
-DEFAULT_VERIFY = CA_BUNDLE if CA_BUNDLE else False
+DEFAULT_VERIFY = CA_BUNDLE or False
 
 # ---------- 辅助函数 ----------
 def normalize_creator_name(name: str) -> str:
@@ -76,14 +77,19 @@ def load_metadata_cache(cache_dir: Path):
     path = Path(cache_dir) / CACHE_FILENAME
     if path.exists():
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, encoding='utf-8') as f:
                 return json.load(f)
         except Exception:
             logger.warning("Failed to load metadata cache, starting fresh")
     return []
 
 # ---------- API 抓取 ----------
-def fetch_level_data(name: str, creator: str, loose: bool = False) -> dict | None:
+# 原来这里还有第三个参数 `loose: bool = False`，函数体里**从来没读过它**，
+# 而唯一的调用方（下面 enrich 那段）却一直传 True 进来，也就是说
+# 「松匹配」这个开关接上了但根本没实现，代码在说谎。
+# 调用方本来就有兜底（拿不到 online_id 就转去问 gdapi），所以直接把这个
+# 参数删掉，行为不变，只是不再假装支持一个不存在的功能。
+def fetch_level_data(name: str, creator: str) -> dict | None:
     name = name.replace(" and more","")
     params = {
         "query": name,
@@ -136,8 +142,8 @@ def fetch_level_data(name: str, creator: str, loose: bool = False) -> dict | Non
             logger.info(f"gdhistory: No results found for '{name}' by '{creator}'")
             return None
         try:
-            id = str(input(f"finding unmatched level, please manually enter id for {name} by {creator}").strip())
-            return {"online_id": int(id)}
+            manual_id = str(input(f"finding unmatched level, please manually enter id for {name} by {creator}").strip())
+            return {"online_id": int(manual_id)}
         except ValueError:
             logger.error("Invalid ID format entered")
             return None
@@ -147,27 +153,27 @@ def fetch_level_data(name: str, creator: str, loose: bool = False) -> dict | Non
     # 尝试手动选择
     if len(hits) == 1:
         return hits[0]
-    
+
     # 过滤出名称匹配的关卡
     name_normalized = name.strip()
     hits = [level for level in hits if level.get('cache_level_name', '').strip() == name_normalized]
-    
+
     if len(hits) == 1:
         return hits[0]
-    
+
     if not MANUAL_FALLBACK:
-        logger.info(f"Multiple levels found, manual selection required")
+        logger.info("Multiple levels found, manual selection required")
         return None
-    
+
     if len(hits) == 0:
         try:
-            id = int(input(f"finding unmatched level, please manually enter id for {name} by {creator}").strip())
-            return {"online_id": id}
+            manual_id = int(input(f"finding unmatched level, please manually enter id for {name} by {creator}").strip())
+            return {"online_id": manual_id}
         except ValueError:
             logger.error("Invalid ID format entered")
             return None
-    
-    logger.info(f"Multiple levels found, please select one:")
+
+    logger.info("Multiple levels found, please select one:")
     logger.info(f"Spreadsheet info: {name} by {creator}\n    results:")
     for level in hits:
         logger.info(f"{level['cache_level_name']} by {level['cache_username']} ({demon_type(level['cache_filter_difficulty'])} Demon)")
@@ -176,7 +182,7 @@ def fetch_level_data(name: str, creator: str, loose: bool = False) -> dict | Non
 # ---------- 并发队列控制 ----------
 class RateLimiter:
     """简单的间隔控速器"""
-    def __init__(self, interval: float):
+    def __init__(self, interval: float) -> None:
         self.interval = interval
         self._last = 0.0
         self._lock = Lock()
@@ -198,7 +204,7 @@ def enrich_levels_with_ids(
     """
     为 levels 列表中的每个关卡添加 'id' 字段（online_id）。
     该操作直接修改传入的 levels 对象。
-    
+
     levels: 列表，每个元素应包含 'name' 和 'creator' 键。
     cache_dir: 缓存目录，会在此目录下读写 metadata.json。
     """
@@ -239,42 +245,42 @@ def enrich_levels_with_ids(
                 return
 
         rate_limiter.wait()
-        
+
         try:
-            data = fetch_level_data(name, creator_raw, True)
-            
+            data = fetch_level_data(name, creator_raw)
+
             if data is None or data.get("online_id", None) is None:
                 #尝试使用gdapi
                 # 用插件主目录那份 gdapi。updater/jobs 下原来还有一份 571 行的
                 # 副本，已经和主的分叉了（主的重构成了 parse_server_key_value_pairs
                 # 那套并多了 GDUser），留着只会让 bug 要修两遍，所以删掉了。
                 try:
-                    from ...gdapi import search_levels_by_name   # bot 里跑
+                    from ...gdapi import search_levels_by_name  # bot 里跑
                 except ImportError:
-                    from gdapi import search_levels_by_name      # 单独跑脚本时
+                    from gdapi import search_levels_by_name  # 单独跑脚本时
                 levels = search_levels_by_name(name)
                 if not levels:
                     logger.error(f"Could not find metadata for '{name}' by '{creator_raw}'")
-                    return None
+                    return
                 levels = [level for level in levels if level.stars == 10 and level.level_name.strip().lower() == name.strip().lower()]
                 if len(levels) == 0:
                     logger.error(f"Could not find metadata for '{name}' by '{creator_raw}'")
-                    return None
+                    return
                 if len(levels) > 1:
                     logger.error(f"Multiple levels found, manual selection required for '{name}' by '{creator_raw}'")
-                    return None
+                    return
                 logger.info(f"fallback to gdapi for '{name}' by '{creator_raw}' successfully")
                 online_id = levels[0].level_id
             else:
                 online_id = data.get("online_id", None)
-            
+
             level_obj["id"] = int(online_id)
             entry = {"name": name, "creator": creator_norm, "id": online_id}
-            
+
             with lock:
                 cache_map[(name, creator_norm)] = online_id
                 new_entries.append(entry)
-                
+
         except Exception as e:
             logger.error(f"Error fetching metadata for '{name}' by '{creator_raw}': {e}")
 

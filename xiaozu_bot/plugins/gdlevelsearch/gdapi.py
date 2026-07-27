@@ -1,6 +1,6 @@
 import base64
 from dataclasses import dataclass, field
-from typing import Any, Final, Optional
+from typing import Any, Final
 from urllib.parse import unquote
 
 import requests
@@ -113,7 +113,7 @@ class GDLevel:
     level_id: int
     level_name: str
     description: str
-    level_string: Optional[str] = None
+    level_string: str | None = None
     version: int
     player_id: int
     difficulty_denominator: int
@@ -127,9 +127,9 @@ class GDLevel:
     stars: int = 0
     feature_score: int
     is_auto: bool
-    password: Optional[str] = None
-    upload_date: Optional[str] = None
-    update_date: Optional[str] = None
+    password: str | None = None
+    upload_date: str | None = None
+    update_date: str | None = None
     copied_id: int
     is_two_player: bool
     custom_song_id: int
@@ -137,20 +137,20 @@ class GDLevel:
     coins: int
     verified_coins: bool
     stars_requested: int
-    low_detail_mode: Optional[bool] = None
-    daily_number: Optional[int] = None
-    epic: Optional[int] = None # The epic rating for the level. 0 = none, 1 = epic, 2 = legendary, 3 = mythic.
+    low_detail_mode: bool | None = None
+    daily_number: int | None = None
+    epic: int | None = None # The epic rating for the level. 0 = none, 1 = epic, 2 = legendary, 3 = mythic.
     demon_difficulty: int
     is_gauntlet: bool
     objects: int
     editor_time: int
     editor_time_copies: int
-    song_ids: Optional[str] = None # Comma-Separated List
-    sfx_ids: Optional[str] = None # Comma-Separated List
-    verification_time: Optional[int] = None
+    song_ids: str | None = None # Comma-Separated List
+    sfx_ids: str | None = None # Comma-Separated List
+    verification_time: int | None = None
 
-    creator_name: Optional[str] = None
-    song_info: Optional[dict[str, Any]] = None
+    creator_name: str | None = None
+    song_info: dict[str, Any] | None = None
 
     XOR_KEY = "26364"
 
@@ -177,7 +177,7 @@ class GDLevel:
         return cls.from_server_response(response)
 
     @property
-    def song_id(self) -> Optional[int]:
+    def song_id(self) -> int | None:
         """返回当前歌曲 ID：custom song 直接返回 custom_song_id，official song 返回负值。"""
         if self.custom_song_id and self.custom_song_id != 0:
             return self.custom_song_id
@@ -213,7 +213,7 @@ class GDLevel:
             return author
         return "Unknown"
 
-    def decrypt_password(self) -> Optional[str]:
+    def decrypt_password(self) -> str | None:
         if not self.password:
             return None
         raw = base64.b64decode(self.password)
@@ -235,7 +235,7 @@ class GDLevel:
             base += f" [{song_str}]"
         return base
 
-    def _get_song_display(self) -> Optional[str]:
+    def _get_song_display(self) -> str | None:
         """返回歌曲的可读字符串，若无信息则返回 None"""
         # 优先自定义歌曲
         if self.song_info:
@@ -326,7 +326,7 @@ def _parse_server_value(value: str, typ: Any) -> Any:
             value += "=" * (4 - (len(value) % 4))
         try:
             return base64.b64decode(value).decode("utf-8")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error("base64解码错误：%s for %s", e, value)
             return value
     if typ == "comma_int_list":
@@ -396,50 +396,50 @@ class GDUser:
     user_id: int
     stars: int
     demons_count: int
-    ranking: Optional[int] = None
-    account_highlight: Optional[int] = None
+    ranking: int | None = None
+    account_highlight: int | None = None
     creator_points: int
-    icon_id: Optional[int] = None
+    icon_id: int | None = None
     color: int
     color2: int
-    secret_coins: Optional[int] = None
+    secret_coins: int | None = None
     icon_type: int
-    special: Optional[int] = None
+    special: int | None = None
     account_id: int
     user_coins: int
-    message_state: Optional[int] = None
-    friends_state: Optional[int] = None
-    youtube: Optional[str] = None
+    message_state: int | None = None
+    friends_state: int | None = None
+    youtube: str | None = None
     acc_icon: int
     acc_ship: int
     acc_ball: int
     acc_bird: int
     acc_dart: int
     acc_robot: int
-    acc_streak: Optional[int] = None
+    acc_streak: int | None = None
     acc_glow: int
-    is_registered: Optional[bool] = None
-    global_rank: Optional[int] = None
-    friend_state: Optional[int] = None
-    messages: Optional[int] = None
-    friend_requests: Optional[int] = None
-    new_friends: Optional[int] = None
-    new_friend_request: Optional[bool] = None
-    age: Optional[str] = None
+    is_registered: bool | None = None
+    global_rank: int | None = None
+    friend_state: int | None = None
+    messages: int | None = None
+    friend_requests: int | None = None
+    new_friends: int | None = None
+    new_friend_request: bool | None = None
+    age: str | None = None
     acc_spider: int
-    twitter: Optional[str] = None
-    twitch: Optional[str] = None
+    twitter: str | None = None
+    twitch: str | None = None
     diamonds: int
-    acc_explosion: Optional[int] = None
-    modlevel: Optional[int] = None
-    comment_history_state: Optional[int] = None
-    color3: Optional[int] = None
+    acc_explosion: int | None = None
+    modlevel: int | None = None
+    comment_history_state: int | None = None
+    color3: int | None = None
     moons: int
     acc_swing: int
     acc_jetpack: int
-    demons_breakdown: Optional[list[int]] = None
-    classic_levels: Optional[list[int]] = None
-    platformer_levels: Optional[list[int]] = None
+    demons_breakdown: list[int] | None = None
+    classic_levels: list[int] | None = None
+    platformer_levels: list[int] | None = None
 
     def __init__(self) -> None:
         for attr, _ in self.FIELD_MAP.values():
@@ -467,7 +467,7 @@ class GDUser:
         return self.__dict__.copy()
 
 
-def parse_song_object(song_str: str) -> Optional[dict[str, Any]]:
+def parse_song_object(song_str: str) -> dict[str, Any] | None:
     tokens = song_str.split("~|~")
     song_data = {}
     needed = {
@@ -492,14 +492,14 @@ def parse_song_object(song_str: str) -> Optional[dict[str, Any]]:
                 attr = needed[key]
                 if key in {1, 3}:
                     song_data[attr] = int(value_str) if value_str else 0
-                elif key == 5:  # noqa: PLR2004
+                elif key == 5:
                     song_data[attr] = float(value_str) if value_str else 0.0
-                elif key == 10:  # noqa: PLR2004
+                elif key == 10:
                     song_data[attr] = unquote(value_str) if value_str else ""
                 else:
                     song_data[attr] = value_str
             i += 2
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("Song parse failed: %s", e)
         return None
     return song_data if "id" in song_data else None
@@ -532,8 +532,8 @@ class SearchPage:
         return not self.levels
 
 
-def search_levels_page(  # noqa: PLR0913
-    query: Optional[str] = None,
+def search_levels_page(
+    query: str | None = None,
     page: int = 0,
     **kwargs: Any,
 ) -> SearchPage:
@@ -545,34 +545,34 @@ def search_levels_page(  # noqa: PLR0913
     return _search_levels(query=query, page=page, **kwargs)
 
 
-def _search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
-    query: Optional[str] = None,
+def _search_levels(
+    query: str | None = None,
     page: int = 0,
     *,
     search_type: int = 0,
-    diff: Optional[str] = None,
-    demon_filter: Optional[int] = None,
-    length: Optional[str] = None,
-    featured: Optional[bool] = None,
-    original: Optional[bool] = None,
-    two_player: Optional[bool] = None,
-    coins: Optional[bool] = None,
-    epic: Optional[bool] = None,
-    legendary: Optional[bool] = None,
-    mythic: Optional[bool] = None,
-    no_star: Optional[bool] = None,
-    star: Optional[bool] = None,
-    song: Optional[int] = None,
-    custom_song: Optional[bool] = None,
-    uncompleted: Optional[bool] = None,
-    only_completed: Optional[bool] = None,
-    completed_levels: Optional[str] = None,
-    gauntlet: Optional[int] = None,
-    local: Optional[bool] = None,
-    account_id: Optional[int] = None,
-    gjp2: Optional[str] = None,
-    udid: Optional[str] = None,
-    uuid: Optional[str] = None,
+    diff: str | None = None,
+    demon_filter: int | None = None,
+    length: str | None = None,
+    featured: bool | None = None,
+    original: bool | None = None,
+    two_player: bool | None = None,
+    coins: bool | None = None,
+    epic: bool | None = None,
+    legendary: bool | None = None,
+    mythic: bool | None = None,
+    no_star: bool | None = None,
+    star: bool | None = None,
+    song: int | None = None,
+    custom_song: bool | None = None,
+    uncompleted: bool | None = None,
+    only_completed: bool | None = None,
+    completed_levels: str | None = None,
+    gauntlet: int | None = None,
+    local: bool | None = None,
+    account_id: int | None = None,
+    gjp2: str | None = None,
+    udid: str | None = None,
+    uuid: str | None = None,
     game_version: int = 22,
     binary_version: int = 42,
     gdw: int = 0,
@@ -593,7 +593,7 @@ def _search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
     if query is not None:
         data["str"] = query
 
-    def bool_param(name: str, val: Optional[bool]):  # noqa: FBT001
+    def bool_param(name: str, val: bool | None):
         if val is not None:
             data[name] = "1" if val else "0"
 
@@ -639,17 +639,17 @@ def _search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
     # 分割响应：关卡#作者#歌曲#分页信息#hash
     parts = text.split("#")
-    if len(parts) < 4:  # noqa: PLR2004
-        raise ValueError(f"响应格式不正确: {text}")  # noqa: TRY003
+    if len(parts) < 4:
+        raise ValueError(f"响应格式不正确: {text}")
 
     levels_raw = parts[0]
     creators_raw = parts[1] if len(parts) > 1 else ""
-    songs_raw = parts[2] if len(parts) > 2 else ""  # noqa: PLR2004
+    songs_raw = parts[2] if len(parts) > 2 else ""
 
     # --- 分页信息：total:offset:pagesize ---
     total, offset, page_size = 0, page * GD_PAGE_SIZE, GD_PAGE_SIZE
     page_info = parts[3].split(":")
-    if len(page_info) >= 3:  # noqa: PLR2004
+    if len(page_info) >= 3:
         try:
             total, offset, page_size = (int(x) for x in page_info[:3])
         except ValueError:
@@ -666,7 +666,7 @@ def _search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
             if not entry.strip():
                 continue
             parts_c = entry.split(":")
-            if len(parts_c) >= 2:  # noqa: PLR2004
+            if len(parts_c) >= 2:
                 try:
                     uid = int(parts_c[0])
                     uname = parts_c[1]
@@ -724,7 +724,7 @@ def _search_levels(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
 
 def search_levels(
-    query: Optional[str] = None,
+    query: str | None = None,
     page: int = 0,
     **kwargs: Any,
 ) -> list[GDLevel]:
@@ -736,7 +736,7 @@ def search_levels(
 
 def get_user_info(
     user_id: int
-) -> Optional[GDUser]:
+) -> GDUser | None:
     url = "http://www.boomlings.com/database/getGJUserInfo20.php"
     headers = {"User-Agent": ""}
 
@@ -757,7 +757,7 @@ def get_user_info(
 
 def search_user(
     name: str
-) -> Optional[GDUser]:
+) -> GDUser | None:
     url = "http://www.boomlings.com/database/getGJUsers20.php"
     headers = {"User-Agent": ""}
 
@@ -777,21 +777,20 @@ def search_user(
     return GDUser.from_server_response(text.split("#")[0])
 
 
-from typing import Optional
 
 
-def search_levels_by_name(  # noqa: PLR0913
+def search_levels_by_name(
     name: str,
     page: int = 0,
     *,
-    diff: Optional[str] = None,
-    demon_filter: Optional[int] = None,
-    length: Optional[str] = None,
-    featured: Optional[bool] = None,
-    epic: Optional[bool] = None,
-    legendary: Optional[bool] = None,
-    mythic: Optional[bool] = None,
-    star: Optional[bool] = None,
+    diff: str | None = None,
+    demon_filter: int | None = None,
+    length: str | None = None,
+    featured: bool | None = None,
+    epic: bool | None = None,
+    legendary: bool | None = None,
+    mythic: bool | None = None,
+    star: bool | None = None,
     **kwargs: Any,
 ) -> list[GDLevel]:
     """
@@ -832,11 +831,11 @@ def search_levels_by_name(  # noqa: PLR0913
 
 OFFICIAL_LEVELS = {
     1:GDLevel.from_server_response("1:1:2:Clubstep:3:VGhpcyBpcyB0aGUgZmlyc3Qgb2ZmaWNpYWwgZGVtb24gYW5kIG15IGZpcnN0IGRlbW9uIGFuZCBJIGhhdmUgdG8gY29uc3RydWN0IGEgZmFrZSBsZXZlbCBkYXRhIGZvciB0aGlzIHByb2dyYW0gdG8gcmVhZCB0byBwcmV2ZW50IGV2ZXJ5dGhpbmcgdG8gZ28gd3Jvbmc=:12:13:15:3:17:1:18:10:43:1:"),
-    2:GDLevel.from_server_response("1:2:2:Theory of everything 2:3:VGhpcyBpcyB0aGUgc2Vjb25kIGFuZCBtb3N0IGZvcmdldGFibGUgb2ZmaWNpYWwgZGVtb24gYW5kIEkgaGF2ZSB0byBjb25zdHJ1Y3QgYSBmYWtlIGxldmVsIGRhdGEgZm9yIHRoaXMgcHJvZ3JhbSB0byByZWFkIHRvIHByZXZlbnQgZXZlcnl0aGluZyB0byBnbyB3cm9uZw==:12:17:15:3:17:1:18:10:43:1:"),  # noqa: E501
+    2:GDLevel.from_server_response("1:2:2:Theory of everything 2:3:VGhpcyBpcyB0aGUgc2Vjb25kIGFuZCBtb3N0IGZvcmdldGFibGUgb2ZmaWNpYWwgZGVtb24gYW5kIEkgaGF2ZSB0byBjb25zdHJ1Y3QgYSBmYWtlIGxldmVsIGRhdGEgZm9yIHRoaXMgcHJvZ3JhbSB0byByZWFkIHRvIHByZXZlbnQgZXZlcnl0aGluZyB0byBnbyB3cm9uZw==:12:17:15:3:17:1:18:10:43:1:"),
     3:GDLevel.from_server_response("1:3:2:Deadlocked:3:VGhpcyBpcyB0aGUgdGhpcmQgYW5kIGZpbmFsIG9mZmljaWFsIGRlbW9uIGFuZCBJIGhhdmUgdG8gY29uc3RydWN0IGEgZmFrZSBsZXZlbCBkYXRhIGZvciB0aGlzIHByb2dyYW0gdG8gcmVhZCB0byBwcmV2ZW50IGV2ZXJ5dGhpbmcgdG8gZ28gd3Jvbmc=:12:19:15:3:17:1:18:10:43:1:"),
 }
 
-def get_level_by_id(level_id: int) -> Optional[GDLevel]:
+def get_level_by_id(level_id: int) -> GDLevel | None:
     """通过关卡 ID 获取单个关卡对象。"""
     if level_id in OFFICIAL_LEVELS:
         return OFFICIAL_LEVELS[level_id]
@@ -847,7 +846,7 @@ def get_level_by_id(level_id: int) -> Optional[GDLevel]:
         return results[0]
     return None
 
-def get_user_by_name(user_name: str) -> Optional[GDUser]:
+def get_user_by_name(user_name: str) -> GDUser | None:
     """通过用户名获取单个用户对象。"""
     search_result = search_user(user_name)
     if search_result:

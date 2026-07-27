@@ -1,7 +1,7 @@
 import json
 import time
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 from nonebot import logger
 
@@ -11,14 +11,14 @@ HTTP_OK = 200
 class Level:
     source: str = "IDK"
     name: str
-    creator: Optional[str] = None
-    length: Optional[str] = None
-    checkpoints: Optional[str] = None
-    id: Optional[str] = None
-    description: Optional[str] = None
-    video: Optional[str] = None
-    tier: Optional[str] = None  # for elimate the red lines
-    skillset: Optional[str] = None  # for elimate the red lines
+    creator: str | None = None
+    length: str | None = None
+    checkpoints: str | None = None
+    id: str | None = None
+    description: str | None = None
+    video: str | None = None
+    tier: str | None = None  # for elimate the red lines
+    skillset: str | None = None  # for elimate the red lines
 
     def __init__(self, jsondict: dict[str, Any]) -> None:
         self.name = jsondict["name"]
@@ -33,9 +33,9 @@ class Level:
         return self.__dict__.copy()
 
 class NLWlevel(Level):
-    tier: Optional[str] = None
-    skillset: Optional[str] = None
-    enjoyment: Optional[float] = None
+    tier: str | None = None
+    skillset: str | None = None
+    enjoyment: float | None = None
 
     def __init__(self, jsondict: dict[str, Any]) -> None:
         super().__init__(jsondict)
@@ -46,8 +46,8 @@ class NLWlevel(Level):
 
 
 class IDSlevel(Level):
-    tier: Optional[str] = None
-    skillset: Optional[str] = None
+    tier: str | None = None
+    skillset: str | None = None
 
     def __init__(self, jsondict: dict[str, Any]) -> None:
         super().__init__(jsondict)
@@ -57,8 +57,8 @@ class IDSlevel(Level):
 
 
 class HDSlevel(Level):
-    tier: Optional[str] = None
-    skillset: Optional[str] = None
+    tier: str | None = None
+    skillset: str | None = None
 
     def __init__(self, jsondict: dict[str, Any]) -> None:
         super().__init__(jsondict)
@@ -68,8 +68,8 @@ class HDSlevel(Level):
 
 
 class LWlevel(Level):
-    tier: Optional[str] = None
-    skillset: Optional[str] = None
+    tier: str | None = None
+    skillset: str | None = None
 
     def __init__(self, jsondict: dict[str, Any]) -> None:
         super().__init__(jsondict)
@@ -173,22 +173,22 @@ reload()
 class Nlw:
     """nlwapi的接口类"""
     @staticmethod
-    def nlw_query_level(level_id: Union[str, int]) -> Optional[NLWlevel]:
+    def nlw_query_level(level_id: str | int) -> NLWlevel | None:
         """从NLW表格中查询指定id的关卡"""
         return nlwlevel_dict.get(level_id)
 
     @staticmethod
-    def ids_query_level(level_id: Union[str, int]) -> Optional[IDSlevel]:
+    def ids_query_level(level_id: str | int) -> IDSlevel | None:
         """从IDS表格中查询指定id的关卡"""
         return idslevel_dict.get(level_id)
 
     @staticmethod
-    def lw_query_level(level_id: Union[str, int]) -> Optional[LWlevel]:
+    def lw_query_level(level_id: str | int) -> LWlevel | None:
         """从LW表格中查询指定id的关卡"""
         return lwlevel_dict.get(level_id)
 
     @staticmethod
-    def hds_query_level(level_id: Union[str, int]) -> Optional[HDSlevel]:
+    def hds_query_level(level_id: str | int) -> HDSlevel | None:
         """从HDS表格中查询指定id的关卡"""
         return hdslevel_dict.get(level_id)
 
@@ -205,7 +205,7 @@ class Nlw:
         return levels
 
     @staticmethod
-    def getlevelbyid(level_id: Union[str, int]) -> Optional[Level]:
+    def getlevelbyid(level_id: str | int) -> Level | None:
         """从所有表格中查询指定id的关卡，总是尝试获取最佳匹配"""
         level = Nlw.nlw_query_level(level_id)
         if level:

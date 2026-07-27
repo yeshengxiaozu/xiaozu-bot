@@ -2,7 +2,6 @@ import asyncio
 import io
 import os
 from pathlib import Path
-from typing import Optional
 
 import httpx
 from nonebot import logger
@@ -144,9 +143,9 @@ RIGHT_BG_SPACING = 20
 os.environ["NO_PROXY"] = "history.geometrydash.eu,geometrydash.eu"
 
 # ---------------------------------------------------------------------
-def draw_outlined_text(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font: ImageFont.FreeTypeFont,  # noqa: PLR0913
+def draw_outlined_text(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font: ImageFont.FreeTypeFont,
                        fill: str = "white", outline: str = "black", outline_width: int = 4,
-                       shadow: Optional[tuple] = None) -> None:
+                       shadow: tuple | None = None) -> None:
     x, y = xy
     if shadow:
         sx, sy, scolor, soff = shadow
@@ -184,7 +183,7 @@ def create_vertical_gradient(size: tuple[int,int], top_color: tuple[int,int,int]
     return grad
 
 
-def wrap_text_by_width(text: str, max_width: int, font: ImageFont.FreeTypeFont) -> list:  # noqa: C901, PLR0912
+def wrap_text_by_width(text: str, max_width: int, font: ImageFont.FreeTypeFont) -> list:
     """按像素宽度贪心断行，返回逐行文本。
 
     几条约定，改之前先看清楚（侧边栏排版全靠它）：
@@ -254,21 +253,21 @@ HTTP_SERVER_ERROR = 500
 
 async def _none() -> None:
     """gather 里占个位，省得为「没有缩略图」单开一条分支"""
-    return None
+    return
 
 
-def _thumbnail_id_for(level_id: Optional[int]) -> str:
+def _thumbnail_id_for(level_id: int | None) -> str:
     """官方前三关在缩略图站上的 id 和关卡 id 不一样，单独映射"""
     if level_id is None:
         return ""
     # 必须带下界：没有下界的话负数会从表尾倒着取（-1 静默拿到别的关的图），
     # 再小一点直接 IndexError。负数是无意义输入，和其他表外 id 一样原样转字符串。
-    if 0 <= level_id <= 3:  # noqa: PLR2004
+    if 0 <= level_id <= 3:
         return ["0", "14", "18", "20"][level_id]
     return str(level_id)
 
 
-async def _fetch_thumbnail(thumbnail_id: str) -> Optional[bytes]:
+async def _fetch_thumbnail(thumbnail_id: str) -> bytes | None:
     """取关卡缩略图，失败会重试。拿不到返回 None。
 
     404 不重试 —— 那是「这关本来就没有缩略图」，重试只会让每张没图的卡
@@ -281,7 +280,7 @@ async def _fetch_thumbnail(thumbnail_id: str) -> Optional[bytes]:
         for attempt in range(1, THUMB_RETRIES + 1):
             try:
                 resp = await client.get(url, headers=headers, timeout=HTTP_TIMEOUT)
-            except Exception as e:  # noqa: BLE001  httpx 的超时/连接错误都算暂时的
+            except Exception as e:
                 logger.warning(
                     f"缩略图第 {attempt}/{THUMB_RETRIES} 次失败（{type(e).__name__}）: {thumbnail_id}"
                 )
@@ -308,7 +307,7 @@ async def _fetch_thumbnail(thumbnail_id: str) -> Optional[bytes]:
     return None
 
 
-async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
+async def create_level_image(
     level_line: str,
     creator_line: str,
     id_line: str,
@@ -324,9 +323,9 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
     line2: str = "",
     tier_value: str = "",
     tier_icon_path: Path = Path(),
-    skill_icons: Optional[list[Path]] = None,
+    skill_icons: list[Path] | None = None,
     detail_text: str = "",
-    thumb_bytes: Optional[bytes] = None,
+    thumb_bytes: bytes | None = None,
     derived_suffix: str = "",
     derived_difficulty: str = "",
     tier_prefix: str = "",
@@ -365,7 +364,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
         if left_bg.size != (W, H):
             left_bg = left_bg.resize((W, H), Image.Resampling.LANCZOS)
         left_bg_layer.paste(left_bg, (0, 0), left_bg)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error("无法加载左侧背景图: %s", e)
     left_bg_masked = Image.composite(left_bg_layer, Image.new("RGBA", (W, H), (0,0,0,0)), panel_mask)
 
@@ -470,7 +469,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
         target_w = max(1, int(orig_w * DIFF_SCALE))
         target_h = max(1, int(orig_h * DIFF_SCALE))
         diff_target_size = (target_w, target_h)
-    except Exception:  # noqa: BLE001
+    except Exception:
         diff_target_size = (max(1, int(320 * DIFF_SCALE)), max(1, int(280 * DIFF_SCALE)))
         diff_icon_img = None
 
@@ -483,14 +482,14 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
             fx_img = Image.open(featured_fx_path).convert("RGBA")
             fx_img = fx_img.resize(diff_target_size, Image.Resampling.LANCZOS)
             img.paste(fx_img, (diff_x, diff_y), fx_img)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     if diff_icon_img is not None:
         try:
             diff_icon_img = diff_icon_img.resize(diff_target_size, Image.Resampling.LANCZOS)
             img.paste(diff_icon_img, (diff_x, diff_y), diff_icon_img)
-        except Exception:  # noqa: BLE001
+        except Exception:
             diff_icon_img = None
 
     if diff_icon_img is None:
@@ -511,7 +510,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
         try:
             thumb_img = Image.open(io.BytesIO(thumb_bytes)).convert("RGBA")
             thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("缩略图拿到了但解不开，退回占位图")
             thumb_img = None
 
@@ -519,7 +518,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
         try:
             thumb_img = Image.open(RES_DIR/"noThumb.png").convert("RGBA")
             thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
-        except Exception:  # noqa: BLE001
+        except Exception:
             thumb_img = Image.new("RGBA", (thumb_w, thumb_h), (220, 220, 220, 255))
 
     thumb_round = rounded_image(thumb_img, THUMB_RADIUS)
@@ -574,7 +573,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 img.paste(padded, (SIDEBAR_X, bg_y_top), padded)
             else:
                 img.paste(cropped, (SIDEBAR_X, bg_y_top), cropped)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.error("无法加载右侧背景图: %s", e)
 
     # 不再绘制白色半透明背景，直接绘制文字
@@ -677,7 +676,7 @@ async def create_level_image(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
     return img.convert("RGB")
 
-async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C901, PLR0912, PLR0915
+async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
     """根据传入的 `GDLevel` 自动查询 GDDL/AREDL/NLW/Plat 数据并生成图片。
 
     如果某来源不存在对应信息，则对应绘图字段留空。
@@ -781,7 +780,7 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:  # noqa: C
             stars = int(getattr(gdlevel, "stars", 0) or 0)
             stars = max(0, min(9, stars))
             diff_icon_path =  RES_DIR/f"diffIcon/diffIcon_{stars}.png"
-    except Exception:  # noqa: BLE001
+    except Exception:
         diff_icon_path = RES_DIR/"diffIcon/diffIcon_0.png"
 
     # tier icon: use rounded gddl rating if present

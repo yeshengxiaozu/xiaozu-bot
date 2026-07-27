@@ -22,8 +22,9 @@ import os
 import sys
 import threading
 import types
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import pytest
 
@@ -558,7 +559,7 @@ class TestHash:
 
         for call in (
             lambda: json_redis.get("h"),
-            lambda: json_redis.keys(),
+            json_redis.keys,
             lambda: json_redis.exists("别的键"),
             lambda: json_redis.hkeys("h"),
             lambda: json_redis.ttl("别的键"),
@@ -923,7 +924,7 @@ class TestThreadSafety:
                 barrier.wait()  # 尽量让它们真的撞在一起
                 for j in range(per_thread):
                     redis.set(f"k_{index}_{j}", index * 1000 + j)
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:
                 errors.append(exc)
 
         self._run([
@@ -951,7 +952,7 @@ class TestThreadSafety:
                 barrier.wait()
                 for j in range(per_thread):
                     redis.set(f"k_{index}_{j}", index * 1000 + j)
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:
                 errors.append(exc)
 
         self._run([
@@ -976,7 +977,7 @@ class TestThreadSafety:
                 barrier.wait()
                 for j in range(per_thread):
                     redis.hset("game_mode", f"f_{index}_{j}", index)
-            except BaseException as exc:  # noqa: BLE001
+            except BaseException as exc:
                 errors.append(exc)
 
         self._run([
@@ -1098,11 +1099,11 @@ class _FakeRedis:
 
     def __init__(
         self,
-        strings: Optional[dict[str, str]] = None,
-        hashes: Optional[dict[str, dict[str, str]]] = None,
-        ttls: Optional[dict[str, int]] = None,
-        odd_types: Optional[dict[str, str]] = None,
-        ping_error: Optional[BaseException] = None,
+        strings: dict[str, str] | None = None,
+        hashes: dict[str, dict[str, str]] | None = None,
+        ttls: dict[str, int] | None = None,
+        odd_types: dict[str, str] | None = None,
+        ping_error: BaseException | None = None,
     ) -> None:
         self.strings = dict(strings or {})
         self.hashes = dict(hashes or {})
@@ -1123,7 +1124,7 @@ class _FakeRedis:
 
         return [k for k in self._all_keys() if fnmatch.fnmatchcase(k, pattern)]
 
-    def type(self, key: str) -> str:  # noqa: A003
+    def type(self, key: str) -> str:
         if key in self.odd_types:
             return self.odd_types[key]
         if key in self.hashes:
@@ -1135,7 +1136,7 @@ class _FakeRedis:
     def ttl(self, key: str) -> int:
         return self.ttls.get(key, -1)
 
-    def get(self, key: str) -> Optional[str]:
+    def get(self, key: str) -> str | None:
         return self.strings.get(key)
 
     def exists(self, name: str) -> int:

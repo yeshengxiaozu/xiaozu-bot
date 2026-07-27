@@ -1,10 +1,11 @@
 
 import json
 import time
-from typing import Dict, List, Any
+from typing import Any
 
 from nonebot import logger
-from .googlesheetapi import persistently,SheetAPI
+
+from .googlesheetapi import SheetAPI, persistently
 
 try:
     from ..paths import staged
@@ -12,18 +13,23 @@ except ImportError:
     from updater.paths import staged
 
 from .constants import (
+    FRUITY_CREATORS_HDS as FRUITY_CREATORS,
+)
+from .constants import (
+    FRUITY_LEVELS_HDS as FRUITY_LEVELS,
+)
+from .constants import (
     HDS_ID,
     HDS_LEVELS_NAME,
     HDS_PLATFORMER_LEVELS_NAME,
-    FRUITY_LEVELS_HDS as FRUITY_LEVELS,
-    FRUITY_CREATORS_HDS as FRUITY_CREATORS,
 )
+
 
 # ------------------------------
 # 数据抓取函数（现在接收 sheet_name 而非 sheet_id）
 # ------------------------------
 @persistently
-def fetch_regular_cells(service, sheet_name: str) -> Dict[str, list]:
+def fetch_regular_cells(service, sheet_name: str) -> dict[str, list]:
     levels = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'B')
     videos = SheetAPI.get_hyperlink_column(service, HDS_ID, sheet_name, 'C')
     creators = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'D')
@@ -42,7 +48,7 @@ def fetch_regular_cells(service, sheet_name: str) -> Dict[str, list]:
     }
 
 @persistently
-def fetch_platformer_cells(service, sheet_name: str) -> Dict[str, list]:
+def fetch_platformer_cells(service, sheet_name: str) -> dict[str, list]:
     levels = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'A')
     videos = SheetAPI.get_hyperlink_column(service, HDS_ID, sheet_name, 'B')
     creators = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'C')
@@ -60,7 +66,7 @@ def fetch_platformer_cells(service, sheet_name: str) -> Dict[str, list]:
         'videos': videos,
     }
 
-def build_level_list(columns: Dict[str, list]) -> List[Dict[str, Any]]:
+def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
     levels = columns['levels']
     creators = columns['creators']
     lengths = columns['lengths']
@@ -86,7 +92,7 @@ def build_level_list(columns: Dict[str, list]) -> List[Dict[str, Any]]:
         if lvl.startswith('↓'):
             last_tier = lvl[2:-2].strip()
             continue
-        if lvl == "Demoted" or lvl == "Promoted":
+        if lvl in {"Demoted", "Promoted"}:
             last_tier = "Legacy"
             continue
 
@@ -120,7 +126,7 @@ def build_level_list(columns: Dict[str, list]) -> List[Dict[str, Any]]:
     return level_objs
 
 @persistently
-def fetch_levels(service, sheet_name: str, platformer: bool, pending: bool) -> List[Dict[str, Any]]:
+def fetch_levels(service, sheet_name: str, platformer: bool, pending: bool) -> list[dict[str, Any]]:
     if platformer:
         cols = fetch_platformer_cells(service, sheet_name)
     else:
@@ -130,7 +136,7 @@ def fetch_levels(service, sheet_name: str, platformer: bool, pending: bool) -> L
 # ------------------------------
 # 公开接口
 # ------------------------------
-def fetch_all_levels() -> Dict[str, List[Dict[str, Any]]]:
+def fetch_all_levels() -> dict[str, list[dict[str, Any]]]:
     """
     返回全部已整理关卡数据。
     返回值:

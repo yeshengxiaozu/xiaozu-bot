@@ -1,6 +1,6 @@
 import json
-import requests
 
+import requests
 from nonebot import logger
 
 try:
@@ -16,7 +16,7 @@ def build_level_to_song_mapping(data):
     mapping = {}
     hosted = data.get("nongs", {}).get("hosted", {})
 
-    for song_id, song_info in hosted.items():
+    for song_info in hosted.values():
         # 提取所需字段
         name = song_info.get("name")
         artist = song_info.get("artist")

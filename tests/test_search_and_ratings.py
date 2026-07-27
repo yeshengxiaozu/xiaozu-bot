@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, NamedTuple, Optional
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -68,7 +68,7 @@ def _gd_level(**attrs: Any) -> GDLevel:
     return level
 
 
-def _gddl_level(level_id: int, name: str, rating: Optional[float] = None) -> GDDLLevel:
+def _gddl_level(level_id: int, name: str, rating: float | None = None) -> GDDLLevel:
     """造一个真的 GDDLLevel（字段一个都不能少，构造函数是硬取的）。"""
     return GDDLLevel(
         {
@@ -99,12 +99,12 @@ def _gddl_level(level_id: int, name: str, rating: Optional[float] = None) -> GDD
 
 
 def _sub(
-    rating: Optional[float] = None,
-    enjoyment: Optional[float] = None,
+    rating: float | None = None,
+    enjoyment: float | None = None,
     *,
-    name: Optional[str] = None,
-    user_id: Optional[int] = None,
-    second: Optional[str] = None,
+    name: str | None = None,
+    user_id: int | None = None,
+    second: str | None = None,
 ) -> dict[str, Any]:
     """一条 SubmissionDTO 的原始 json"""
     payload: dict[str, Any] = {
@@ -140,9 +140,9 @@ class FakeGddl:
 
     def __init__(
         self,
-        pages: Optional[dict[int, Optional[SubmissionPage]]] = None,
+        pages: dict[int, SubmissionPage | None] | None = None,
         *,
-        by_name: Optional[list[Any]] = None,
+        by_name: list[Any] | None = None,
         by_id: Any = None,
     ) -> None:
         self.pages = pages or {}
@@ -158,7 +158,7 @@ class FakeGddl:
         page: int = 0,
         limit: int = GDDL_SUBMISSION_LIMIT,
         **kwargs: Any,
-    ) -> Optional[SubmissionPage]:
+    ) -> SubmissionPage | None:
         self.calls.append(
             {"level_id": level_id, "page": page, "limit": limit, **kwargs}
         )
@@ -176,7 +176,7 @@ class FakeGddl:
 class FakeSearch:
     """fullsearch 模块里 search_levels_page 的替身"""
 
-    def __init__(self, pages: Optional[dict[int, SearchPage]] = None) -> None:
+    def __init__(self, pages: dict[int, SearchPage] | None = None) -> None:
         self.pages = pages or {}
         self.calls: list[dict[str, Any]] = []
 

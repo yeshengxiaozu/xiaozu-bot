@@ -1,30 +1,35 @@
 import json
 import time
+from typing import Any
+
 from nonebot import logger
-from .googlesheetapi import persistently,SheetAPI
-from typing import Dict, List, Any
+
+from .googlesheetapi import SheetAPI, persistently
 
 try:
     from ..paths import staged
 except ImportError:
     from updater.paths import staged
 
+import contextlib
+
+from .constants import FRUITY_CREATORS_NLW as FRUITY_CREATORS
+from .constants import FRUITY_LEVELS_NLW as FRUITY_LEVELS
 from .constants import (
+    MOONTHLIES_PREFIX,
     NLW_ID,
-    NLW_REGULAR_LEVELS_NAME,
     NLW_PENDING_LEVELS_NAME,
-    NLW_REGULAR_PLATFORMER_LEVELS_NAME,
     NLW_PENDING_PLATFORMER_LEVELS_NAME,
-    FRUITY_LEVELS_NLW as FRUITY_LEVELS,
-    FRUITY_CREATORS_NLW as FRUITY_CREATORS,
-    MOONTHLIES_PREFIX
+    NLW_REGULAR_LEVELS_NAME,
+    NLW_REGULAR_PLATFORMER_LEVELS_NAME,
 )
+
 
 # ------------------------------
 # 数据抓取函数（现在接收 sheet_name 而非 sheet_id）
 # ------------------------------
 @persistently
-def fetch_regular_cells(service, sheet_name: str) -> Dict[str, list]:
+def fetch_regular_cells(service, sheet_name: str) -> dict[str, list]:
     videos = SheetAPI.get_hyperlink_column(service, NLW_ID, sheet_name, 'A')
     levels = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'B')
     creators = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'C')
@@ -45,7 +50,7 @@ def fetch_regular_cells(service, sheet_name: str) -> Dict[str, list]:
     }
 
 @persistently
-def fetch_platformer_cells(service, sheet_name: str) -> Dict[str, list]:
+def fetch_platformer_cells(service, sheet_name: str) -> dict[str, list]:
     videos = SheetAPI.get_hyperlink_column(service, NLW_ID, sheet_name, 'A')
     levels = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'B')
     creators = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'C')
@@ -65,7 +70,7 @@ def fetch_platformer_cells(service, sheet_name: str) -> Dict[str, list]:
         'videos': videos,
     }
 
-def build_level_list(columns: Dict[str, list]) -> List[Dict[str, Any]]:
+def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
     levels = columns['levels']
     creators = columns['creators']
     checkpoints = columns['checkpoints']
@@ -102,10 +107,8 @@ def build_level_list(columns: Dict[str, list]) -> List[Dict[str, Any]]:
 
         enjoyment_value = None
         if enjoyment:
-            try:
+            with contextlib.suppress(ValueError):
                 enjoyment_value = float(enjoyment)
-            except ValueError:
-                pass
 
         name = FRUITY_LEVELS.get(lvl, lvl).strip()
         if name == 'None Yet!':
@@ -136,23 +139,22 @@ def build_level_list(columns: Dict[str, list]) -> List[Dict[str, Any]]:
     return level_objs
 
 @persistently
-def fetch_levels(service, sheet_name: str, platformer: bool, pending: bool) -> List[Dict[str, Any]]:
+def fetch_levels(service, sheet_name: str, platformer: bool, pending: bool) -> list[dict[str, Any]]:
     if pending:
         if platformer:
             cols = fetch_platformer_cells(service, sheet_name)
         else:
             cols = fetch_regular_cells(service, sheet_name)
+    elif platformer:
+        cols = fetch_platformer_cells(service, sheet_name)
     else:
-        if platformer:
-            cols = fetch_platformer_cells(service, sheet_name)
-        else:
-            cols = fetch_regular_cells(service, sheet_name)
+        cols = fetch_regular_cells(service, sheet_name)
     return build_level_list(cols)
 
 # ------------------------------
 # 公开接口
 # ------------------------------
-def fetch_all_levels() -> Dict[str, List[Dict[str, Any]]]:
+def fetch_all_levels() -> dict[str, list[dict[str, Any]]]:
     """
     返回全部已整理关卡数据。
     返回值:

@@ -4,12 +4,12 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any
 
 from nonebot import logger
 
 
-def plugin_storage(plugin_file: Union[str, Path], name: str = "storage.json") -> Path:
+def plugin_storage(plugin_file: str | Path, name: str = "storage.json") -> Path:
     """算出某个插件的存储文件路径，相对插件自己的位置。
 
     调用方传 __file__ 就行：
@@ -39,7 +39,7 @@ class JsonRedis:
     新写调用的时候留意一下别拿 int 去和字符串比。
     """
 
-    def __init__(self, file_path: Union[str, Path], auto_save: bool = True) -> None:  # noqa: FBT001, FBT002
+    def __init__(self, file_path: str | Path, auto_save: bool = True) -> None:
         self.file_path = Path(file_path)
         self.auto_save = auto_save
         self.lock = threading.Lock()
@@ -102,7 +102,7 @@ class JsonRedis:
             del self.data[key]
         return bool(to_delete)
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """获取键的值，如果键不存在或已过期返回 None"""
         with self.lock:
             self._clean_expired()
@@ -111,7 +111,7 @@ class JsonRedis:
                 return value["_val"]
             return value
 
-    def set(self, key: str, value: Any, ex: Optional[int] = None) -> None:
+    def set(self, key: str, value: Any, ex: int | None = None) -> None:
         """设置键的值，可选过期时间（秒）"""
         with self.lock:
             if ex is not None:
@@ -138,7 +138,7 @@ class JsonRedis:
                 return int(remaining) if remaining > 0 else -2
             return -1
 
-    def hget(self, name: str, key: str) -> Optional[Any]:
+    def hget(self, name: str, key: str) -> Any | None:
         """获取哈希表中指定字段的值"""
         with self.lock:
             self._clean_expired()

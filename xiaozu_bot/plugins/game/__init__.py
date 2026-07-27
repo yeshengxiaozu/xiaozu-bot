@@ -1,5 +1,7 @@
 # 这个代码是我复制粘贴移植的，能跑就不需要动
 # 导入定时任务库
+from typing import ClassVar
+
 from nonebot import get_bots, on_command, require
 from nonebot.adapters.onebot.v11 import (
     GROUP,
@@ -31,14 +33,17 @@ r = JsonRedis(plugin_storage(__file__))
 
 
 def whitelist(event: GroupMessageEvent):
-    return event.group_id == 1035708051 or event.group_id == 870217476
+    return event.group_id in {1035708051, 870217476}
 
 
 whitelist_rule = Rule(whitelist)
 
 
 class datas:
-    demon_data = {}
+    # 这不是数据类，是个当命名空间用的模块级单例：所有群的对局状态都挂在这上面，
+    # 全进程共享一份。标成 ClassVar 是把这个意图写明白（顺带消掉 RUF012 ——
+    # 那条规则针对的是「dataclass 的可变默认值」，这里不是那个情况）。
+    demon_data: ClassVar[dict] = {}
 
 
 # demon_default
@@ -81,14 +86,14 @@ async def handle_function(
     args = str(arg).lower().split(" ")
     if len(args) != 1 or not str.isdigit(args[0]):
         await setmode.finish("请输入一个整数！")
-    id = int(args[0])
-    if id < 0 or id > 2:
+    mode = int(args[0])
+    if mode < 0 or mode > 2:
         await setmode.finish(
             "目前只接受0（普通模式），1（身份模式），2（膀胱模式）这几个值作为参数哦~"
         )
-    r.hset("game_mode", str(event.user_id), str(id))
+    r.hset("game_mode", str(event.user_id), str(mode))
     await setmode.finish(
-        "已将你的游戏模式设置为" + ["普通模式", "身份模式", "膀胱模式"][id]
+        "已将你的游戏模式设置为" + ["普通模式", "身份模式", "膀胱模式"][mode]
     )
 
 
@@ -150,14 +155,11 @@ async def bet_handle(bot: Bot, event: GroupMessageEvent, arg: Message = CommandA
                 ]  # 如果两个状态相同，直接选择该状态
 
             datas.demon_data[group_id]["identity"] = identity_found
-            idt_len = len(item_dic2)
             if identity_found == 1:
                 add_max = 2
-                idt_len = 0
             elif identity_found in [2, 999]:
                 add_max = 2
                 pangguang_add = 2
-                idt_len = 0
             # 设置玩家血量，随机生成血量值(放在上面后面好改)
             hp = random.randint(
                 3 + max(int(add_max * 2 - 1), 0) + max(int(pangguang_add * 2 - 1), 0),
@@ -302,7 +304,6 @@ def get_random_item(identity_found, normal_mode_limit, user_id):
     """根据模式返回一个随机道具"""
 
     item_count = len(item_dic)  # 道具总数
-    normal_mode_items = []  # 普通模式需要增加权重的道具（暂无）
     identity_mode_items = [3]  # 身份模式需要增加权重的道具（放大镜）
 
     # 动态生成权重表
@@ -326,18 +327,10 @@ def get_random_item(identity_found, normal_mode_limit, user_id):
     return random.choice(item_choices)
 
 
-# 特殊扣血逻辑
-def death_mode_damage(action_type: int, group_id: str):
-    """
-    处理死斗模式特殊扣血逻辑
-    :param action_type: 0=开枪自己, 1=开枪对方, 2=使用道具
-    :param datas.demon_data: 游戏数据字典
-    :param group_id: 群组ID
-    :return: (消息内容, 更新后的datas.demon_data)
-    """
-    msg = ""
-
-    return msg
+# 这里原来有个 death_mode_damage(action_type, group_id)，函数体只有
+# `msg = ""` / `return msg` —— 永远返回空串，两个调用点把它拼进回复里等于没拼。
+# 真正干活的是紧跟其后的 death_mode()，这个是被它取代之后忘了删的空壳，
+# 已经连同两处调用一起删掉。
 
 
 # 上弹函数
@@ -595,22 +588,16 @@ def refersh_item(identity_found, group_id):
 # 开枪函数
 async def shoot(stp, group_id, message, args):
     hp_max = datas.demon_data.get(group_id, {}).get("hp_max")
-    item_max = datas.demon_data.get(group_id, {}).get("item_max")
     clip = datas.demon_data.get(group_id, {}).get("clip")
     hp = datas.demon_data.get(group_id, {}).get("hp")
     pl = datas.demon_data.get(group_id, {}).get("turn")
-    player0 = str(datas.demon_data[group_id]["pl"][0])
-    player1 = str(datas.demon_data[group_id]["pl"][1])
     identity_found = datas.demon_data[group_id]["identity"]
     add_max = 0
     pangguang_add = 0
     # 身份模式开了就更新dlc
-    idt_len = len(item_dic2)
     if identity_found == 1:
-        idt_len = 0
         add_max += 1
     elif identity_found in [2, 999]:
-        idt_len = 0
         add_max += 1
         pangguang_add += 2
     msg = ""
@@ -640,9 +627,6 @@ async def shoot(stp, group_id, message, args):
         datas.demon_data[group_id]["game_turn"] += 1
         turn = datas.demon_data[group_id]["game_turn"]
         msg += f"- 当前轮数：{turn}\n"
-        # 调用死斗模式伤害计算 (stp=0是开枪自己，1是开枪对方)
-        damage_msg = death_mode_damage(stp, group_id)
-        msg += damage_msg
         # 获取死斗模式信息
         death_msg = death_mode(identity_found, group_id)
         msg += death_msg
@@ -725,7 +709,7 @@ async def fire_handle(bot: Bot, event: GroupMessageEvent, arg: Message = Command
     args = str(arg).strip()
     player_turn = datas.demon_data[group_id]["turn"]
 
-    if datas.demon_data[group_id]["start"] == False:
+    if not datas.demon_data[group_id]["start"]:
         await fire.finish("轮盘尚未开始！", at_sender=True)
 
     if user_id not in datas.demon_data[group_id]["pl"]:
@@ -771,7 +755,7 @@ async def prop_demon_handle(
     player_turn = datas.demon_data[group_id]["turn"]
     add_max = 0
     pangguang_add = 0
-    if datas.demon_data[group_id]["start"] == False:
+    if not datas.demon_data[group_id]["start"]:
         await prop_demon.finish("轮盘尚未开始！", at_sender=True)
 
     if user_id not in datas.demon_data[group_id]["pl"]:
@@ -871,10 +855,7 @@ async def prop_demon_handle(
         # 获取对方的回合编号
         if datas.demon_data[group_id]["hcf"] == 0:
             add_turn = random.randint(0, 1) * 2
-            if add_turn == 0:
-                skip_turn = 1
-            else:
-                skip_turn = 2
+            skip_turn = 1 if add_turn == 0 else 2
             datas.demon_data[group_id]["hcf"] = 1 + add_turn
             if len(opponent_items) < item_max:
                 opponent_items.append(
@@ -959,9 +940,6 @@ async def prop_demon_handle(
             msg += "\n"
             # 游戏轮数+1
             datas.demon_data[group_id]["game_turn"] += 1
-            # 调用死斗模式伤害计算 (action_type=2)
-            damage_msg = death_mode_damage(2, group_id)
-            msg += damage_msg
             # 获取死斗模式信息
             death_msg = death_mode(identity_found, group_id)
             msg += death_msg
@@ -1019,7 +997,6 @@ async def prop_demon_handle(
 
     elif item_name == "双转团":
         # 获取原始道具长度
-        original_opponent_count = len(opponent_items)
 
         if len(opponent_items) < item_max:
             opponent_items.append(
@@ -1183,15 +1160,17 @@ async def prop_demon_handle(
             new_item = get_random_item(identity_found, len(item_dic) - idt_len, user_id)
             player_items.append(new_item)
             new_item_name = item_dic[new_item]
-            # 调整hp上限和道具上限
-            hp_max -= 1
+            # 调整hp上限和道具上限。
+            # 保护锁夹的必须是**要写回去的那个值**：原来是先把仓库里的旧值
+            # clamp 一遍，下一行又用没夹过的局部变量 hp_max 覆盖回去，
+            # 于是那道锁完全没起作用。
+            # （实际上不会出事：上面 1178 行的守卫要求仓库里的 hp_max > 1，
+            #  而 hp_max 这个局部是函数开头从同一个地方读的、中间没人改过，
+            #  所以 hp_max - 1 必然 >= 1。这里只是把锁修成真的有用，行为不变。）
+            hp_max = max(1, hp_max - 1)
             item_max += 1
-            datas.demon_data[group_id]["hp_max"] = max(
-                1, datas.demon_data[group_id]["hp_max"]
-            )  # 血量上限保护锁
             datas.demon_data[group_id]["item_max"] = item_max
             datas.demon_data[group_id]["hp_max"] = hp_max
-            new_hp_max = datas.demon_data[group_id]["hp_max"]
             # 校准所有玩家血量不得超过hp上限
             for i in range(len(datas.demon_data[group_id]["hp"])):
                 datas.demon_data[group_id]["hp"][i] = min(
@@ -1290,7 +1269,7 @@ async def check_handle(event: GroupMessageEvent):
     if await check_timeout(group_id):
         return
     user_id = str(event.user_id)
-    if datas.demon_data[group_id]["start"] == False:
+    if not datas.demon_data[group_id]["start"]:
         await check.finish("当前并没有开始任何一句轮盘哦！", at_sender=True)
     if user_id not in datas.demon_data[group_id]["pl"]:
         await check.finish("只有当前局内玩家能查看局势哦！", at_sender=True)
@@ -1490,7 +1469,7 @@ async def check_timeout(group_id):
     if not bots:
         logger.error("没有可用的Bot实例，无法检测bet2！")
         return None
-    bot = list(bots.values())[0]  # 获取第一个 Bot 实例
+    bot = next(iter(bots.values()))  # 获取第一个 Bot 实例
     # 确保 'datas.demon_data' 和 'group_id' 存在
     # 初始化 group_id 中的游戏数据
     if group_id not in datas.demon_data:

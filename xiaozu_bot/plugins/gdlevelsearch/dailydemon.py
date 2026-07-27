@@ -11,13 +11,12 @@ GDDL 的数据是会变的（有人提交评分，关卡的 enjoyment / tier / �
 
 import datetime
 import random
-from typing import Optional
 
 from nonebot import logger
 
 from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
-from .gddlapi import GDDLLevel, Gddl
+from .gddlapi import Gddl, GDDLLevel
 
 # 挑关卡的条件
 TIER_MIN = 1
@@ -47,7 +46,7 @@ RECENT_KEEP = 30      # 记最近 30 次
 MAX_REROLL = 5        # 撞车最多再挑几次，每次都是一个 HTTP 请求，别太多
 
 
-def _today(today: Optional[datetime.date] = None) -> datetime.date:
+def _today(today: datetime.date | None = None) -> datetime.date:
     return today or datetime.datetime.now().astimezone().date()
 
 
@@ -55,13 +54,13 @@ def _key(day: datetime.date) -> str:
     return f"{KEY_PREFIX}{day.isoformat()}"
 
 
-def today_seed(today: Optional[datetime.date] = None) -> int:
+def today_seed(today: datetime.date | None = None) -> int:
     """拿日期当种子，比如 2026-07-26 -> 20260726"""
     day = _today(today)
     return day.year * 10000 + day.month * 100 + day.day
 
 
-def pick_index(total: int, today: Optional[datetime.date] = None) -> int:
+def pick_index(total: int, today: datetime.date | None = None) -> int:
     """按日期在 [0, total) 里定出一个下标"""
     return random.Random(today_seed(today)).randrange(total)
 
@@ -81,7 +80,7 @@ def remember(level_id: int) -> None:
     r.set(RECENT_KEY, recent[-RECENT_KEEP:])
 
 
-def get_cached_id(today: Optional[datetime.date] = None) -> Optional[int]:
+def get_cached_id(today: datetime.date | None = None) -> int | None:
     """看今天是不是已经挑过了"""
     cached = r.get(_key(_today(today)))
     if cached is None:
@@ -94,8 +93,8 @@ def get_cached_id(today: Optional[datetime.date] = None) -> Optional[int]:
 
 
 def get_daily_demon(
-    today: Optional[datetime.date] = None,
-) -> tuple[Optional[GDDLLevel], int, str]:
+    today: datetime.date | None = None,
+) -> tuple[GDDLLevel | None, int, str]:
     """取今天这一关。
 
     返回 (关卡, 符合条件的总数, 出错时的提示)。

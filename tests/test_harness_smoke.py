@@ -19,8 +19,8 @@ import requests
 
 from tests.conftest import (
     COMMAND_START,
-    NetworkBlocked,
     SUPERUSER_ID,
+    NetworkBlocked,
 )
 
 # ---------------------------------------------------------------------------
@@ -259,10 +259,10 @@ def test_no_network_blocks_urllib() -> None:
     这个进程里有没有 import 过 updater —— 拿它做断言就成了顺序依赖。
     """
     with pytest.raises(NetworkBlocked):
-        urllib.request.urlopen("http://example.com/", timeout=1)  # noqa: S310
+        urllib.request.urlopen("http://example.com/", timeout=1)
 
     with pytest.raises(NetworkBlocked):
-        urllib.request.urlopen("http://api.aredl.net/v2/api/aredl/levels", timeout=1)  # noqa: S310
+        urllib.request.urlopen("http://api.aredl.net/v2/api/aredl/levels", timeout=1)
 
 
 def test_no_network_blocks_raw_http_client() -> None:

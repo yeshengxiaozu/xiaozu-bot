@@ -47,8 +47,23 @@ python -m pytest tests --collect-only -q
 
 ### 「Lint (ruff)」红了
 
-**它不会红。** 这个 job 只打一份统计到日志里，没有任何能让它失败的路径。
-如果它真的红了，那是 job 本身坏了（比如 `requirements-lint.txt` 没了），不是你的代码有问题。
+**存量已经清到 0 了，所以它红 = 你这次改动引入的**，不是历史遗留。
+本地复现和修：
+
+```bash
+ruff check .          # 看是哪条
+ruff check --fix .    # 大部分能自动修
+```
+
+`--fix` 修不掉的，看报错说的规则名，自己改。
+如果你觉得那条规则本身不合理（比如它逼你改一个框架要求的签名），
+去 `pyproject.toml` 的 `[tool.ruff.lint] ignore` 里加一条，**并写清楚为什么** ——
+那个列表里现在每一条都有理由，别破坏这个习惯。
+
+⚠️ **`ruff check --fix` 可以随便跑，但不要跑 `--unsafe-fixes`。**
+实测它会把 `updater/__init__.py` 里的 `from .. import reload_all` 改成
+`from gdlevelsearch import reload_all` —— 这个名字在三条代码路径里一条都 import 不到，
+而且它在抓取完成后的钩子里，**跑定时任务的时候才炸**，几小时后才发现。
 
 ---
 
@@ -249,8 +264,10 @@ python scripts/run_updater.py platrank
 
 `.github/workflows/ci.yml`，推 `main`、开 PR、手动触发时跑：
 
-- **Lint** —— 只打 ruff 的违规统计，**永远不阻塞**。存量一千多条，都是历史遗留。
-  想让它变成真门禁：等 `ruff check .` 降到两位数，把那一步换成 `ruff check .` 就行。
+- **Lint** —— `ruff check .`，**会阻塞**。存量已经从 4712 清到 0，
+  所以它红一定是这次改动带进来的。清理是一次做完的：
+  4712 → 1232（关掉既定风格）→ 578（654 条安全自动修）→ 102（手工清死代码）→ 0（结构性规则）。
+  关掉的每条规则在 `pyproject.toml` 里都写了理由。
 - **测试** —— 平时只测 **3.10**（`requires-python` 承诺的下限）和 **3.13**（生产实际跑的版本）。
   中间的 3.11 / 3.12 交给每周一的定时任务跑全矩阵。
 - 两个「工作区必须干净」的守卫只在 3.13 那一档跑，免得同一个问题报三遍。

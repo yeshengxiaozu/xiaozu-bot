@@ -20,13 +20,13 @@ import json
 import threading
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 from googleapiclient.errors import HttpError
 
-import xiaozu_bot.plugins.gdlevelsearch as gdlevelsearch
 import xiaozu_bot.plugins.gdlevelsearch.updater as updater_pkg
+from xiaozu_bot.plugins import gdlevelsearch
 from xiaozu_bot.plugins.gdlevelsearch import gdapi
 from xiaozu_bot.plugins.gdlevelsearch.updater import notify, paths, runner
 from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
@@ -110,8 +110,8 @@ class TestPaths:
 
         monkeypatch.chdir(tmp_path)
 
-        assert (paths.PLUGIN_DIR, paths.DATA_DIR, paths.STAGING_DIR) == before
-        assert paths.PLUGIN_DIR == Path(paths.__file__).resolve().parent.parent
+        assert before == (paths.PLUGIN_DIR, paths.DATA_DIR, paths.STAGING_DIR)
+        assert Path(paths.__file__).resolve().parent.parent == paths.PLUGIN_DIR
         assert paths.PLUGIN_DIR.name == "gdlevelsearch"
         assert paths.DATA_DIR == paths.PLUGIN_DIR / "data"
         assert paths.STAGING_DIR == paths.DATA_DIR / ".staging"
@@ -282,7 +282,7 @@ class TestRunnerTables:
     """JOBS / STAGES 这两张表本身"""
 
     def test_jobs_表就是这十个且指向对的函数(self) -> None:
-        assert runner.JOBS == {
+        assert {
             "nlw": nlw.fetch,
             "ids": ids.fetch,
             "lw": lw.fetch,
@@ -293,7 +293,7 @@ class TestRunnerTables:
             "platbatch": platbatch.batch,
             "sfh": fetchsfh.main,
             "getmetadata": getmetadata.main,
-        }
+        } == runner.JOBS
 
     def test_stages_两层且不重不漏(self) -> None:
         assert runner.STAGES == (
@@ -683,7 +683,7 @@ class TestPlatDiffModel:
             ("8,5", None),
         ],
     )
-    def test_parse_enjoyment(self, raw: Optional[str], expected: Any) -> None:
+    def test_parse_enjoyment(self, raw: str | None, expected: Any) -> None:
         assert platdiff.PlatDiff._parse_enjoyment(raw) == expected
 
 
@@ -824,9 +824,9 @@ class TestMergePlatData:
         self,
         dirs: SimpleNamespace,
         *,
-        platdata_rows: Optional[list] = None,
-        platdiff_rows: Optional[list] = None,
-        platrank_rows: Optional[list] = None,
+        platdata_rows: list | None = None,
+        platdiff_rows: list | None = None,
+        platrank_rows: list | None = None,
     ) -> None:
         if platdata_rows is not None:
             _write_json(
@@ -1037,7 +1037,7 @@ class TestCleanLevelData:
             (None, None),
         ],
     )
-    def test_ID_FIX_修正表(self, raw_id: Optional[str], fixed: Optional[str]) -> None:
+    def test_ID_FIX_修正表(self, raw_id: str | None, fixed: str | None) -> None:
         level = platbatch.PlatLevel(name="X", id=raw_id)
         platbatch.clean_level_data(level)
         assert level.id == fixed
@@ -1611,7 +1611,7 @@ class FakeSheetsService:
     """假的 sheets service，够 SheetAPI 那三个静态方法用。"""
 
     def __init__(
-        self, values_result: Any = None, get_results: Optional[list] = None
+        self, values_result: Any = None, get_results: list | None = None
     ) -> None:
         self.values_result = {} if values_result is None else values_result
         self.get_results = list(get_results or [])

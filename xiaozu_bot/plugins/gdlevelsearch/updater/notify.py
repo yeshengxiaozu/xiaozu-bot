@@ -1,8 +1,8 @@
 # updater/notify.py
 
 import traceback
+
 from nonebot import get_bot, logger
-from typing import Optional
 
 ADMIN_ID = 3251605531  # 改成你的 QQ
 
@@ -10,10 +10,10 @@ _last_error_key = None
 
 
 def _error_key(err: Exception) -> str:
-    return f"{type(err).__name__}:{str(err)}"
+    return f"{type(err).__name__}:{err!s}"
 
 
-async def report_error(title: str, err: Exception, context: Optional[dict] = None):
+async def report_error(title: str, err: Exception, context: dict | None = None):
     """
     统一错误上报函数
     """
@@ -45,10 +45,10 @@ async def report_error(title: str, err: Exception, context: Optional[dict] = Non
 标题: {title}
 
 类型: {type(err).__name__}
-错误: {str(err)}
+错误: {err!s}
 
 上下文:
-{context_str if context_str else "None"}
+{context_str or "None"}
 
 --- traceback ---
 {tb[-1200:]}

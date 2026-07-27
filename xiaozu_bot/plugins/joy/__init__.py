@@ -1,5 +1,4 @@
 import random
-from typing import Union
 
 from nonebot import get_plugin_config, on_command, on_type
 from nonebot.adapters.onebot.v11 import (
@@ -24,11 +23,11 @@ __plugin_meta__ = PluginMetadata(
 )
 
 
-def banned(event: Union[GroupMessageEvent, PrivateMessageEvent]):
+def banned(event: GroupMessageEvent | PrivateMessageEvent):
     return isinstance(event, GroupMessageEvent) and event.group_id == 569801410
 
 
-def notbanned(event: Union[GroupMessageEvent, PrivateMessageEvent]):
+def notbanned(event: GroupMessageEvent | PrivateMessageEvent):
     return not banned(event)
 
 
@@ -89,22 +88,22 @@ async def handle_function(
 
 @nsdd.handle()
 async def handle_function(bot: Bot, event: GroupMessageEvent):
-    id = random.randint(1, 3)
-    if id == 1:
+    pick = random.randint(1, 3)
+    if pick == 1:
         tmsg = await nsdd.send(
             "你说的对，但是《几何冲刺》是由RobTop Games自主研发的一款全新节奏式平台跳跃游戏。游戏发生在一个被称作「几何世界」的幻变空间，在这里，被节奏选中的人将被授予「跳跃之力」，导引机关与障碍的律动。你将扮演一位名为「几何方块」的神秘角色，在无序与秩序交织的关卡中，邂逅形态各异、节奏独特的障碍物们，和他们一起冲破陷阱，抵达未知的终点。"
         )
         await bot.call_api(
             "set_msg_emoji_like", message_id=tmsg["message_id"], emoji_id="424"
         )
-    elif id == 2:
+    elif pick == 2:
         tmsg = await nsdd.send(
             "你说的对，但《game2》是一款由Desom-fu不太自主研发的一款回合超时风格的恶魔投降模拟器。你将进入一个名叫『神必轮盘』的世界，被神权选中的人将被授予『烈弓』，导引『万军取首』之力。玩家将扮演一位试图『开枪自己』的神必角色，使用各个道具，发现各种10/9、9/8的弹夹，并与他们一起面对强大的休养生息，寻找失散的金苹果——同时，揭开『卧槽什么b道具对面什么狗运这把什么b弹夹禁止卡卡我启动了这玩集贸欸我怎么似了又开始带烈弓节奏了休养生息能不能死啊你怎么还有金苹果tnt真强吗错了别炸我黑洞偷了坨shi回来求求你不要减血上限了我刚回的血太久未参与对局回合超时喜欢我天秤直伤吗你玩具枪怎么还不空枪手套叠救我骰子眉目了别偷我刷新票啊』的真相。"
         )
         await bot.call_api(
             "set_msg_emoji_like", message_id=tmsg["message_id"], emoji_id="424"
         )
-    elif id == 3:
+    elif pick == 3:
         tmsg = await nsdd.send(
             "你说的对，但《蔚蓝》是一款由EXOK Games Inc.制作并发行的一款像素风格的动作冒险类游戏，玩家将进入一个神秘的幻想地区——塞斯来特山。在这个世界中，玩家将扮演一位神秘的小女孩，拥有冲刺的力量，探索各个地区，结识各种性格各异、能力独特的伙伴，并与他们一起面对强大的水晶之心，寻找失散的草莓，同时揭开塞斯来特山的真相。"
         )

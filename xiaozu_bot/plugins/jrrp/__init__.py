@@ -26,9 +26,9 @@ jrrp = on_command("jrrp")
 
 @jrrp.handle()
 async def handle_function(event: GroupMessageEvent):
-    id = event.user_id
-    if r.get(f"jrrp_{id}") != None and r.get(f"jrrp_{id}") != "True":
-        rp = int(r.get(f"jrrp_{id}"))
+    user_id = event.user_id
+    if r.get(f"jrrp_{user_id}") is not None and r.get(f"jrrp_{user_id}") != "True":
+        rp = int(r.get(f"jrrp_{user_id}"))
         await jrrp.finish(f"你的今日人品是{rp}！（你不是已经知道了吗）", at_sender=True)
     rp = random.randint(1, 100)
     append = "后面我还没想好"
@@ -48,5 +48,5 @@ async def handle_function(event: GroupMessageEvent):
         append = "wow！你裸抓五级/藏品的运气用在这了！"
     d = datetime.datetime.now()
     delta = (23 - d.hour) * 3600 + (59 - d.minute) * 60 + (59 - d.second)
-    r.set(f"jrrp_{id}", f"{rp}", ex=delta)
+    r.set(f"jrrp_{user_id}", f"{rp}", ex=delta)
     await jrrp.finish(f"你的今日人品是……{rp}！" + append)

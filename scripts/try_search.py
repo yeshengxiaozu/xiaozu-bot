@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _bootstrap import REPO_ROOT, import_submodule  # noqa: E402
+from _bootstrap import REPO_ROOT, import_submodule
 
 MIN_ID_LEN = 4  # 和 __init__.py 里判断"这串数字是不是 id"的规则保持一致
 

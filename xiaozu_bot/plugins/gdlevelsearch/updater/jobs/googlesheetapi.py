@@ -1,10 +1,11 @@
-import time, os
+import os
+import time
 from functools import wraps
-from typing import Optional, List
 
-from nonebot import logger
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from nonebot import logger
+
 
 # ------------------------------
 # 重试装饰器
@@ -33,7 +34,7 @@ def persistently(func):
 # Sheets 服务与工作表名称映射
 # ------------------------------
 class SheetAPI:
-    
+
     @staticmethod
     def get_service():
         api_key = os.getenv('GOOGLE_SHEETS_API_KEY')
@@ -43,7 +44,7 @@ class SheetAPI:
         return build('sheets', 'v4', developerKey=api_key)
 
     @staticmethod
-    def get_column_values(service, sheet_ID: str, sheet_name: str, column: str) -> List[str]:
+    def get_column_values(service, sheet_ID: str, sheet_name: str, column: str) -> list[str]:
         """获取指定工作表中某一列的所有值（自动扩充到数据区域）"""
         try:
             range_name = f"'{sheet_name}'!{column}:{column}"
@@ -58,7 +59,7 @@ class SheetAPI:
             raise
 
     @staticmethod
-    def get_column_values_with_note(service, sheet_ID: str, sheet_name: str, column: str) -> List[str]:
+    def get_column_values_with_note(service, sheet_ID: str, sheet_name: str, column: str) -> list[str]:
         """
         获取指定列的单元格内容，如果单元格存在备注，则格式化为 "内容[备注]"。
         参数与原 get_column_values 相同。
@@ -121,9 +122,9 @@ class SheetAPI:
         except Exception as e:
             logger.warning(f'获取带备注的列数据失败：{e}')
             raise
-    
+
     @staticmethod
-    def get_hyperlink_column(service, sheet_ID: str, sheet_name: str, column: str) -> List[Optional[str]]:
+    def get_hyperlink_column(service, sheet_ID: str, sheet_name: str, column: str) -> list[str | None]:
         """获取指定工作表中某一列的超链接列表，无超链接则为 None"""
         try:
             range_name = f"'{sheet_name}'!{column}:{column}"
@@ -136,7 +137,7 @@ class SheetAPI:
             links = []
             rows = sheet_meta['sheets'][0]['data'][0].get('rowData', [])
             for row in rows:
-                if 'values' in row and row['values']:
+                if row.get('values'):
                     cell = row['values'][0]
                     links.append(cell.get('hyperlink'))
                 else:
@@ -145,20 +146,3 @@ class SheetAPI:
         except Exception as e:
             logger.warning(f'获取超链接失败：{e}')
             raise
-    
-if __name__ == '__main__':
-    service = SheetAPI.get_service()
-    from constants import (
-        NLW_ID,
-        NLW_REGULAR_LEVELS_NAME,
-        NLW_PENDING_LEVELS_NAME,
-        NLW_REGULAR_PLATFORMER_LEVELS_NAME,
-        NLW_PENDING_PLATFORMER_LEVELS_NAME,
-        FRUITY_LEVELS_NLW as FRUITY_LEVELS,
-        FRUITY_CREATORS_NLW as FRUITY_CREATORS,
-    )
-
-    sheet_ID = NLW_ID
-    sheet_name = NLW_REGULAR_LEVELS_NAME
-    values = SheetAPI.get_column_values(service, sheet_ID, sheet_name, 'A')
-    print("successfully get values from sheet")
