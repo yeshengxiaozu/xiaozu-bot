@@ -15,7 +15,7 @@
 | `test_draw.py` | `gdlevelsearch/draw.py` 里的纯函数与 `_fetch_thumbnail` |
 | `test_updater.py` | `gdlevelsearch/updater/` 整条抓取流水线 |
 | `test_small_plugins.py` | jrrp / joy / roulette / zhua / say / ai / guess |
-| `test_game_and_help.py` | game 与 xiaozubot_help |
+| `test_help.py` | xiaozubot_help 的命令表、隐藏分类与 handler |
 
 ## 怎么跑
 

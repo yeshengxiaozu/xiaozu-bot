@@ -4,8 +4,10 @@ from io import BytesIO
 
 import requests
 from nonebot import get_driver, logger, require
-from nonebot.adapters.onebot.v11 import Bot, Event, MessageSegment
+from nonebot.adapters import Bot, Event, Message
 from nonebot.permission import SUPERUSER
+
+from xiaozu_bot.utils.adapter_compat import send_image
 
 from . import aredlapi, icons, nlwapi, platapi
 from .aredlapi import Aredl  # noqa: F401
@@ -84,9 +86,11 @@ def get_difficulty(level_id: int) -> str | None:
         return None
     return data.difficulty_label() if data else None
 
+
 @dataclass
 class SearchResult:
     """存储有关搜索结果的基本信息，方便用户进行筛选"""
+
     id: int
     name: str
     creator: str | None = None
@@ -180,8 +184,8 @@ def getlevelinfo(level_id: int) -> GDLevel | None:
         return None
     return gdlevel
 
+
 from nonebot import on_command, on_message
-from nonebot.adapters.onebot.v11 import Bot, Event, Message, MessageEvent
 from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
@@ -192,7 +196,7 @@ async def send_result(bot: Bot, event: Event, level_info: GDLevel) -> None:
     image = await create_image_from_gdlevel(level_info)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
-    await bot.send(event, MessageSegment.image(buffer))
+    await send_image(bot, event, buffer)
 
 
 gdsearch = on_command("gdsearch")
@@ -204,7 +208,8 @@ gduser = on_command("gduser")
 search_cache = {}
 timeout_tasks = {}
 
-def has_cache(event: MessageEvent) -> bool:
+
+def has_cache(event: Event) -> bool:
     return str(event.get_user_id()) in search_cache
 
 
@@ -222,7 +227,7 @@ async def clear_search_cache(bot: Bot, event: Event, user_id: str) -> None:
 
 @gdsearch.handle()
 async def handle_gdsearch(
-    bot: Bot, event: MessageEvent, arg: Message = CommandArg()
+    bot: Bot, event: Event, arg: Message = CommandArg()
 ) -> None:
     """处理用户对gdsearch的调用"""
     name = arg.extract_plain_text().strip()
@@ -338,7 +343,7 @@ def _drop_fullsearch(session_id: str) -> None:
         task.cancel()
 
 
-def _clear_all_sessions(event: MessageEvent) -> None:
+def _clear_all_sessions(event: Event) -> None:
     """几个选择器同时只能活一个，不然 on_message 会互相打架"""
     _drop_fullsearch(event.get_session_id())
     _drop_ratings(event.get_session_id())
@@ -349,7 +354,7 @@ def _clear_all_sessions(event: MessageEvent) -> None:
         task.cancel()
 
 
-def has_fullsearch(event: MessageEvent) -> bool:
+def has_fullsearch(event: Event) -> bool:
     return event.get_session_id() in fullsearch_sessions
 
 
@@ -375,7 +380,7 @@ def _arm_timeout(bot: Bot, event: Event, session_id: str) -> None:
 
 @gdfullsearch.handle()
 async def handle_gdfullsearch(
-    bot: Bot, event: MessageEvent, arg: Message = CommandArg()
+    bot: Bot, event: Event, arg: Message = CommandArg()
 ) -> None:
     """直接问 GD 服务器要结果，默认只搜 rated"""
     _clear_all_sessions(event)
@@ -406,7 +411,7 @@ async def handle_gdfullsearch(
 
 
 @gdfullsearchselect.handle()
-async def handle_fullsearch_choice(bot: Bot, event: MessageEvent) -> None:
+async def handle_fullsearch_choice(bot: Bot, event: Event) -> None:
     """处理翻页选择器里的输入"""
     session_id = event.get_session_id()
     session = fullsearch_sessions.get(session_id)
@@ -457,7 +462,7 @@ def _drop_ratings(session_id: str) -> None:
         task.cancel()
 
 
-def has_ratings(event: MessageEvent) -> bool:
+def has_ratings(event: Event) -> bool:
     return event.get_session_id() in ratings_sessions
 
 
@@ -483,7 +488,7 @@ def _arm_ratings_timeout(bot: Bot, event: Event, session_id: str) -> None:
 
 @gdratings.handle()
 async def handle_gdratings(
-    bot: Bot, event: MessageEvent, arg: Message = CommandArg()
+    bot: Bot, event: Event, arg: Message = CommandArg()
 ) -> None:
     """看某关卡在 GDDL 上每个人给的 tier / enjoyment"""
     _clear_all_sessions(event)
@@ -512,7 +517,7 @@ async def handle_gdratings(
 
 
 @gdratingsselect.handle()
-async def handle_ratings_choice(bot: Bot, event: MessageEvent) -> None:
+async def handle_ratings_choice(bot: Bot, event: Event) -> None:
     """gdratings 只需要翻页，没有选中这一说"""
     session_id = event.get_session_id()
     session = ratings_sessions.get(session_id)
@@ -631,14 +636,16 @@ async def handle_gdicon(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
         sheet = await asyncio.to_thread(icons.compose_sheet, user, items)
         buffer = BytesIO()
         sheet.save(buffer, format="PNG")
-        await bot.send(event, MessageSegment.image(buffer))
+        await send_image(bot, event, buffer)
         if got < len(items):
             await gdicon.finish(f"（有 {len(items) - got} 个没取到，显示成问号了）")
         await gdicon.finish()
 
     form = icons.resolve_form(form_name or icons.DEFAULT_FORM)
     if form is None:
-        await gdicon.finish(f"看不懂的 gamemode「{form_name}」，可选：{icons.form_names()}")
+        await gdicon.finish(
+            f"看不懂的 gamemode「{form_name}」，可选：{icons.form_names()}"
+        )
 
     icon = await icons.fetch_one(user, form)
     if icon is None:
@@ -646,10 +653,11 @@ async def handle_gdicon(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
 
     buffer = BytesIO()
     icon.save(buffer, format="PNG")
-    await bot.send(
+    await send_image(
+        bot,
         event,
-        MessageSegment.text(f"{user.user_name} 的 {form.label}：")
-        + MessageSegment.image(buffer),
+        buffer,
+        before=f"{user.user_name} 的 {form.label}：",
     )
     await gdicon.finish()
 
@@ -680,6 +688,7 @@ async def handle_dailydemon(bot: Bot, event: Event) -> None:
     await send_result(bot, event, level)
     await dailydemon.finish()
 
+
 @gduser.handle()
 async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> None:
     name = arg.extract_plain_text().strip()
@@ -689,11 +698,26 @@ async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
     if not user:
         await gduser.finish("没有找到对应的用户")
     user_basic_info = f"{user.user_name}\n{user.stars}⭐ {user.moons}🌙 {user.demons_count}👿 {str(user.creator_points) + '🔧' if user.creator_points else ''}"
-    user_classic_nondemon = f"\nClassic: {user.classic_levels[0]}🤖 {user.classic_levels[1]}💙 {user.classic_levels[2]}💚 {user.classic_levels[3]}💛 {user.classic_levels[4]}🧡 {user.classic_levels[5]}💜;\n{user.classic_levels[6]} Daily; {user.classic_levels[7]} Gauntlet" if user.classic_levels else ""
-    user_plat_nondemon = f"\nPlatformer: {user.platformer_levels[0]}🤖 {user.platformer_levels[1]}💙 {user.platformer_levels[2]}💚 {user.platformer_levels[3]}💛 {user.platformer_levels[4]}🧡 {user.platformer_levels[5]}💜" if user.platformer_levels else ""
-    user_demon = f"\nClassic Demons: {user.demons_breakdown[0]} / {user.demons_breakdown[1]} / {user.demons_breakdown[2]} / {user.demons_breakdown[3]} / {user.demons_breakdown[4]};\n{user.demons_breakdown[10]} Weekly; {user.demons_breakdown[11]} Gauntlet\nPlatformer Demons: {user.demons_breakdown[5]} / {user.demons_breakdown[6]} / {user.demons_breakdown[7]} / {user.demons_breakdown[8]} / {user.demons_breakdown[9]}" if user.demons_breakdown else ""
-    user_info = user_basic_info + user_classic_nondemon + user_plat_nondemon + user_demon
+    user_classic_nondemon = (
+        f"\nClassic: {user.classic_levels[0]}🤖 {user.classic_levels[1]}💙 {user.classic_levels[2]}💚 {user.classic_levels[3]}💛 {user.classic_levels[4]}🧡 {user.classic_levels[5]}💜;\n{user.classic_levels[6]} Daily; {user.classic_levels[7]} Gauntlet"
+        if user.classic_levels
+        else ""
+    )
+    user_plat_nondemon = (
+        f"\nPlatformer: {user.platformer_levels[0]}🤖 {user.platformer_levels[1]}💙 {user.platformer_levels[2]}💚 {user.platformer_levels[3]}💛 {user.platformer_levels[4]}🧡 {user.platformer_levels[5]}💜"
+        if user.platformer_levels
+        else ""
+    )
+    user_demon = (
+        f"\nClassic Demons: {user.demons_breakdown[0]} / {user.demons_breakdown[1]} / {user.demons_breakdown[2]} / {user.demons_breakdown[3]} / {user.demons_breakdown[4]};\n{user.demons_breakdown[10]} Weekly; {user.demons_breakdown[11]} Gauntlet\nPlatformer Demons: {user.demons_breakdown[5]} / {user.demons_breakdown[6]} / {user.demons_breakdown[7]} / {user.demons_breakdown[8]} / {user.demons_breakdown[9]}"
+        if user.demons_breakdown
+        else ""
+    )
+    user_info = (
+        user_basic_info + user_classic_nondemon + user_plat_nondemon + user_demon
+    )
     await gduser.finish(user_info)
+
 
 @gdsearchhelp.handle()
 async def handle_gdsearchhelp() -> None:
@@ -715,8 +739,9 @@ async def handle_gdsearchhelp() -> None:
   -asc      正序（默认倒序）
   -v        只看通关的人
 """  # noqa: N806
-    #那几个references的实现我扔给xiaozubot_help模块了
+    # 那几个references的实现我扔给xiaozubot_help模块了
     await gdsearchhelp.finish(HELP_STR)
+
 
 update_cmd = on_command("gdsearch_update", permission=SUPERUSER, priority=1, block=True)
 
@@ -724,7 +749,7 @@ from .updater.runner import run_all_async
 
 
 @update_cmd.handle()
-async def _handle(event: MessageEvent):
+async def _handle(event: Event):
     await update_cmd.send("🚀 开始执行手动更新...")
     try:
         result = await run_all_async()

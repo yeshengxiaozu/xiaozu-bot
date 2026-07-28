@@ -81,7 +81,6 @@ ruff check --fix .    # 大部分能自动修
 **升级依赖那一行展开说**：要么 0 个，要么 700 个，中间没有。
 700 个的时候不要慌，**只有三个地方要改**：
 
-- `tests/test_game_and_help.py` 里的 `drive()`
 - `tests/test_small_plugins.py` 里的 `run_handler()`
 - `tests/conftest.py` 里 `FakeBot.call_api`
 

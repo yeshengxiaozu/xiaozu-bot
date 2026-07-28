@@ -63,9 +63,6 @@ DEFAULT_USER_ID = 12345
 DEFAULT_GROUP_ID = 67890
 DEFAULT_TIME = 1700000000
 
-# game 插件里硬编码的白名单群，测 game 的人直接用这个
-GAME_WHITELIST_GROUP_IDS = (1035708051, 870217476)
-
 
 def _quiet_nonebot_logging() -> None:
     """摘掉 nonebot 默认那个 INFO 级 loguru handler，只留 WARNING 以上。
@@ -135,8 +132,16 @@ _LOOPBACK_HOSTNAMES = frozenset({"localhost", "localhost.localdomain", "", "::1"
 #: 各种库认的代理环境变量。测试进程里必须一个都不剩，
 #: 否则「连到 127.0.0.1 的代理端口」会被下面的环回豁免放行，等于开了个出网后门。
 _PROXY_ENV_VARS = (
-    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "FTP_PROXY", "NO_PROXY",
-    "http_proxy", "https_proxy", "all_proxy", "ftp_proxy", "no_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "FTP_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "ftp_proxy",
+    "no_proxy",
 )
 
 
@@ -315,7 +320,9 @@ class FakeResponse:
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise requests.HTTPError(f"{self.status_code} for {self.url}", response=self)
+            raise requests.HTTPError(
+                f"{self.status_code} for {self.url}", response=self
+            )
 
     def __repr__(self) -> str:
         return f"<FakeResponse [{self.status_code}] {self.url}>"
@@ -325,9 +332,9 @@ class FakeResponse:
 def make_response() -> Callable[..., FakeResponse]:
     """工厂：造一个假的 requests 响应。
 
-        resp = make_response(json_data={"a": 1})
-        resp = make_response(200, text="1:123:2:name#...")
-        resp = make_response(404)
+    resp = make_response(json_data={"a": 1})
+    resp = make_response(200, text="1:123:2:name#...")
+    resp = make_response(404)
     """
     return FakeResponse
 
@@ -336,7 +343,7 @@ def make_response() -> Callable[..., FakeResponse]:
 def make_httpx_response() -> Callable[..., httpx.Response]:
     """工厂：造一个真的 httpx.Response（已经把 .request 挂好，能 raise_for_status）。
 
-        resp = make_httpx_response(200, json={"choices": [...]})
+    resp = make_httpx_response(200, json={"choices": [...]})
     """
 
     def _make(
@@ -574,8 +581,8 @@ def json_redis(tmp_path: Path) -> JsonRedis:
 def make_json_redis(tmp_path: Path) -> Callable[..., JsonRedis]:
     """工厂：要几个独立的 JsonRedis 就造几个。
 
-        r1 = make_json_redis("a.json")
-        r2 = make_json_redis("b.json", initial={"k": "v"})
+    r1 = make_json_redis("a.json")
+    r2 = make_json_redis("b.json", initial={"k": "v"})
     """
     counter = {"n": 0}
 

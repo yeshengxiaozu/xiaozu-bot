@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """把还在 Redis 里的运行时数据搬到 JsonRedis 的 storage.json。
 
-game / jrrp / guess / zhua 这些插件已经从 redis 换成 JsonRedis 了。
+jrrp / guess / zhua 这些插件已经从 redis 换成 JsonRedis 了。
 换完之后 bot 是读 json 文件的，**不会**再去看 Redis —— 所以不跑这个脚本的话，
 今日人品、猜图统计这些在群里就都会变成 0（Redis 里的数据没删，只是没人读了）。
 蓝莓经济和轮盘已经整个下线，那部分数据不再迁移。
@@ -28,7 +28,6 @@ sys.path.insert(0, str(REPO_ROOT))
 #   hashes  : 整个哈希表搬过去
 PLANS = {
     "jrrp": {"patterns": ["jrrp_*"], "hashes": []},
-    "game": {"patterns": [], "hashes": ["game_mode"]},
     # guess / zhua 之前就换成 JsonRedis 了，当时没搬数据，
     # 所以它们在 Redis 里的旧记录一直是孤儿（猜图的累计次数就在这里面）。
     # 顺手一起搬回来。

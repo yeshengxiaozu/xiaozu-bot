@@ -190,9 +190,7 @@ class TestJrrp:
         assert await run_handler(jrrp.jrrp, fake_bot, make_group_event("*jrrp")) is True
         assert "66" in only_text(fake_bot)
 
-    async def test_cached_reply_ats_the_sender(
-        self, store, fake_bot, make_group_event
-    ):
+    async def test_cached_reply_ats_the_sender(self, store, fake_bot, make_group_event):
         """缓存分支带 at_sender=True，群里会 @ 提问的人"""
         store.set(f"jrrp_{DEFAULT_USER_ID}", "66")
         await run_handler(jrrp.jrrp, fake_bot, make_group_event("*jrrp"))
@@ -402,84 +400,6 @@ class TestJoyNsdd:
         assert seen == [(1, 3)]
 
 
-class TestJoyGame:
-    """*game N：给几个小游戏瞎出主意"""
-
-    # 下面每条断言的都是「这一支挑出来的那个值」，不是整句话怎么写的。
-    # 少了 return 会 IndexError、分支串了会挑错值，都还是会红。
-
-    async def test_missing_argument_explains_usage(self, fake_bot, make_group_event):
-        """没给编号时要回一句就收场（而不是接着读 args[0] 直接 IndexError）"""
-        assert await run_handler(joy.game, fake_bot, make_group_event()) is True
-        assert only_text(fake_bot)
-
-    async def test_unknown_number(self, fake_bot, make_group_event):
-        """编号不认识时也得回一条 —— 认了命令又一个字不回是这个仓库出过的老毛病"""
-        assert (
-            await run_handler(joy.game, fake_bot, make_group_event(), arg="5") is True
-        )
-        assert only_text(fake_bot)
-
-    async def test_game1_branch_high_low(self, fake_bot, make_group_event, monkeypatch):
-        """t==1 走的是「大/小」二选一，挑中的那项要报出来"""
-        pools: list[list[Any]] = []
-        monkeypatch.setattr(random, "randint", lambda a, b: 1)
-        monkeypatch.setattr(random, "choice", picking_spy(pools))
-        await run_handler(joy.game, fake_bot, make_group_event(), arg="1")
-        assert len(pools) == 1
-        assert len(pools[0]) == 2  # 二选一，和下面四选一的花色分支区分开
-        assert pools[0][0] in only_text(fake_bot)
-
-    async def test_game1_branch_suit(self, fake_bot, make_group_event, monkeypatch):
-        """t==2 走的是四种花色，挑中的那项要报出来"""
-        pools: list[list[Any]] = []
-        monkeypatch.setattr(random, "randint", lambda a, b: 2)
-        monkeypatch.setattr(random, "choice", picking_spy(pools, index=-1))
-        await run_handler(joy.game, fake_bot, make_group_event(), arg="1")
-        assert len(pools) == 1
-        assert len(pools[0]) == 4
-        assert pools[0][-1] in only_text(fake_bot)
-
-    async def test_game1_branch_two_distinct_cards(
-        self, fake_bot, make_group_event, monkeypatch
-    ):
-        """第三个分支要保证两张牌不一样，重复了就重抽"""
-        monkeypatch.setattr(random, "randint", lambda a, b: 3)
-        monkeypatch.setattr(random, "choice", scripted(["A", "A", "A", "K"]))
-        await run_handler(joy.game, fake_bot, make_group_event(), arg="1")
-        assert "A/K" in only_text(fake_bot)
-
-    async def test_game2_branch(self, fake_bot, make_group_event, monkeypatch):
-        """编号 2 是二选一，挑中的那项要报出来"""
-        pools: list[list[Any]] = []
-        monkeypatch.setattr(random, "choice", picking_spy(pools))
-        await run_handler(joy.game, fake_bot, make_group_event(), arg="2")
-        assert len(pools) == 1
-        assert len(pools[0]) == 2
-        assert pools[0][0] in only_text(fake_bot)
-
-    async def test_game3_branch(self, fake_bot, make_group_event, monkeypatch):
-        monkeypatch.setattr(random, "randint", lambda a, b: 6)
-        await run_handler(joy.game, fake_bot, make_group_event(), arg="3")
-        assert "6" in only_text(fake_bot)
-
-    async def test_game4_branch(self, fake_bot, make_group_event, monkeypatch):
-        monkeypatch.setattr(random, "randint", scripted([1, 2, 3]))
-        await run_handler(joy.game, fake_bot, make_group_event(), arg="4")
-        assert "1/2/3" in only_text(fake_bot)
-
-    async def test_argument_is_lowercased_and_split(
-        self, fake_bot, make_group_event, monkeypatch
-    ):
-        """只看第一个词，后面的忽略"""
-        pools: list[list[Any]] = []
-        monkeypatch.setattr(random, "choice", picking_spy(pools, index=1))
-        await run_handler(joy.game, fake_bot, make_group_event(), arg="2 blah blah")
-        text = only_text(fake_bot)
-        assert pools[0][1] in text
-        assert "blah" not in text
-
-
 class TestJoyJwz:
     """*jwz：健忘症挑战模板"""
 
@@ -532,7 +452,9 @@ class TestJoyToday:
     @pytest.mark.parametrize("arg", ["", "a", "a b", "a b c d"])
     async def test_wrong_argument_count(self, arg, fake_bot, make_group_event):
         """必须正好 3 个词：不够/多了都提前收场，不会走到贴 144 的正常分支"""
-        assert await run_handler(joy.today, fake_bot, make_group_event(), arg=arg) is True
+        assert (
+            await run_handler(joy.today, fake_bot, make_group_event(), arg=arg) is True
+        )
         assert only_text(fake_bot)
         assert emoji_likes(fake_bot) == []
 
@@ -541,7 +463,9 @@ class TestJoyToday:
         fake_bot.api_results["send_msg"] = {"message_id": 88}
         # 这个 handler 末尾没有 finish()，是自然 return 的
         assert (
-            await run_handler(joy.today, fake_bot, make_group_event(), arg="蔚蓝 小卒 生日")
+            await run_handler(
+                joy.today, fake_bot, make_group_event(), arg="蔚蓝 小卒 生日"
+            )
             is False
         )
         text = only_text(fake_bot)
@@ -613,7 +537,9 @@ class TestRouletteConst:
         原来这里钉的是 `len(sjmap) == 116`，加一个地图名就得回来改数字，
         而条数根本不是行为 —— 真正会出问题的是空串和重名。
         """
-        assert roulette.const.sjmap, "地图表不能是空的，不然 random.choice 直接 IndexError"
+        assert roulette.const.sjmap, (
+            "地图表不能是空的，不然 random.choice 直接 IndexError"
+        )
         assert all(
             isinstance(name, str) and name.strip() for name in roulette.const.sjmap
         )
@@ -629,7 +555,9 @@ class TestRouletteConst:
 class TestRouletteCommands:
     async def test_roulette_is_a_tombstone(self, fake_bot, make_group_event):
         """墓碑文案跟着模块里的常量走，改文案不用回来改测试"""
-        assert await run_handler(roulette.roulette, fake_bot, make_group_event()) is True
+        assert (
+            await run_handler(roulette.roulette, fake_bot, make_group_event()) is True
+        )
         assert only_text(fake_bot) == roulette.RETIRED_MSG
 
     async def test_map_picks_from_sjmap(self, fake_bot, make_group_event, monkeypatch):
@@ -658,7 +586,9 @@ class TestRouletteCommands:
     ):
         """报出来的是被挑中的那个词，没被挑中的不许出现"""
         monkeypatch.setattr(random, "choice", lambda seq: seq[1])
-        await run_handler(roulette.rand_one, fake_bot, make_group_event(), arg="甲 乙 丙")
+        await run_handler(
+            roulette.rand_one, fake_bot, make_group_event(), arg="甲 乙 丙"
+        )
         text = only_text(fake_bot)
         assert "乙" in text
         assert "甲" not in text
@@ -669,7 +599,9 @@ class TestRouletteCommands:
     ):
         """和 joy 那几条不一样，*random 没有 .lower()"""
         monkeypatch.setattr(random, "choice", lambda seq: seq[0])
-        await run_handler(roulette.rand_one, fake_bot, make_group_event(), arg="ABC def")
+        await run_handler(
+            roulette.rand_one, fake_bot, make_group_event(), arg="ABC def"
+        )
         text = only_text(fake_bot)
         assert "ABC" in text
         assert "abc" not in text
@@ -678,7 +610,9 @@ class TestRouletteCommands:
         self, fake_bot, make_group_event, seeded_random
     ):
         seeded_random(0)
-        await run_handler(roulette.rand_one, fake_bot, make_group_event(), arg="只有一个")
+        await run_handler(
+            roulette.rand_one, fake_bot, make_group_event(), arg="只有一个"
+        )
         assert "只有一个" in only_text(fake_bot)
 
 
@@ -825,7 +759,8 @@ class TestZhuaShow:
     )
     async def test_name_matching(self, query, expected, fake_bot, make_group_event):
         assert (
-            await run_handler(zhua.show, fake_bot, make_group_event(), arg=query) is True
+            await run_handler(zhua.show, fake_bot, make_group_event(), arg=query)
+            is True
         )
         message = sent_messages(fake_bot)[0]
         assert image_files(message)[0].endswith(expected)
@@ -841,7 +776,8 @@ class TestZhuaShow:
     async def test_unmatched_name_is_rejected(self, query, fake_bot, make_group_event):
         """查不到就回一条、不发图（发出去一张裂图才是问题，回什么话不是）"""
         assert (
-            await run_handler(zhua.show, fake_bot, make_group_event(), arg=query) is True
+            await run_handler(zhua.show, fake_bot, make_group_event(), arg=query)
+            is True
         )
         assert only_text(fake_bot)
         assert image_files(sent_messages(fake_bot)[0]) == []
@@ -991,22 +927,22 @@ class TestSay:
         monkeypatch.setattr(say, "sync_generate_audio", lambda *a, **k: "/tmp/x.wav")
         monkeypatch.setattr(os, "remove", lambda path: None)
         await run_handler(say.say, fake_bot, make_group_event(), arg="a" * 500)
-        assert "send_group_msg" in fake_bot.called_apis
+        assert "send_msg" in fake_bot.called_apis
 
-    async def test_master_may_exceed_500(
-        self, fake_bot, make_group_event, monkeypatch
-    ):
+    async def test_master_may_exceed_500(self, fake_bot, make_group_event, monkeypatch):
         monkeypatch.setattr(say, "sync_generate_audio", lambda *a, **k: "/tmp/x.wav")
         monkeypatch.setattr(os, "remove", lambda path: None)
         event = make_group_event(user_id=MASTER_ID)
         await run_handler(say.say, fake_bot, event, arg="a" * 501)
-        assert "send_group_msg" in fake_bot.called_apis
+        assert "send_msg" in fake_bot.called_apis
 
     async def test_without_mlx_audio_it_reports_a_failure(
         self, fake_bot, make_group_event, no_mlx_audio
     ):
         """非 Apple Silicon 机器上 mlx_audio import 不了，退化成一条错误提示"""
-        assert await run_handler(say.say, fake_bot, make_group_event(), arg="喵") is True
+        assert (
+            await run_handler(say.say, fake_bot, make_group_event(), arg="喵") is True
+        )
         assert only_text(fake_bot)
         assert "send_group_msg" not in fake_bot.called_apis
 
@@ -1025,24 +961,27 @@ class TestSay:
     async def test_group_success_sends_a_record_and_deletes_the_file(
         self, fake_bot, make_group_event, fake_mlx_audio, tmp_path
     ):
-        assert await run_handler(say.say, fake_bot, make_group_event(), arg="喵喵") is True
+        assert (
+            await run_handler(say.say, fake_bot, make_group_event(), arg="喵喵") is True
+        )
 
-        api, data = next(c for c in fake_bot.calls if c[0] == "send_group_msg")
-        assert api == "send_group_msg"
+        api, data = next(c for c in fake_bot.calls if c[0] == "send_msg")
+        assert api == "send_msg"
         assert data["group_id"] == DEFAULT_GROUP_ID
-        assert data["message"][0]["type"] == "record"
-        audio_path = Path(data["message"][0]["data"]["file"])
+        assert data["message"][0].type == "record"
+        audio_path = Path(data["message"][0].data["file"])
         assert audio_path.parent == tmp_path
         assert audio_path.suffix == ".wav"
         assert not audio_path.exists(), "发完应该把临时 wav 删掉"
 
-    async def test_private_success_uses_send_private_msg(
+    async def test_private_success_uses_send_msg(
         self, fake_bot, make_private_event, fake_mlx_audio
     ):
         await run_handler(say.say, fake_bot, make_private_event(), arg="喵喵")
-        api, data = next(c for c in fake_bot.calls if c[0] == "send_private_msg")
+        api, data = next(c for c in fake_bot.calls if c[0] == "send_msg")
+        assert api == "send_msg"
         assert data["user_id"] == DEFAULT_USER_ID
-        assert data["message"][0]["type"] == "record"
+        assert data["message"][0].type == "record"
 
     async def test_default_instruct_is_passed_through(
         self, fake_bot, make_group_event, fake_mlx_audio
@@ -1189,6 +1128,10 @@ def ai_context():
         ai.context_map.clear()
 
 
+AI_GROUP_SESSION = f"ob11:group:{DEFAULT_GROUP_ID}"
+AI_PRIVATE_SESSION = f"ob11:private:{DEFAULT_USER_ID}"
+
+
 class TestAiGuards:
     """还没轮到发请求就被挡下来的几条路径"""
 
@@ -1217,14 +1160,14 @@ class TestAiGuards:
         self, ai_context, fake_bot, make_group_event
     ):
         """主人说 clear 就把上下文清干净并回一条（清没清干净是行为，回什么话不是）"""
-        ai_context["g" + str(DEFAULT_GROUP_ID)] = [{"role": "user", "content": "旧的"}]
+        ai_context[AI_GROUP_SESSION] = [{"role": "user", "content": "旧的"}]
         event = make_group_event(user_id=MASTER_ID)
         assert await run_handler(ai.ai_cmd, fake_bot, event, arg="clear") is True
         assert only_text(fake_bot)
         assert ai_context == {}
 
     async def test_chinese_clear_keyword(self, ai_context, fake_bot, make_group_event):
-        ai_context["g" + str(DEFAULT_GROUP_ID)] = [{"role": "user", "content": "旧的"}]
+        ai_context[AI_GROUP_SESSION] = [{"role": "user", "content": "旧的"}]
         event = make_group_event(user_id=MASTER_ID)
         await run_handler(ai.ai_cmd, fake_bot, event, arg="清空")
         assert ai_context == {}
@@ -1310,13 +1253,13 @@ class TestAiContext:
 
     async def test_group_session_id(self, ai_context, fake_bot, make_group_event, ok):
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
-        assert list(ai_context) == ["g" + str(DEFAULT_GROUP_ID)]
+        assert list(ai_context) == [AI_GROUP_SESSION]
 
     async def test_private_session_id(
         self, ai_context, fake_bot, make_private_event, ok
     ):
         await run_handler(ai.ai_cmd, fake_bot, make_private_event(), arg="你好")
-        assert list(ai_context) == ["p" + str(DEFAULT_USER_ID)]
+        assert list(ai_context) == [AI_PRIVATE_SESSION]
 
     async def test_group_context_is_shared_by_everyone_in_the_group(
         self, ai_context, fake_bot, make_group_event, ok
@@ -1324,13 +1267,13 @@ class TestAiContext:
         """群会话按群号分，不按人分 —— 同群不同人共用一段上下文"""
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(user_id=1), arg="你好")
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(user_id=2), arg="再问")
-        assert len(ai_context["g" + str(DEFAULT_GROUP_ID)]) == 4
+        assert len(ai_context[AI_GROUP_SESSION]) == 4
 
     async def test_turn_is_appended_after_a_successful_reply(
         self, ai_context, fake_bot, make_group_event, ok
     ):
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
-        assert ai_context["g" + str(DEFAULT_GROUP_ID)] == [
+        assert ai_context[AI_GROUP_SESSION] == [
             {"role": "user", "content": "你好"},
             {"role": "assistant", "content": "回答"},
         ]
@@ -1351,7 +1294,7 @@ class TestAiContext:
         self, ai_context, fake_bot, make_group_event, ok
     ):
         """MAX_TURNS=5，一轮两条，所以最多留 10 条"""
-        session = "g" + str(DEFAULT_GROUP_ID)
+        session = AI_GROUP_SESSION
         ai_context[session] = [
             {"role": "user" if i % 2 == 0 else "assistant", "content": f"旧{i}"}
             for i in range(12)
@@ -1372,10 +1315,8 @@ class TestAiContext:
     async def test_history_below_the_limit_is_not_trimmed(
         self, ai_context, fake_bot, make_group_event, ok
     ):
-        session = "g" + str(DEFAULT_GROUP_ID)
-        ai_context[session] = [
-            {"role": "user", "content": f"旧{i}"} for i in range(4)
-        ]
+        session = AI_GROUP_SESSION
+        ai_context[session] = [{"role": "user", "content": f"旧{i}"} for i in range(4)]
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="新问题")
         assert len(ai_context[session]) == 6
 
@@ -1383,7 +1324,7 @@ class TestAiContext:
         self, ai_context, fake_bot, make_group_event, ok
     ):
         """content 不是字符串、或者只有空白的历史条目不发给模型"""
-        session = "g" + str(DEFAULT_GROUP_ID)
+        session = AI_GROUP_SESSION
         ai_context[session] = [
             {"role": "user", "content": None},
             {"role": "assistant", "content": "   "},
@@ -1448,7 +1389,7 @@ class TestAiResponseParsing:
         )
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
         assert only_text(fake_bot)
-        assert ai_context["g" + str(DEFAULT_GROUP_ID)][-1] == {
+        assert ai_context[AI_GROUP_SESSION][-1] == {
             "role": "assistant",
             "content": "😀😀",
         }
@@ -1460,10 +1401,11 @@ class TestAiErrors:
     ):
         stub_httpx.post(API_ENDPOINT, make_httpx_response(500, text="boom"))
         assert (
-            await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好") is True
+            await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
+            is True
         )
         assert "500" in only_text(fake_bot)  # 报出来的是状态码，措辞随便
-        assert ai_context == {"g" + str(DEFAULT_GROUP_ID): []}
+        assert ai_context == {AI_GROUP_SESSION: []}
 
     async def test_connection_error_is_reported(
         self, ai_context, fake_bot, make_group_event, stub_httpx
@@ -1509,7 +1451,7 @@ class TestAiErrors:
         """请求失败时上下文只多了个空 list，不会记下这一轮"""
         stub_httpx.post(API_ENDPOINT, make_httpx_response(500))
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
-        assert ai_context["g" + str(DEFAULT_GROUP_ID)] == []
+        assert ai_context[AI_GROUP_SESSION] == []
 
 
 # ==========================================================================
@@ -1562,7 +1504,9 @@ class TestGuessTables:
 
         assert maps, "题库表不能是空的"
         answers = [entry["answer"] for entry in maps]
-        assert len(set(answers)) == len(answers), "答案不能重样，重了 accepted 会互相覆盖"
+        assert len(set(answers)) == len(answers), (
+            "答案不能重样，重了 accepted 会互相覆盖"
+        )
 
         for entry in maps:
             assert set(entry) == {"file_path", "answer", "alias"}
@@ -1790,7 +1734,10 @@ class TestGuessCanStart:
         # 行为是「挡住 + 回一条」，提示怎么写不管
         assert only_text(fake_bot)
         # 挡住了就不该把旧题的答案冲掉
-        assert store.hget(guess.ANSWER_KEY, "g" + str(DEFAULT_GROUP_ID)) == "假图 Fake Level"
+        assert (
+            store.hget(guess.ANSWER_KEY, "g" + str(DEFAULT_GROUP_ID))
+            == "假图 Fake Level"
+        )
 
     async def test_nothing_answer_does_not_block(
         self, guess_env, fake_bot, make_group_event
@@ -1968,7 +1915,9 @@ class TestGuessStart:
         assert len(sent_texts(fake_bot)) == 1
         assert len(looked_at) == 40
 
-    async def test_sparse_bank_never_falsely_reports_empty(self, guess_env, monkeypatch):
+    async def test_sparse_bank_never_falsely_reports_empty(
+        self, guess_env, monkeypatch
+    ):
         """只填了一小部分的题库必须每次都能挑出题来。
 
         这就是无放回扫描的意义：中间那版是**有放回**地固定抽 50 次，
@@ -1984,7 +1933,13 @@ class TestGuessStart:
                 {"file_path": f"Empty/{i}", "answer": f"空 {i}", "alias": []}
                 for i in range(39)
             ]
-            + [{"file_path": "Fake/Level", "answer": "假图 Fake Level", "alias": ["假图"]}],
+            + [
+                {
+                    "file_path": "Fake/Level",
+                    "answer": "假图 Fake Level",
+                    "alias": ["假图"],
+                }
+            ],
         )
 
         for _ in range(20):
@@ -2050,9 +2005,7 @@ class TestGuessAnswer:
         """十分之一的概率把题目图再贴一遍"""
         _, _, pictures_dir = started
         monkeypatch.setattr(random, "randint", lambda a, b: 1)
-        await run_handler(
-            guess.guess, fake_bot, make_group_event(), arg="别的图"
-        )
+        await run_handler(guess.guess, fake_bot, make_group_event(), arg="别的图")
         message = sent_messages(fake_bot)[0]
         # 重发的是题图，答案还不能露
         assert image_files(message)[0].endswith(f"g{DEFAULT_GROUP_ID}.png")
@@ -2129,7 +2082,9 @@ class TestGuessGiveUp:
 
     async def test_reveals_the_answer(self, started, fake_bot, make_group_event):
         store, session, pictures_dir = started
-        assert await run_handler(guess.guess_giveup, fake_bot, make_group_event()) is True
+        assert (
+            await run_handler(guess.guess_giveup, fake_bot, make_group_event()) is True
+        )
         message = sent_messages(fake_bot)[0]
         assert "假图 Fake Level" in message.extract_plain_text()
         assert image_files(message)[0].endswith(f"{session}.png")
@@ -2148,9 +2103,7 @@ class TestGuessGiveUp:
         assert await run_handler(guess.guess_giveup, fake_bot, event) is True
         assert emoji_likes(fake_bot) == [(31, "10068")]
 
-    async def test_cooldown_blocks_giving_up(
-        self, started, fake_bot, make_group_event
-    ):
+    async def test_cooldown_blocks_giving_up(self, started, fake_bot, make_group_event):
         """出题后 45 秒内连认输都不让 —— cd 是共用同一个键判的"""
         store, session, _ = started
         store.set(f"{guess.COOLDOWN_PREFIX}{session}", "x", ex=45)
@@ -2166,7 +2119,9 @@ class TestGuessMisc:
         self, guess_env, fake_bot, make_group_event
     ):
         """从来没人猜过的时候，两个计数器都是 None，直接被拼进了句子里"""
-        assert await run_handler(guess.guess_count, fake_bot, make_group_event()) is True
+        assert (
+            await run_handler(guess.guess_count, fake_bot, make_group_event()) is True
+        )
         assert only_text(fake_bot).count("None") == 2
 
     async def test_count_reports_the_stored_numbers(
@@ -2199,12 +2154,14 @@ class TestGuessMisc:
         session = "g" + str(DEFAULT_GROUP_ID)
         store.hset(guess.ANSWER_KEY, session, "假图 Fake Level")
 
-        assert await run_handler(guess.guess_cheat, fake_bot, make_group_event()) is True
+        assert (
+            await run_handler(guess.guess_cheat, fake_bot, make_group_event()) is True
+        )
         api, data = fake_bot.calls[0]
         assert api == "send_private_msg"
-        assert data["user_id"] == DEFAULT_USER_ID
+        assert data["user_id"] == str(DEFAULT_USER_ID)
         # 行为是「答案私聊给了提问的人、没发到群里」，这条私聊怎么措辞不管
-        assert "假图 Fake Level" in data["message"][0]["data"]["text"]
+        assert "假图 Fake Level" in str(data["message"])
 
     # 生产代码里 Image.open() 从来不 close，gc 的时候会冒 ResourceWarning，
     # 这里只是把噪音压住，别的用例照常暴露

@@ -5,16 +5,20 @@ import re
 import emoji
 import httpx
 from nonebot import logger, on_command
-from nonebot.adapters.onebot.v11 import (
-    Bot,
-    GroupMessageEvent,
-    Message,
-    PrivateMessageEvent,
-)
+from nonebot.adapters import Bot, Event, Message
 from nonebot.params import CommandArg
+
+from xiaozu_bot.utils.adapter_compat import (
+    get_context_id,
+    get_group_id,
+    get_user_id,
+    is_group_event,
+    react,
+)
 
 PROHIBITED_GROUP = [569801410]
 MASTER_ID = 3251605531
+
 
 def remove_emoji(text: str) -> str:
     return emoji.replace_emoji(text, replace="")
@@ -73,23 +77,23 @@ ai_cmd = on_command("ai", priority=5)
 @ai_cmd.handle()
 async def handle_ai(
     bot: Bot,
-    event: GroupMessageEvent | PrivateMessageEvent,
+    event: Event,
     args: Message = CommandArg(),
 ) -> None:
-    if isinstance(event, GroupMessageEvent) and event.group_id in PROHIBITED_GROUP:
-        await bot.call_api(
-            "set_msg_emoji_like", message_id=event.message_id, emoji_id="424"
-        )
+    if is_group_event(event) and get_group_id(event) in {
+        str(group_id) for group_id in PROHIBITED_GROUP
+    }:
+        await react(bot, event, "424")
         await ai_cmd.finish()
     user_input = sanitize_text(remove_emoji(args.extract_plain_text().strip()))
 
     if not user_input:
         await ai_cmd.finish("请输入内容，例如：.ai 你好")
 
-    session_id = "g" + str(event.group_id) if isinstance(event, GroupMessageEvent) else "p" + str(event.user_id)
+    session_id = get_context_id(event)
 
     # ===== 清空上下文 =====
-    if user_input.lower() in ["clear", "清空"] and event.user_id == MASTER_ID:
+    if user_input.lower() in ["clear", "清空"] and get_user_id(event) == str(MASTER_ID):
         context_map.pop(session_id, None)
         await ai_cmd.finish("上下文已清空")
 
@@ -199,9 +203,9 @@ async def handle_ai(
             # other possible top-level text
             if not reply and isinstance(data, dict):
                 if isinstance(data.get("text"), str):
-                    reply = data.get("text","").strip()
+                    reply = data.get("text", "").strip()
                 elif isinstance(data.get("response"), str):
-                    reply = data.get("response","").strip()
+                    reply = data.get("response", "").strip()
 
             if not reply:
                 await ai_cmd.finish(

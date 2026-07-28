@@ -4,6 +4,8 @@ import traceback
 
 from nonebot import get_bot, logger
 
+from xiaozu_bot.utils.adapter_compat import send_private
+
 ADMIN_ID = 3251605531  # 改成你的 QQ
 
 _last_error_key = None
@@ -73,10 +75,7 @@ async def report_error(title: str, err: Exception, context: dict | None = None):
         return
 
     try:
-        await bot.send_private_msg(
-            user_id=ADMIN_ID,
-            message=msg
-        )
+        await send_private(bot, ADMIN_ID, msg)
 
         logger.info("[NOTIFY] error sent to admin")
 

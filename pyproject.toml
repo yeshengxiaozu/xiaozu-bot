@@ -32,13 +32,13 @@ dependencies = [
     "nonebot-plugin-apscheduler>=0.5.0",
     "nonebot-plugin-localstore>=0.7.4",
     "nonebot-plugin-htmlkit>=0.1.0rc5",
-    # 以下是插件实际 import 但之前漏写的依赖
-    "requests>=2.31.0",          # gdlevelsearch 各 api 与 updater
-    "emoji>=2.0.0",              # ai
-    "certifi>=2024.2.2",         # updater 的 ssl context
-    "urllib3>=2.0.0",            # updater/jobs/googlesheetapi
-    "google-api-python-client>=2.100.0",  # updater 抓 Google Sheets
-    "pillow>=10.0.0",            # gdlevelsearch/draw.py
+    "requests>=2.31.0",
+    "emoji>=2.0.0",
+    "certifi>=2024.2.2",
+    "urllib3>=2.0.0",
+    "google-api-python-client>=2.100.0",
+    "pillow>=10.0.0",
+    "nonebot-adapter-qq>=1.7.1",
 ]
 
 [project.optional-dependencies]
@@ -133,6 +133,7 @@ nonebot-adapter-onebot = [
     { name = "OneBot V11", module_name = "nonebot.adapters.onebot.v11" }
 ]
 "@local" = []
+nonebot-adapter-qq = [{name = "QQ", module_name = "nonebot.adapters.qq"}]
 
 [tool.nonebot.plugins]
 "@local" = []
