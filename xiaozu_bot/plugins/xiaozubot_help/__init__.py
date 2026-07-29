@@ -1,7 +1,7 @@
 import unicodedata
 
 from nonebot import get_plugin_config, on_command
-from nonebot.adapters import Message
+from nonebot.internal.adapter import Message
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 

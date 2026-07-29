@@ -4,7 +4,7 @@ from io import BytesIO
 
 import requests
 from nonebot import get_driver, logger, require
-from nonebot.adapters import Bot, Event, Message
+from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.permission import SUPERUSER
 
 from xiaozu_bot.utils.adapter_compat import send_image

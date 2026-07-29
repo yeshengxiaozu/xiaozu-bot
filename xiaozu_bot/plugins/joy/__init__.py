@@ -1,7 +1,7 @@
 import random
 
 from nonebot import get_plugin_config, on_command, on_type
-from nonebot.adapters import Bot, Event, Message
+from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.adapters.onebot.v11 import (
     PokeNotifyEvent,
 )

@@ -5,7 +5,7 @@ import re
 import emoji
 import httpx
 from nonebot import logger, on_command
-from nonebot.adapters import Bot, Event, Message
+from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 
 from xiaozu_bot.utils.adapter_compat import (

@@ -3,7 +3,7 @@ import random
 from pathlib import Path
 
 from nonebot import on_command
-from nonebot.adapters import Bot, Event, Message
+from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER

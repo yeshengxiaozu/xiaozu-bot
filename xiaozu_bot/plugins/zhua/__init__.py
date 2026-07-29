@@ -2,7 +2,7 @@ import random
 from pathlib import Path
 
 from nonebot import get_plugin_config, on_command
-from nonebot.adapters import Bot, Event, Message
+from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata

@@ -8,7 +8,7 @@
 import random
 
 from nonebot import get_plugin_config, on_command
-from nonebot.adapters import Event, Message
+from nonebot.internal.adapter import Event, Message
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 

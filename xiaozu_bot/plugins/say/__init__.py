@@ -2,7 +2,7 @@ import asyncio
 import os
 
 from nonebot import get_plugin_config, on_command
-from nonebot.adapters import Bot, Event, Message
+from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 

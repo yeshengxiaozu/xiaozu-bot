@@ -2,7 +2,7 @@ import datetime
 import random
 
 from nonebot import get_plugin_config, on_command
-from nonebot.adapters import Event
+from nonebot.internal.adapter import Event
 from nonebot.plugin import PluginMetadata
 
 from xiaozu_bot.utils.adapter_compat import get_user_id
