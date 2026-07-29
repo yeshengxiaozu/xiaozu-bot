@@ -3,19 +3,22 @@ import random
 from pathlib import Path
 
 from nonebot import on_command
-from nonebot.adapters.onebot.v11 import (
-    Bot,
-    GroupMessageEvent,
-    Message,
-    MessageSegment,
-    PrivateMessageEvent,
-)
+from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 from PIL import Image, ImageDraw, ImageStat
 
+from xiaozu_bot.utils.adapter_compat import (
+    get_group_id,
+    get_user_id,
+    is_group_event,
+    is_private_event,
+    react,
+    send_image,
+    send_private_for_event,
+)
 from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
 from .config import Config
@@ -60,11 +63,29 @@ crop_width_hard = 128
 crop_height_hard = 128
 crop_width_ultra = 64
 crop_height_ultra = 64
+
+
 def formalize(str: str) -> str:
     str = str.lower()  # noqa: A001
-    for s in [" ",".",",","-","'","!","，","！","…","。",":","：","+","_","""
-"""] :
-        str = str.replace(s,"")  # noqa: A001
+    for s in [
+        " ",
+        ".",
+        ",",
+        "-",
+        "'",
+        "!",
+        "，",
+        "！",
+        "…",
+        "。",
+        ":",
+        "：",
+        "+",
+        "_",
+        """
+""",
+    ]:
+        str = str.replace(s, "")  # noqa: A001
     return str
 
 
@@ -82,12 +103,14 @@ for map_info in maps:
         *(formalize(a) for a in map_info["alias"]),
     }
 
-def getid(event: GroupMessageEvent | PrivateMessageEvent) -> str:
-    if isinstance(event,PrivateMessageEvent) or False:
-        return str(event.user_id)
-    return "g" + str(event.group_id)
 
-def get_variance(image) -> tuple[float,float,float]:
+def getid(event: Event) -> str:
+    if is_private_event(event):
+        return get_user_id(event)
+    return "g" + get_group_id(event)
+
+
+def get_variance(image) -> tuple[float, float, float]:
     # 原来是 image.getdata() 逐像素手算 E[x²]-E[x]²。Pillow 12 把 getdata()
     # 标成了废弃（Pillow 14 移除），而 pytest 那边配了
     # `error::DeprecationWarning:xiaozu_bot`，于是一升 Pillow 就全挂。
@@ -97,12 +120,15 @@ def get_variance(image) -> tuple[float,float,float]:
     red, green, blue = ImageStat.Stat(image).var[:3]
     return (red, green, blue)
 
+
 async def _list_files(folder_path: Path) -> list[str]:
     """异步获取文件夹下所有文件的名称列表"""
+
     def sync_list():
         if not folder_path.exists():
             return []
         return [f.name for f in folder_path.iterdir() if f.is_file()]
+
     return await asyncio.to_thread(sync_list)
 
 
@@ -140,18 +166,16 @@ def isnonsense(image: Image.Image) -> bool:
     return sum(get_variance(image)) < NOISE_THRESHOLD
 
 
-async def can_start(bot: Bot, matcher: Matcher, event: GroupMessageEvent | PrivateMessageEvent) -> None:
+async def can_start(
+    bot: Bot, matcher: Matcher, event: Event
+) -> None:
     session_id = getid(event)
     if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
-        await bot.call_api(
-            "set_msg_emoji_like",
-            message_id=event.message_id,
-            emoji_id="424",
-        )
+        await react(bot, event, "424")
         await matcher.finish()
 
     answer = r.hget(ANSWER_KEY, session_id)
-    if answer is not None and answer != NOTHING_ANSWER and isinstance(event, GroupMessageEvent):
+    if answer is not None and answer != NOTHING_ANSWER and is_group_event(event):
         await matcher.finish("请先输入*guess_giveup结束目前的题目！", at_sender=True)
 
 
@@ -184,7 +208,10 @@ def _crop_and_save(
 
 
 async def guessstart(
-    crop_size: tuple[int, int], matcher: Matcher, event: GroupMessageEvent | PrivateMessageEvent
+    bot: Bot,
+    crop_size: tuple[int, int],
+    matcher: Matcher,
+    event: Event,
 ) -> None:
     session_id = getid(event)
     crop_width, crop_height = crop_size
@@ -209,57 +236,59 @@ async def guessstart(
     )
     r.hset(ANSWER_ORI_KEY, session_id, str(image_path))
 
-    await matcher.send(
-        MessageSegment.image(cropped_path)
-        + MessageSegment.text("这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答"),
+    await send_image(
+        bot,
+        event,
+        cropped_path,
+        after="这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答",
         at_sender=True,
     )
 
 
 @guess_start.handle()
-async def handle_guess_start(bot: Bot, matcher: Matcher, event: GroupMessageEvent | PrivateMessageEvent) -> None:
+async def handle_guess_start(
+    bot: Bot, matcher: Matcher, event: Event
+) -> None:
     await can_start(bot, matcher, event)
-    await guessstart((256, 256), matcher, event)
+    await guessstart(bot, (256, 256), matcher, event)
     await guess_start.finish()
 
 
 @guess_start_hard.handle()
-async def handle_guess_start_hard(bot: Bot,  matcher: Matcher, event: GroupMessageEvent | PrivateMessageEvent) -> None:
+async def handle_guess_start_hard(
+    bot: Bot, matcher: Matcher, event: Event
+) -> None:
     await can_start(bot, matcher, event)
-    await guessstart((128, 128), matcher, event)
+    await guessstart(bot, (128, 128), matcher, event)
     await guess_start_hard.finish()
 
 
 @guess_start_ultra.handle()
-async def handle_guess_start_ultra(bot: Bot,  matcher: Matcher, event: GroupMessageEvent | PrivateMessageEvent) -> None:
+async def handle_guess_start_ultra(
+    bot: Bot, matcher: Matcher, event: Event
+) -> None:
     await can_start(bot, matcher, event)
-    await guessstart((64, 64), matcher, event)
+    await guessstart(bot, (64, 64), matcher, event)
     await guess_start_ultra.finish()
 
 
 @guess_giveup.handle()
-async def handle_guess_giveup(bot: Bot, event: GroupMessageEvent | PrivateMessageEvent) -> None:
+async def handle_guess_giveup(
+    bot: Bot, event: Event
+) -> None:
     session_id = getid(event)
     if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
-        await bot.call_api(
-            "set_msg_emoji_like",
-            message_id=event.message_id,
-            emoji_id="424",
-        )
+        await react(bot, event, "424")
         await guess_giveup.finish()
 
     answer = r.hget(ANSWER_KEY, session_id)
     if answer is None or answer == NOTHING_ANSWER:
-        await bot.call_api(
-            "set_msg_emoji_like",
-            message_id=event.message_id,
-            emoji_id="10068",
-        )
+        await react(bot, event, "10068")
         await guess_giveup.finish()
 
     r.hset(ANSWER_KEY, session_id, NOTHING_ANSWER)
-    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id)) # pyright: ignore[reportArgumentType]
-    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()] # pyright: ignore[reportOptionalMemberAccess]
+    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id))  # pyright: ignore[reportArgumentType]
+    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()]  # pyright: ignore[reportOptionalMemberAccess]
     image = Image.open(image_path)
     ImageDraw.Draw(image).rectangle(
         [(pos[0], pos[1]), (pos[2], pos[3])], fill=None, outline="red", width=4
@@ -269,24 +298,27 @@ async def handle_guess_giveup(bot: Bot, event: GroupMessageEvent | PrivateMessag
     cropped_path = PICTURES_DIR / f"{session_id}.png"
     image.save(cropped_path)
 
-    await guess_giveup.finish(
-        MessageSegment.text(f"你放弃了！答案是：{answer}。")
-        + MessageSegment.image(cropped_path),
+    await send_image(
+        bot,
+        event,
+        cropped_path,
+        before=f"你放弃了！答案是：{answer}。",
         at_sender=True,
     )
+    await guess_giveup.finish()
 
 
 @guess.handle()
-async def handle_guess(bot: Bot, event: GroupMessageEvent | PrivateMessageEvent, arg: Message = CommandArg()) -> None:
+async def handle_guess(
+    bot: Bot,
+    event: Event,
+    arg: Message = CommandArg(),
+) -> None:
     session_id = getid(event)
     guess_input = formalize(str(arg))
     answer = r.hget(ANSWER_KEY, session_id)
     if answer is None or answer == NOTHING_ANSWER:
-        await bot.call_api(
-            "set_msg_emoji_like",
-            message_id=event.message_id,
-            emoji_id="10068",
-        )
+        await react(bot, event, "10068")
         await guess.finish()
 
     if guess_input in accepted.get(answer, set()):
@@ -295,23 +327,22 @@ async def handle_guess(bot: Bot, event: GroupMessageEvent | PrivateMessageEvent,
     r.set(TOTAL_TRIES_KEY, int(r.get(TOTAL_TRIES_KEY) or 0) + 1)
 
     if guess_input != answer:
-        await bot.call_api(
-            "set_msg_emoji_like",
-            message_id=event.message_id,
-            emoji_id="424",
-        )
+        await react(bot, event, "424")
         if random.randint(1, 10) <= 1:
             cropped_path = PICTURES_DIR / f"{session_id}.png"
-            await guess.finish(
-                MessageSegment.text("你的猜测是错误的！你的题目是")
-                + MessageSegment.image(cropped_path),
+            await send_image(
+                bot,
+                event,
+                cropped_path,
+                before="你的猜测是错误的！你的题目是",
                 at_sender=True,
             )
+            await guess.finish()
         await guess.finish()
 
     r.hset(ANSWER_KEY, session_id, NOTHING_ANSWER)
-    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id)) # pyright: ignore[reportArgumentType]
-    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()] # pyright: ignore[reportOptionalMemberAccess]
+    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id))  # pyright: ignore[reportArgumentType]
+    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()]  # pyright: ignore[reportOptionalMemberAccess]
     image = Image.open(image_path)
     ImageDraw.Draw(image).rectangle(
         [(pos[0], pos[1]), (pos[2], pos[3])], fill=None, outline="red", width=4
@@ -322,24 +353,25 @@ async def handle_guess(bot: Bot, event: GroupMessageEvent | PrivateMessageEvent,
     image.save(cropped_path)
 
     r.set(TOTAL_RIGHT_KEY, int(r.get(TOTAL_RIGHT_KEY) or 0) + 1)
-    await guess.finish(
-        MessageSegment.text(f"你猜对了！答案是：{answer}。")
-        + MessageSegment.image(cropped_path),
+    await send_image(
+        bot,
+        event,
+        cropped_path,
+        before=f"你猜对了！答案是：{answer}。",
         at_sender=True,
     )
+    await guess.finish()
 
 
 @guess_count.handle()
 async def handle_guess_count() -> None:
     t1 = r.get(TOTAL_TRIES_KEY)
     t2 = r.get(TOTAL_RIGHT_KEY)
-    await guess_count.finish(
-        f"全服总共进行了{t1}次猜测，猜对了{t2}道题。"
-    )
+    await guess_count.finish(f"全服总共进行了{t1}次猜测，猜对了{t2}道题。")
 
 
 @guess_test.handle()
-async def handle_guess_test() -> None:
+async def handle_guess_test(bot: Bot, event: Event) -> None:
     for _ in range(5):
         _, image_path = await _pick_random_shot(guess_test)
         image = Image.open(image_path)
@@ -353,27 +385,29 @@ async def handle_guess_test() -> None:
         PICTURES_DIR.mkdir(parents=True, exist_ok=True)
         cropped_path = PICTURES_DIR / "test.png"
         cropped_image.save(cropped_path)
-        await guess_test.send(
-            MessageSegment.image(cropped_path)
-            + MessageSegment.text(str(get_variance(cropped_image)))
+        await send_image(
+            bot,
+            event,
+            cropped_path,
+            after=str(get_variance(cropped_image)),
         )
     await guess_test.finish()
 
 
 @guess_removecooldown.handle()
-async def handle_guess_removecooldown(event: GroupMessageEvent | PrivateMessageEvent) -> None:
+async def handle_guess_removecooldown(
+    event: Event,
+) -> None:
     session_id = getid(event)
     r.set(f"{COOLDOWN_PREFIX}{session_id}", "removed", ex=1)
     await guess_removecooldown.finish("已经移除你（或你所在群）的生成题目cd！")
 
 
 @guess_cheat.handle()
-async def handle_guess_cheat(bot: Bot, event: GroupMessageEvent | PrivateMessageEvent) -> None:
+async def handle_guess_cheat(
+    bot: Bot, event: Event
+) -> None:
     session_id = getid(event)
     answer = r.hget(ANSWER_KEY, session_id)
-    await bot.call_api(
-        "send_private_msg",
-        user_id=event.user_id,
-        message=[{"type": "text", "data": {"text": str(session_id) + str(answer)}}],
-    )
+    await send_private_for_event(bot, event, str(session_id) + str(answer))
     await guess_cheat.finish()

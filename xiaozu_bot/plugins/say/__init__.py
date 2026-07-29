@@ -2,14 +2,17 @@ import asyncio
 import os
 
 from nonebot import get_plugin_config, on_command
-from nonebot.adapters.onebot.v11 import (
-    Bot,
-    GroupMessageEvent,
-    Message,
-    PrivateMessageEvent,
-)
+from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
+
+from xiaozu_bot.utils.adapter_compat import (
+    get_group_id,
+    get_user_id,
+    is_group_event,
+    react,
+    send_audio,
+)
 
 from .config import Config
 
@@ -76,21 +79,17 @@ def sync_generate_audio(text: str, instruct: str | None, output_dir: str) -> str
 @say.handle()
 async def handle_function(
     bot: Bot,
-    event: GroupMessageEvent | PrivateMessageEvent,
+    event: Event,
     arg: Message = CommandArg(),
 ):
-    if isinstance(event, GroupMessageEvent) and event.group_id == 569801410:
-        await bot.call_api(
-            "set_msg_emoji_like", message_id=event.message_id, emoji_id="424"
-        )
+    if is_group_event(event) and get_group_id(event) == "569801410":
+        await react(bot, event, "424")
         await say.finish()
     text = arg.extract_plain_text().strip()
     if len(text) == 0:
         await say.finish("你得在say后面加点东西……")
-    if len(text) > 500 and event.user_id != 3251605531:
-        await bot.call_api(
-            "set_msg_emoji_like", message_id=event.message_id, emoji_id="424"
-        )
+    if len(text) > 500 and get_user_id(event) != "3251605531":
+        await react(bot, event, "424")
         await say.finish("请善待小小卒！")
     # 准备参数
     instruct = "体现稚嫩撒娇的少女声线，说话有点含糊有点夹子音，音色有点沙有点糊，语速较快而有活力，营造刻意卖萌又有点搞怪的听觉效果。"
@@ -103,10 +102,7 @@ async def handle_function(
         )
     except Exception as e:
         await say.finish(f"生成音频失败: {e}")
-    if isinstance(event, GroupMessageEvent):
-        await bot.call_api("send_group_msg", **json_group_audio(event.group_id, file_path))
-    else:
-        await bot.call_api("send_private_msg", **json_private_audio(event.user_id, file_path))
+    await send_audio(bot, event, file_path)
     os.remove(file_path)
     await say.finish()
 
@@ -114,13 +110,11 @@ async def handle_function(
 @say_instructed.handle()
 async def handle_function(
     bot: Bot,
-    event: GroupMessageEvent | PrivateMessageEvent,
+    event: Event,
     arg: Message = CommandArg(),
 ):
     if event.get_user_id() not in ["3251605531", "2638056139"]:
-        await bot.call_api(
-            "set_msg_emoji_like", message_id=event.message_id, emoji_id="424"
-        )
+        await react(bot, event, "424")
         return
     # 把指令参数转换成文本和指令参数分开
     parts = str(arg).split(maxsplit=1)
@@ -131,9 +125,7 @@ async def handle_function(
             "两个参数，第一个参数是指令参数，第二个参数是文本内容哦！"
         )
     if len(text) > 1000:
-        await bot.call_api(
-            "set_msg_emoji_like", message_id=event.message_id, emoji_id="424"
-        )
+        await react(bot, event, "424")
         await say_instructed.finish("请善待小小卒！")
     # 准备参数
     output_dir = os.getcwd()
@@ -145,9 +137,6 @@ async def handle_function(
         )
     except Exception as e:
         await say.finish(f"生成音频失败: {e}")
-    if isinstance(event, GroupMessageEvent):
-        await bot.call_api("send_group_msg", **json_group_audio(event.group_id, file_path))
-    else:
-        await bot.call_api("send_private_msg", **json_private_audio(event.user_id, file_path))
+    await send_audio(bot, event, file_path)
     os.remove(file_path)
     await say_instructed.finish("")

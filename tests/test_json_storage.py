@@ -193,7 +193,7 @@ class TestPluginStorage:
         assert not result.exists()
         assert not result.parent.exists()
 
-    @pytest.mark.parametrize("plugin", ["jrrp", "game", "guess", "zhua"])
+    @pytest.mark.parametrize("plugin", ["jrrp", "guess", "zhua"])
     def test_matches_real_plugin_layout(self, plugin: str) -> None:
         """拿仓库里真的插件文件算一遍，落点必须是 plugins/<x>/data/storage.json。
 
@@ -462,13 +462,13 @@ class TestExpiry:
 # ===========================================================================
 class TestHash:
     def test_basic_hash_ops(self, json_redis: JsonRedis) -> None:
-        json_redis.hset("game_mode", "12345", "1")
-        json_redis.hset("game_mode", "999", "0")
+        json_redis.hset("preferences", "12345", "1")
+        json_redis.hset("preferences", "999", "0")
 
-        assert json_redis.hget("game_mode", "12345") == "1"
-        assert sorted(json_redis.hkeys("game_mode")) == ["12345", "999"]
-        assert json_redis.hexists("game_mode", "999") is True
-        assert json_redis.hexists("game_mode", "别的") is False
+        assert json_redis.hget("preferences", "12345") == "1"
+        assert sorted(json_redis.hkeys("preferences")) == ["12345", "999"]
+        assert json_redis.hexists("preferences", "999") is True
+        assert json_redis.hexists("preferences", "别的") is False
 
     def test_hash_values_keep_type(self, json_redis: JsonRedis) -> None:
         json_redis.hset("h", "n", 7)
@@ -976,7 +976,7 @@ class TestThreadSafety:
             try:
                 barrier.wait()
                 for j in range(per_thread):
-                    redis.hset("game_mode", f"f_{index}_{j}", index)
+                    redis.hset("preferences", f"f_{index}_{j}", index)
             except BaseException as exc:
                 errors.append(exc)
 
@@ -985,7 +985,7 @@ class TestThreadSafety:
         ])
 
         assert errors == []
-        assert len(redis.hkeys("game_mode")) == n_threads * per_thread
+        assert len(redis.hkeys("preferences")) == n_threads * per_thread
 
 
 # ===========================================================================
@@ -1147,7 +1147,7 @@ class _FakeRedis:
 
 
 def _default_fake_redis() -> _FakeRedis:
-    """一份覆盖了 PLANS 里全部四个插件的假数据，外加两个不在迁移范围内的键。"""
+    """一份覆盖了 PLANS 里全部插件的假数据，外加两个不在迁移范围内的键。"""
     return _FakeRedis(
         strings={
             "jrrp_12345": "66",
@@ -1160,7 +1160,6 @@ def _default_fake_redis() -> _FakeRedis:
             "roulette_status_1": "idle",  # 不在 PLANS 里
         },
         hashes={
-            "game_mode": {"12345": "1", "999": "0"},
             "guess_answer": {"group_1": "SomeLevel"},
             "guess_answer_position": {"group_1": "10 20"},
             "guess_ori": {"group_1": "img.png"},
@@ -1240,7 +1239,7 @@ class TestMigrateScriptPlans:
         return _load_script("migrate_redis_to_json").PLANS
 
     def test_plan_shape(self, plans: dict[str, dict[str, list[str]]]) -> None:
-        assert set(plans) == {"jrrp", "game", "guess", "zhua"}
+        assert set(plans) == {"jrrp", "guess", "zhua"}
         for plan in plans.values():
             assert set(plan) == {"patterns", "hashes"}
             assert isinstance(plan["patterns"], list)
@@ -1327,10 +1326,6 @@ class TestMigrateScriptRun:
         assert jrrp.exists("jrrp_listy") is False
         assert "不是 string" in capsys.readouterr().out
 
-        game = JsonRedis(migrate_env.target("game"))
-        assert game.hget("game_mode", "12345") == "1"
-        assert sorted(game.hkeys("game_mode")) == ["12345", "999"]
-
         guess = JsonRedis(migrate_env.target("guess"))
         assert guess.get("guess_total_tries") == "42"
         assert guess.get("guess_total_right") == "7"
@@ -1351,8 +1346,8 @@ class TestMigrateScriptRun:
 
         out = capsys.readouterr().out
         # jrrp 2 个键（jrrp_listy 类型不对，没进 moved）
-        # + game 1 张表 2 个字段 + guess 3 个键 3 个字段 + zhua 1 个键 = 11
-        assert "合计 11 项" in out
+        # + guess 3 个键 3 个字段 + zhua 1 个键 = 9
+        assert "合计 9 项" in out
         assert "blueberry_12345" in out
         assert "roulette_status_1" in out
         assert "2 个键不在迁移范围内" in out
@@ -1394,10 +1389,10 @@ class TestMigrateScriptRun:
     ) -> None:
         """计划里当哈希表搬的键，在 redis 里类型不对就跳过，而且不建文件。"""
         migrate_env.client = _FakeRedis(
-            strings={}, hashes={}, odd_types={"game_mode": "string"}
+            strings={}, hashes={}, odd_types={"guess_answer": "string"}
         )
 
         migrate_env.run("--write")
 
         assert "不是 hash" in capsys.readouterr().out
-        assert not migrate_env.target("game").exists()
+        assert not migrate_env.target("guess").exists()

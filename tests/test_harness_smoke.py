@@ -50,7 +50,6 @@ def test_json_storage_imports_and_exports() -> None:
 @pytest.mark.parametrize(
     "module_name",
     [
-        "xiaozu_bot.plugins.game",
         "xiaozu_bot.plugins.jrrp",
         "xiaozu_bot.plugins.roulette",
         "xiaozu_bot.plugins.gdlevelsearch.gdapi",
@@ -62,17 +61,6 @@ def test_plugin_modules_import(module_name: str) -> None:
     module = importlib.import_module(module_name)
 
     assert module.__name__ == module_name
-
-
-def test_game_plugin_registers_matchers() -> None:
-    """game 插件 import 之后应该真的注册了 matcher（不是空壳）"""
-    from nonebot.matcher import Matcher
-
-    game = importlib.import_module("xiaozu_bot.plugins.game")
-
-    assert issubclass(game.setmode, Matcher)
-    # 白名单群号是硬编码在插件里的，顺手确认没漂
-    assert game.whitelist_rule is not None
 
 
 def test_gdapi_exposes_official_song_map() -> None:

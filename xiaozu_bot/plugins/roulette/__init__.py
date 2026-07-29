@@ -8,8 +8,7 @@
 import random
 
 from nonebot import get_plugin_config, on_command
-from nonebot.adapters import Message
-from nonebot.adapters.onebot.v11 import GroupMessageEvent
+from nonebot.internal.adapter import Event, Message
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 
@@ -50,7 +49,7 @@ async def handle_map() -> None:
 
 
 @rand_one.handle()
-async def handle_random(event: GroupMessageEvent, arg: Message = CommandArg()) -> None:
+async def handle_random(event: Event, arg: Message = CommandArg()) -> None:
     args = str(arg).split()
     if len(args) == 0:
         await rand_one.finish("请输入至少一个参数！")
