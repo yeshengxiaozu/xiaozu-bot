@@ -67,6 +67,18 @@ class RecordingQQBot(QQBot):
         self.sent.append((event, message))
         return {"id": "sent-reply"}
 
+    async def send_to_channel(self, channel_id: str, message: Any, **kwargs: Any) -> Any:
+        self.calls.append(("send_to_channel", {"channel_id": channel_id, "message": message}))
+        return {"id": "sent-channel"}
+
+    async def send_to_c2c(self, openid: str, message: Any, **kwargs: Any) -> Any:
+        self.calls.append(("send_to_c2c", {"openid": openid, "message": message}))
+        return {"id": "sent-c2c"}
+
+    async def send_to_dms(self, guild_id: str, message: Any, **kwargs: Any) -> Any:
+        self.calls.append(("send_to_dms", {"guild_id": guild_id, "message": message}))
+        return {"id": "sent-dms"}
+
 
 class TransportRecordingQQBot(QQBot):
     def __init__(self) -> None:
@@ -152,6 +164,18 @@ def test_qq_audio_message_uses_local_attachment(tmp_path) -> None:
     assert message[0].data["content"] == b"wav-bytes"
 
 
+def test_qq_remote_media_keeps_url_segments() -> None:
+    bot = RecordingQQBot()
+
+    image_message = compat.build_image_message(bot, "https://example.invalid/image.png")
+    audio_message = compat.build_audio_message(bot, "https://example.invalid/audio.mp3")
+
+    assert image_message[0].type == "image"
+    assert image_message[0].data["url"] == "https://example.invalid/image.png"
+    assert audio_message[0].type == "audio"
+    assert audio_message[0].data["url"] == "https://example.invalid/audio.mp3"
+
+
 async def test_onebot_reaction_keeps_original_api(fake_bot, make_group_event) -> None:
     event = make_group_event(message_id=123)
 
@@ -187,6 +211,191 @@ async def test_qq_proactive_group_target_is_routed() -> None:
     assert api == "post_group_messages"
     assert data["group_openid"] == "group-openid"
     assert data["content"] == "hello"
+
+
+async def test_qq_proactive_group_message_can_include_keyboard() -> None:
+    bot = RecordingQQBot()
+    keyboard = {
+        "content": {
+            "rows": [
+                {
+                    "buttons": [
+                        {
+                            "id": "search",
+                            "render_data": {"label": "Search", "style": 1},
+                            "action": {
+                                "type": 2,
+                                "permission": {"type": 2},
+                                "data": "/search",
+                            },
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    await compat.send_group_with_keyboard(
+        bot, "qq:group:group-openid", "hello", keyboard=keyboard
+    )
+
+    api, data = bot.calls[-1]
+    assert api == "post_group_messages"
+    assert data["group_openid"] == "group-openid"
+    assert data["content"] is None
+    assert data["markdown"].content == "hello"
+    assert isinstance(data["keyboard"], compat.MessageKeyboard)
+    assert data["keyboard"].model_dump(exclude_none=True) == keyboard
+
+
+async def test_qq_keyboard_keeps_existing_rich_message() -> None:
+    bot = RecordingQQBot()
+    message = QQMessage(compat.QQMessageSegment.markdown("## hello"))
+    keyboard = {"content": {"rows": []}}
+
+    await compat.send_group_with_keyboard(
+        bot, "qq:group:group-openid", message, keyboard=keyboard
+    )
+
+    _, data = bot.calls[-1]
+    assert data["content"] is None
+    assert data["markdown"].content == "## hello"
+    assert isinstance(data["keyboard"], compat.MessageKeyboard)
+    assert data["keyboard"].model_dump(exclude_none=True) == keyboard
+
+
+async def test_qq_event_reply_can_include_keyboard() -> None:
+    bot = RecordingQQBot()
+    event = GroupMessageCreateEvent.model_construct(
+        id="incoming-1", group_openid="group-openid"
+    )
+    keyboard = {"content": {"rows": []}}
+
+    await compat.send_with_keyboard(bot, event, "hello", keyboard=keyboard)
+
+    _, message = bot.sent[-1]
+    assert [segment.type for segment in message] == ["markdown", "keyboard"]
+    assert message[0].data["markdown"].content == "hello"
+    assert message[1].data["keyboard"].model_dump(exclude_none=True) == keyboard
+
+
+async def test_qq_image_reply_can_include_keyboard(tmp_path) -> None:
+    compat.install_qq_rich_media_compat()
+    bot = TransportRecordingQQBot()
+    event = GroupMessageCreateEvent.model_construct(
+        id="incoming-1",
+        group_id="group-1",
+        group_openid="group-openid",
+        author=SimpleNamespace(id="member-1", member_openid="member-openid-1"),
+        message_scene=None,
+    )
+    path = tmp_path / "question.png"
+    path.write_bytes(b"question-image")
+    keyboard = {"content": {"rows": []}}
+
+    await compat.send_image(
+        bot,
+        event,
+        path,
+        after="guess it",
+        keyboard=keyboard,
+    )
+
+    message_requests = [
+        request for request in bot.requests if request.url.path.endswith("/messages")
+    ]
+    assert len(message_requests) == 2
+    assert message_requests[0].json["content"] == "guess it"
+    assert message_requests[0].json["media"] == {"file_info": "file-info-1"}
+    assert "keyboard" not in message_requests[0].json
+    assert message_requests[1].json["markdown"] == {"content": "请选择操作"}
+    assert message_requests[1].json["keyboard"] == keyboard
+    assert "media" not in message_requests[1].json
+
+
+async def test_onebot_proactive_group_message_ignores_keyboard(fake_bot) -> None:
+    await compat.send_group_with_keyboard(
+        fake_bot,
+        123,
+        "hello",
+        keyboard={"content": {"rows": []}},
+    )
+
+    assert fake_bot.calls[-1] == (
+        "send_group_msg",
+        {"group_id": 123, "message": "hello"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_api", "expected_key", "expected_value"),
+    [
+        ("qq:channel:channel-1", "send_to_channel", "channel_id", "channel-1"),
+        ("qq:c2c:user-1", "send_to_c2c", "openid", "user-1"),
+        ("qq:dms:guild-1", "send_to_dms", "guild_id", "guild-1"),
+    ],
+)
+async def test_qq_proactive_targets_route_to_the_matching_official_api(
+    target: str, expected_api: str, expected_key: str, expected_value: str
+) -> None:
+    bot = RecordingQQBot()
+
+    if target.startswith("qq:channel:"):
+        await compat.send_group(bot, target, "hello")
+    else:
+        await compat.send_private(bot, target, "hello")
+
+    api, data = bot.calls[-1]
+    assert api == expected_api
+    assert data[expected_key] == expected_value
+    assert data["message"] == "hello"
+
+
+@pytest.mark.parametrize(
+    ("send", "target"),
+    [
+        (compat.send_group, "group-openid-without-prefix"),
+        (compat.send_private, "user-openid-without-prefix"),
+    ],
+)
+async def test_qq_proactive_targets_require_adapter_qualified_prefix(send: Any, target: str) -> None:
+    with pytest.raises(compat.AdapterFeatureUnsupported, match="must use qq:"):
+        await send(RecordingQQBot(), target, "hello")
+
+
+async def test_send_private_for_qq_event_selects_c2c_and_dms_routes() -> None:
+    bot = RecordingQQBot()
+    c2c_event = C2CMessageCreateEvent.model_construct(
+        id="c2c-message-1",
+        author=SimpleNamespace(id="user-1", user_openid="user-1"),
+    )
+    dms_event = compat.QQDirectMessageCreateEvent.model_construct(
+        id="dms-message-1",
+        guild_id="guild-1",
+        author=SimpleNamespace(id="user-1"),
+    )
+
+    await compat.send_private_for_event(bot, c2c_event, "c2c")
+    await compat.send_private_for_event(bot, dms_event, "dms")
+
+    assert bot.calls == [
+        ("send_to_c2c", {"openid": "user-1", "message": "c2c"}),
+        ("send_to_dms", {"guild_id": "guild-1", "message": "dms"}),
+    ]
+
+
+def test_qq_context_and_group_target_are_adapter_qualified() -> None:
+    group_event = GroupMessageCreateEvent.model_construct(
+        id="group-message-1", group_openid="group-1"
+    )
+    channel_event = MessageCreateEvent.model_construct(
+        id="channel-message-1", channel_id="channel-1", guild_id="guild-1"
+    )
+
+    assert compat.get_context_id(group_event) == "qq:group:group-1"
+    assert compat.get_group_target(group_event) == "qq:group:group-1"
+    assert compat.get_context_id(channel_event) == "qq:channel:channel-1"
+    assert compat.get_group_target(channel_event) == "qq:channel:channel-1"
 
 
 async def test_qq_group_reaction_degrades_without_api() -> None:

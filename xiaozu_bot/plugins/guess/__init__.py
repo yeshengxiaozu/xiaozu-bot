@@ -15,9 +15,11 @@ from xiaozu_bot.utils.adapter_compat import (
     get_user_id,
     is_group_event,
     is_private_event,
+    is_qq,
     react,
     send_image,
     send_private_for_event,
+    send_with_keyboard,
 )
 from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
 
@@ -63,6 +65,81 @@ crop_width_hard = 128
 crop_height_hard = 128
 crop_width_ultra = 64
 crop_height_ultra = 64
+
+
+def _button(
+    button_id: str,
+    label: str,
+    data: str,
+    *,
+    enter: bool,
+) -> dict:
+    return {
+        "id": button_id,
+        "render_data": {"label": label, "style": 1},
+        "action": {
+            "type": 2,
+            "permission": {"type": 2},
+            "data": data,
+            "enter": enter,
+        },
+    }
+
+
+GUESS_KEYBOARD = {
+    "content": {
+        "rows": [
+            {
+                "buttons": [
+                    _button(
+                        "guess_answer",
+                        "猜测",
+                        "*guess ",
+                        enter=False,
+                    )
+                ]
+            }
+        ]
+    }
+}
+RETRY_OR_GIVEUP_KEYBOARD = {
+    "content": {
+        "rows": [
+            {
+                "buttons": [
+                    _button(
+                        "guess_retry",
+                        "再猜一次",
+                        "*guess ",
+                        enter=False,
+                    ),
+                    _button(
+                        "guess_giveup",
+                        "放弃",
+                        "*guess_giveup",
+                        enter=True,
+                    ),
+                ]
+            }
+        ]
+    }
+}
+PLAY_AGAIN_KEYBOARD = {
+    "content": {
+        "rows": [
+            {
+                "buttons": [
+                    _button(
+                        "guess_play_again",
+                        "再来一次",
+                        "*guess_start",
+                        enter=True,
+                    )
+                ]
+            }
+        ]
+    }
+}
 
 
 def formalize(str: str) -> str:
@@ -242,6 +319,7 @@ async def guessstart(
         cropped_path,
         after="这个截图是出自哪张图呢？\n输入*guess 你的答案 以回答",
         at_sender=True,
+        keyboard=GUESS_KEYBOARD,
     )
 
 
@@ -278,12 +356,23 @@ async def handle_guess_giveup(
 ) -> None:
     session_id = getid(event)
     if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
-        await react(bot, event, "424")
+        if is_qq(bot):
+            await bot.send(event, "不急嘛……让其他人再猜猜？")
+        else:
+            await react(bot, event, "424")
         await guess_giveup.finish()
 
     answer = r.hget(ANSWER_KEY, session_id)
     if answer is None or answer == NOTHING_ANSWER:
-        await react(bot, event, "10068")
+        if is_qq(bot):
+            await send_with_keyboard(
+                bot,
+                event,
+                "现在没有在进行的题目！",
+                keyboard=PLAY_AGAIN_KEYBOARD,
+            )
+        else:
+            await react(bot, event, "10068")
         await guess_giveup.finish()
 
     r.hset(ANSWER_KEY, session_id, NOTHING_ANSWER)
@@ -304,6 +393,7 @@ async def handle_guess_giveup(
         cropped_path,
         before=f"你放弃了！答案是：{answer}。",
         at_sender=True,
+        keyboard=PLAY_AGAIN_KEYBOARD,
     )
     await guess_giveup.finish()
 
@@ -318,7 +408,15 @@ async def handle_guess(
     guess_input = formalize(str(arg))
     answer = r.hget(ANSWER_KEY, session_id)
     if answer is None or answer == NOTHING_ANSWER:
-        await react(bot, event, "10068")
+        if is_qq(bot):
+            await send_with_keyboard(
+                bot,
+                event,
+                "现在没有在进行的题目！",
+                keyboard=PLAY_AGAIN_KEYBOARD,
+            )
+        else:
+            await react(bot, event, "10068")
         await guess.finish()
 
     if guess_input in accepted.get(answer, set()):
@@ -336,8 +434,15 @@ async def handle_guess(
                 cropped_path,
                 before="你的猜测是错误的！你的题目是",
                 at_sender=True,
+                keyboard=RETRY_OR_GIVEUP_KEYBOARD,
             )
             await guess.finish()
+        await send_with_keyboard(
+            bot,
+            event,
+            "你的猜测是错误的！",
+            keyboard=RETRY_OR_GIVEUP_KEYBOARD,
+        )
         await guess.finish()
 
     r.hset(ANSWER_KEY, session_id, NOTHING_ANSWER)
@@ -359,6 +464,7 @@ async def handle_guess(
         cropped_path,
         before=f"你猜对了！答案是：{answer}。",
         at_sender=True,
+        keyboard=PLAY_AGAIN_KEYBOARD,
     )
     await guess.finish()
 

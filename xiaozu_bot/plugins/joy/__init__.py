@@ -4,6 +4,7 @@ from nonebot import get_plugin_config, on_command, on_type
 from nonebot.adapters.onebot.v11 import (
     PokeNotifyEvent,
 )
+from nonebot.adapters.qq.models import MessageKeyboard
 from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
@@ -14,6 +15,7 @@ from xiaozu_bot.utils.adapter_compat import (
     extract_sent_message_id,
     get_group_id,
     is_group_event,
+    is_qq,
     poke,
     react,
 )
@@ -163,3 +165,49 @@ async def handle_function(event: Event, arg: Message = CommandArg()):
 async def handle_function(bot: Bot, event: PokeNotifyEvent):
     if event.user_id is not bot.self_id:
         await poke(bot, event, event.user_id)
+
+# Keyboard example: write the payload as a dict, then validate it into the
+# model expected by QQMessageSegment.keyboard().
+from xiaozu_bot.utils.adapter_compat import send_group_with_keyboard
+
+meow = on_command("meow")
+
+keyboard = MessageKeyboard.model_validate(
+    {
+        "content": {
+            "rows": [
+                {
+                    "buttons": [
+                        {
+                            "id": "btn_testmeow",
+                            "render_data": {
+                                "label": "喵",
+                                "style": 1,
+                            },
+                            "action": {
+                                "type": 2,
+                                "permission": {"type": 2},
+                                "data": "*meow",
+                            },
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+)
+
+@meow.handle()
+async def handle_meow(bot: Bot, event: Event, arg: Message = CommandArg()):
+    if is_group_event(event):
+        await send_group_with_keyboard(
+            bot,
+            (
+                "qq:group:" + get_group_id(event)
+                if is_qq(bot)
+                else get_group_id(event)
+            ),
+            "喵",
+            keyboard=keyboard,
+        )
+

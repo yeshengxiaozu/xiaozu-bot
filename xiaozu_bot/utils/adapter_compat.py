@@ -56,6 +56,7 @@ from nonebot.adapters.qq import (
 from nonebot.adapters.qq import (
     MessageSegment as QQMessageSegment,
 )
+from nonebot.adapters.qq.models import MessageKeyboard
 from nonebot.adapters.qq.models.qq import (
     PostC2CFilesReturn,
     PostGroupFilesReturn,
@@ -410,6 +411,17 @@ def extract_sent_message_id(result: Any) -> str | int | None:
 
 ImageSource: TypeAlias = bytes | BytesIO | Path | str
 AudioSource: TypeAlias = bytes | BytesIO | Path | str
+KeyboardData: TypeAlias = MessageKeyboard | Mapping[str, Any]
+_QQ_MEDIA_SEGMENT_TYPES = {
+    "image",
+    "audio",
+    "video",
+    "file",
+    "file_image",
+    "file_audio",
+    "file_video",
+    "file_file",
+}
 
 
 def _onebot_file(source: ImageSource | AudioSource) -> Any:
@@ -422,6 +434,23 @@ def _qq_local_file(source: ImageSource | AudioSource) -> bytes | BytesIO | Path:
     if isinstance(source, str):
         return Path(source)
     return source
+
+
+def _qq_message_with_keyboard(
+    message: Any, keyboard: KeyboardData
+) -> QQMessage:
+    qq_message = QQMessage(message)
+    if qq_message and all(segment.type == "text" for segment in qq_message):
+        qq_message = QQMessage(
+            QQMessageSegment.markdown(qq_message.extract_plain_text())
+        )
+    keyboard_model = type_validate_python(MessageKeyboard, keyboard)
+    qq_message.append(QQMessageSegment.keyboard(keyboard_model))
+    return qq_message
+
+
+def _qq_message_has_media(message: QQMessage) -> bool:
+    return any(segment.type in _QQ_MEDIA_SEGMENT_TYPES for segment in message)
 
 
 def build_image_message(
@@ -482,16 +511,35 @@ async def send_image(
     before: str = "",
     after: str = "",
     at_sender: bool = False,
+    keyboard: KeyboardData | None = None,
 ) -> Any:
     mention = get_user_id(event) if at_sender else None
     message = build_image_message(
         bot, image, before=before, after=after, mention_user_id=mention
     )
-    return await bot.send(event, message)
+    return await send_with_keyboard(bot, event, message, keyboard=keyboard)
 
 
 async def send_audio(bot: Bot, event: Event, audio: AudioSource) -> Any:
     return await bot.send(event, build_audio_message(bot, audio))
+
+
+async def send_with_keyboard(
+    bot: Bot,
+    event: Event,
+    message: Any,
+    *,
+    keyboard: KeyboardData | None = None,
+) -> Any:
+    """Reply with a QQ keyboard; unsupported adapters ignore the keyboard."""
+    if keyboard is not None and isinstance(bot, QQBot):
+        qq_message = QQMessage(message)
+        if _qq_message_has_media(qq_message):
+            await bot.send(event, qq_message)
+            message = _qq_message_with_keyboard("请选择操作", keyboard)
+        else:
+            message = _qq_message_with_keyboard(qq_message, keyboard)
+    return await bot.send(event, message)
 
 
 async def send_group(bot: Bot, group_id: str | int, message: Any) -> Any:
@@ -513,6 +561,34 @@ async def send_group(bot: Bot, group_id: str | int, message: Any) -> Any:
     raise AdapterFeatureUnsupported(
         f"group sending is unsupported by {type(bot).__name__}"
     )
+
+
+async def send_group_with_keyboard(
+    bot: Bot,
+    group_id: str | int,
+    message: Any,
+    *,
+    keyboard: KeyboardData | None = None,
+) -> Any:
+    """Attach a QQ group keyboard; other adapters send the message unchanged."""
+    target = str(group_id)
+    if (
+        keyboard is not None
+        and isinstance(bot, QQBot)
+        and target.startswith("qq:group:")
+    ):
+        qq_message = QQMessage(message)
+        if _qq_message_has_media(qq_message):
+            await bot.send_to_group(
+                group_openid=target.removeprefix("qq:group:"),
+                message=qq_message,
+            )
+            message = "请选择操作"
+        return await bot.send_to_group(
+            group_openid=target.removeprefix("qq:group:"),
+            message=_qq_message_with_keyboard(message, keyboard),
+        )
+    return await send_group(bot, group_id, message)
 
 
 async def send_group_any(
