@@ -588,7 +588,7 @@ async def handle_gdrandom(bot: Bot, event: Event, arg: Message = CommandArg()) -
 
 
 # -------------------------------------------------------------------- gdicon
-# 单独一条命令，不塞进 *gduser —— 九个 gamemode 就是九次外部请求，
+# 单独一条命令，不塞进 *gduser —— 九个 gamemode 就是九次本地渲染，
 # 挂在 gduser 上会把那条命令拖慢。
 
 gdicon = on_command("gdicon")
@@ -632,7 +632,7 @@ async def handle_gdicon(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
         items = await icons.fetch_all(user)
         got = sum(1 for _, im in items if im is not None)
         if got == 0:
-            await gdicon.finish("一个图标都没取到，图标服务可能挂了")
+            await gdicon.finish("一个图标都没取到，本地图集可能缺资源")
         sheet = await asyncio.to_thread(icons.compose_sheet, user, items)
         buffer = BytesIO()
         sheet.save(buffer, format="PNG")
@@ -649,7 +649,7 @@ async def handle_gdicon(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
 
     icon = await icons.fetch_one(user, form)
     if icon is None:
-        await gdicon.finish(f"{user.user_name} 的 {form.label} 图标没取到，等会再试")
+        await gdicon.finish(f"{user.user_name} 的 {form.label} 图标没取到，本地图集里可能没有这个图标")
 
     buffer = BytesIO()
     icon.save(buffer, format="PNG")

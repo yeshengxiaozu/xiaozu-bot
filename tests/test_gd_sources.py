@@ -15,10 +15,9 @@ icons（gamemode 图标的参数拼装与拼图几何）。
 
 from __future__ import annotations
 
-import asyncio
-import io
 import json
 import random
+import zipfile
 
 # datetime 只在这里用来造固定日期，绝不取 now()
 from datetime import date
@@ -30,11 +29,10 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops
 
-from xiaozu_bot.plugins.gdlevelsearch import gddlapi, icons, nlwapi, platapi
+from xiaozu_bot.plugins.gdlevelsearch import gddlapi, iconrender, icons, nlwapi, platapi
 from xiaozu_bot.plugins.gdlevelsearch.gdapi import GDUser
 from xiaozu_bot.plugins.gdlevelsearch.gddlapi import (
     GDDL_LIMIT_MAX,
@@ -195,13 +193,6 @@ def make_plat_row(level_id: str = "111", name: str = "Plat A", **over: Any) -> d
     }
     row.update(over)
     return row
-
-
-def png_bytes(size: tuple[int, int] = (60, 60), color: tuple[int, int, int, int] = (255, 0, 0, 255)) -> bytes:
-    """现造一张 PNG 的字节，喂给 icons 的假响应"""
-    buf = io.BytesIO()
-    Image.new("RGBA", size, color).save(buf, format="PNG")
-    return buf.getvalue()
 
 
 # ==========================================================================
@@ -1681,23 +1672,6 @@ def make_gduser(**over: Any) -> GDUser:
     return user
 
 
-@pytest.fixture
-def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
-    """把 icons 重试之间的 asyncio.sleep 换成立即返回，记下等了多久。
-
-    真睡 0.5 秒既慢又给不出任何额外信息。
-    """
-    sleeps: list[float] = []
-    real_sleep = asyncio.sleep
-
-    async def _fake(delay: float, *a: Any, **k: Any) -> Any:
-        sleeps.append(delay)
-        return await real_sleep(0)
-
-    monkeypatch.setattr(icons.asyncio, "sleep", _fake)
-    return sleeps
-
-
 class TestIconForms:
     def test_nine_gamemodes_in_a_fixed_order(self) -> None:
         """这张表的顺序就是拼图上格子的顺序，改了图就变样"""
@@ -1717,6 +1691,11 @@ class TestIconForms:
             assert form.api_type == form.key, form
             assert form.attr in gduser_fields, form
         assert set(icons.FORM_BY_KEY) == {f.key for f in icons.FORMS}
+        # 本地渲染用：每个 gamemode 的 resource 前缀都要能在这个图集 zip 里找到文件
+        with zipfile.ZipFile(iconrender.ICONS_ZIP) as zf:
+            names = set(zf.namelist())
+        for form in icons.FORMS:
+            assert f"{form.resource}_01-uhd.plist" in names, form
 
     def test_resolve_form_accepts_every_key_and_alias(self) -> None:
         """FORMS 的每个 key、ALIASES 的每个别名都要能解析出来，且大小写不敏感。
@@ -1737,142 +1716,180 @@ class TestIconForms:
 
 
 class TestIconFetch:
-    async def test_fetch_one_builds_params(self, stub_httpx: Any) -> None:
-        stub_httpx.get("gdicon.oat.zone/icon.png", httpx.Response(200, content=png_bytes()))
+    async def test_fetch_one_renders_the_requested_icon(self) -> None:
+        """按 GDUser 的 acc_* 字段从本地图集渲染对应 gamemode 的图标。"""
         user = make_gduser(acc_ship=47, color=9, color2=15, acc_glow=1)
         img = await icons.fetch_one(user, icons.FORM_BY_KEY["ship"])
         assert img is not None
         assert img.mode == "RGBA"
-        assert img.size == (60, 60)
-        params = dict(stub_httpx.requests[-1].url.params)
-        assert params == {"type": "ship", "value": "47", "color1": "9",
-                          "color2": "15", "glow": "true"}
+        assert img.width > 0 and img.height > 0
 
-    async def test_glow_off_omits_the_param(self, stub_httpx: Any) -> None:
-        stub_httpx.get("gdicon.oat.zone/icon.png", httpx.Response(200, content=png_bytes()))
-        await icons.fetch_one(make_gduser(acc_glow=0), icons.FORM_BY_KEY["cube"])
-        assert "glow" not in dict(stub_httpx.requests[-1].url.params)
+    @pytest.mark.parametrize("icon_id", [1, 2, 98, 0, None, -5])
+    async def test_icon_id_floor_is_1(self, icon_id: Any) -> None:
+        """0 / None / 负数都得变成 1：图集文件从 _01 开始，没有 _0 / _-5。"""
+        img = await icons.fetch_one(make_gduser(acc_icon=icon_id), icons.FORM_BY_KEY["cube"])
+        assert img is not None
 
-    @pytest.mark.parametrize(
-        ("icon_id", "expected"),
-        [(1, "1"), (2, "2"), (98, "98"), (0, "1"), (None, "1"), (-5, "1")],
-    )
-    async def test_icon_id_floor_is_1(
-        self, stub_httpx: Any, icon_id: Any, expected: str
-    ) -> None:
-        """0 / None / 负数都得变成 1，接口不认这些值"""
-        stub_httpx.get("gdicon.oat.zone/icon.png", httpx.Response(200, content=png_bytes()))
-        await icons.fetch_one(make_gduser(acc_icon=icon_id), icons.FORM_BY_KEY["cube"])
-        assert dict(stub_httpx.requests[-1].url.params)["value"] == expected
-
-    async def test_none_colors_become_zero(self, stub_httpx: Any) -> None:
-        stub_httpx.get("gdicon.oat.zone/icon.png", httpx.Response(200, content=png_bytes()))
-        await icons.fetch_one(make_gduser(color=None, color2=None), icons.FORM_BY_KEY["cube"])
-        params = dict(stub_httpx.requests[-1].url.params)
-        assert params["color1"] == "0"
-        assert params["color2"] == "0"
-
-    async def test_missing_attr_falls_back_to_1(self, stub_httpx: Any) -> None:
-        """GDUser 上没有这个属性时 getattr 的默认值兜底"""
-        stub_httpx.get("gdicon.oat.zone/icon.png", httpx.Response(200, content=png_bytes()))
+    async def test_missing_attr_falls_back_to_1(self) -> None:
+        """GDUser 上没有这个属性时 getattr 的默认值兜底。"""
         user = make_gduser()
         del user.acc_swing
-        await icons.fetch_one(user, icons.FORM_BY_KEY["swing"])
-        assert dict(stub_httpx.requests[-1].url.params)["value"] == "1"
-
-    async def test_http_error_retries_then_gives_up(
-        self, stub_httpx: Any, no_sleep: list[float]
-    ) -> None:
-        stub_httpx.get("gdicon.oat.zone/icon.png", httpx.Response(500))
-        img = await icons.fetch_one(make_gduser(), icons.FORM_BY_KEY["cube"])
-        assert img is None
-        assert len(stub_httpx.requests) == icons.ICON_RETRIES
-        assert no_sleep == [0.5]  # 只在两次之间睡一次
-
-    async def test_transport_exception_is_swallowed(
-        self, stub_httpx: Any, no_sleep: list[float]
-    ) -> None:
-        stub_httpx.get("gdicon.oat.zone/icon.png", httpx.ConnectError("down"))
-        assert await icons.fetch_one(make_gduser(), icons.FORM_BY_KEY["cube"]) is None
-        assert len(stub_httpx.requests) == icons.ICON_RETRIES
-
-    async def test_second_attempt_can_succeed(
-        self, stub_httpx: Any, no_sleep: list[float]
-    ) -> None:
-        state = {"n": 0}
-
-        def _flaky(_request: httpx.Request) -> httpx.Response:
-            state["n"] += 1
-            if state["n"] == 1:
-                return httpx.Response(503)
-            return httpx.Response(200, content=png_bytes((20, 20)))
-
-        stub_httpx.get("gdicon.oat.zone/icon.png", _flaky)
-        img = await icons.fetch_one(make_gduser(), icons.FORM_BY_KEY["cube"])
+        img = await icons.fetch_one(user, icons.FORM_BY_KEY["swing"])
         assert img is not None
-        assert img.size == (20, 20)
 
-    async def test_empty_body_is_treated_as_a_failure(
-        self, stub_httpx: Any, no_sleep: list[float]
-    ) -> None:
-        """200 但是空 body 也算失败，要重试"""
-        stub_httpx.get("gdicon.oat.zone/icon.png", httpx.Response(200, content=b""))
-        assert await icons.fetch_one(make_gduser(), icons.FORM_BY_KEY["cube"]) is None
-        assert len(stub_httpx.requests) == icons.ICON_RETRIES
+    async def test_icon_not_in_local_atlas_returns_none(self) -> None:
+        """图集 zip 里没有的 icon id 渲染不出来，返回 None 而不是抛异常。"""
+        img = await icons.fetch_one(make_gduser(acc_icon=99999), icons.FORM_BY_KEY["cube"])
+        assert img is None
 
-    async def test_undecodable_body_gives_up_immediately(
-        self, stub_httpx: Any, no_sleep: list[float]
-    ) -> None:
-        """拿到了但不是图片：没必要重试，直接放弃"""
-        stub_httpx.get("gdicon.oat.zone/icon.png", httpx.Response(200, content=b"not an image"))
-        assert await icons.fetch_one(make_gduser(), icons.FORM_BY_KEY["cube"]) is None
-        assert len(stub_httpx.requests) == 1
-        assert no_sleep == []
-
-    async def test_fetch_all_covers_every_form(self, stub_httpx: Any) -> None:
-        """九个 gamemode 一起发；返回的顺序必须和 FORMS 一致。
-
-        响应里用图片宽度编码 form 下标，反过来验证 zip 没错位。
-        """
-        index_by_type = {f.api_type: i for i, f in enumerate(icons.FORMS)}
-
-        def _by_type(request: httpx.Request) -> httpx.Response:
-            idx = index_by_type[request.url.params["type"]]
-            return httpx.Response(200, content=png_bytes((10 + idx, 10)))
-
-        stub_httpx.get("gdicon.oat.zone/icon.png", _by_type)
+    async def test_fetch_all_covers_every_form(self) -> None:
+        """九个 gamemode 一起渲染；返回的顺序必须和 FORMS 一致。"""
         user = make_gduser()
         for i, form in enumerate(icons.FORMS):
-            setattr(user, form.attr, 100 + i)
-
+            # jetpack 图集只有 1-8，其他 gamemode 取 1-9 都行；模一下保证都在包内
+            setattr(user, form.attr, 1 + i % 8)
         items = await icons.fetch_all(user)
         assert len(items) == len(icons.FORMS)
         assert [f for f, _ in items] == list(icons.FORMS)
-        for i, (form, img) in enumerate(items):
+        for form, img in items:
             assert img is not None, form
-            assert img.width == 10 + i
-        # 每个 form 的 icon id 都取自它自己的 GDUser 字段
-        sent = {
-            p["type"]: p["value"]
-            for p in (dict(r.url.params) for r in stub_httpx.requests)
-        }
-        assert sent == {f.api_type: str(100 + i) for i, f in enumerate(icons.FORMS)}
+            assert img.mode == "RGBA"
 
-    async def test_fetch_all_keeps_none_for_failures(
-        self, stub_httpx: Any, no_sleep: list[float]
-    ) -> None:
-        """某个 gamemode 挂了就那一格是 None，其余照常返回"""
-
-        def _one_fails(request: httpx.Request) -> httpx.Response:
-            if request.url.params["type"] == "spider":
-                return httpx.Response(500)
-            return httpx.Response(200, content=png_bytes((30, 30)))
-
-        stub_httpx.get("gdicon.oat.zone/icon.png", _one_fails)
-        items = await icons.fetch_all(make_gduser())
+    async def test_fetch_all_keeps_none_for_missing_resources(self) -> None:
+        """某个 gamemode 的图集缺了就那一格是 None，其余照常返回。"""
+        user = make_gduser()
+        user.acc_spider = 99999
+        items = await icons.fetch_all(user)
         by_key = {form.key: img for form, img in items}
         assert by_key["spider"] is None
         assert all(img is not None for key, img in by_key.items() if key != "spider")
+
+
+def _has_white_pixel(img: Image.Image) -> bool:
+    """图里是否存在不透明且接近纯白的像素（UFO 圆顶是白色层）。"""
+    px = img.convert("RGBA").load()
+    for y in range(img.height):
+        for x in range(img.width):
+            r, g, b, a = px[x, y]
+            if a > 0 and r > 240 and g > 240 and b > 240:
+                return True
+    return False
+
+
+class TestIconLayoutData:
+    """robot/spider 的部件布局数据（来自 iconkit 的 idle 帧）要自洽。"""
+
+    def test_robot_spider_part_layouts_are_sane(self) -> None:
+        assert set(iconrender.ROBOT_PARTS) == {"robot", "spider"}
+        for form, layout in iconrender.ROBOT_PARTS.items():
+            assert len(layout["slots"]) == len(layout["names"]), form
+            # 图集里每个 robot/spider 都只有 _01~_04 四个部件帧
+            assert all(1 <= slot["part"] <= 4 for slot in layout["slots"]), form
+            # idle 帧按 z 从小到大排，z 就是 slot 下标
+            assert [slot["z"] for slot in layout["slots"]] == list(range(len(layout["slots"]))), form
+            for idx, tint in layout["tints"].items():
+                assert 0 <= int(idx) < len(layout["slots"]), form
+                assert 0 <= tint <= 255, form
+
+    async def test_robot_and_spider_render_multi_part(self) -> None:
+        """robot/spider 按部件铺开渲染，不再是只取最后一个部件的小图。"""
+        for form, attr in (("robot", "acc_robot"), ("spider", "acc_spider")):
+            img = await icons.fetch_one(make_gduser(**{attr: 5}), icons.FORM_BY_KEY[form])
+            assert img is not None, form
+            assert img.width >= 100 and img.height >= 100, form
+
+    async def test_primary_color_covers_secondary(self) -> None:
+        """部件图层顺序要跟 icon.js 一致：col1 在 col2 上面。
+
+        主色黑色 + 第二色白色时，robot/spider 主体必须是黑的；
+        如果顺序反了（col2 盖 col1），整个图标会变成白色（spider 19 / robot 59 尤甚）。
+        """
+        for form, attr, icon_id in (("robot", "acc_robot", 59), ("spider", "acc_spider", 19)):
+            img = await icons.fetch_one(
+                make_gduser(**{attr: icon_id, "color": 15, "color2": 12, "acc_glow": 1, "color3": 51}),
+                icons.FORM_BY_KEY[form],
+            )
+            assert img is not None, form
+            px = img.convert("RGBA").load()
+            white = black = 0
+            for y in range(img.height):
+                for x in range(img.width):
+                    r, g, b, a = px[x, y]
+                    if a == 0:
+                        continue
+                    if r > 240 and g > 240 and b > 240:
+                        white += 1
+                    elif r < 40 and g < 40 and b < 40:
+                        black += 1
+            assert black > white, form
+
+    async def test_glow_color_applies_to_robot_and_spider(self) -> None:
+        """辉光色规则对复杂部件同样生效：color3 优先、无 color3 回退 color2。"""
+        for form, attr in (("robot", "acc_robot"), ("spider", "acc_spider")):
+            with_color3 = await icons.fetch_one(
+                make_gduser(**{attr: 5, "color": 40, "color2": 11, "acc_glow": 1, "color3": 3}),
+                icons.FORM_BY_KEY[form],
+            )
+            fallback = await icons.fetch_one(
+                make_gduser(**{attr: 5, "color": 40, "color2": 11, "acc_glow": 1}),
+                icons.FORM_BY_KEY[form],
+            )
+            assert with_color3 is not None and fallback is not None, form
+            assert not _same_image(with_color3, fallback), form
+
+
+class TestUfoDome:
+    async def test_ufo_has_white_dome_but_cube_does_not(self) -> None:
+        """UFO 圆顶是白色 _3_001 层；cube 没有圆顶，同样配色下不该有纯白像素。"""
+        ufo = await icons.fetch_one(
+            make_gduser(acc_bird=7, color=3, color2=1, acc_glow=0),
+            icons.FORM_BY_KEY["ufo"],
+        )
+        cube = await icons.fetch_one(
+            make_gduser(acc_icon=7, color=3, color2=1, acc_glow=0),
+            icons.FORM_BY_KEY["cube"],
+        )
+        assert ufo is not None and cube is not None
+        assert _has_white_pixel(ufo)
+        assert not _has_white_pixel(cube)
+
+
+def _same_image(a: Image.Image, b: Image.Image) -> bool:
+    """两张图逐像素一致。注意 RGBA 的 getbbox 只认 alpha，得先转 RGB 再比。"""
+    return ImageChops.difference(a.convert("RGB"), b.convert("RGB")).getbbox() is None
+
+
+class TestIconGlowColor:
+    """辉光颜色要跟 GD 一致：color3 优先，没设置就回退 color2。"""
+
+    def test_glowc_none_falls_back_to_color2(self) -> None:
+        default = iconrender.get_icon_from_cols("player_ball", 97, 40, 11, True, None)
+        explicit = iconrender.get_icon_from_cols("player_ball", 97, 40, 11, True, 11)
+        assert _same_image(default, explicit)
+
+    def test_glowc_overrides_color2(self) -> None:
+        with_color2 = iconrender.get_icon_from_cols("player_ball", 97, 40, 11, True, 11)
+        with_color3 = iconrender.get_icon_from_cols("player_ball", 97, 40, 11, True, 3)
+        assert not _same_image(with_color2, with_color3)
+
+    def test_glow_off_ignores_glowc(self) -> None:
+        a = iconrender.get_icon_from_cols("player_ball", 97, 40, 11, False, 3)
+        b = iconrender.get_icon_from_cols("player_ball", 97, 40, 11, False, 11)
+        assert _same_image(a, b)
+
+    async def test_fetch_one_passes_color3_as_glow_color(self) -> None:
+        """icons.fetch_one 要把 GDUser.color3 当辉光色传进去，没有就回退 color2。"""
+        with_color3 = await icons.fetch_one(
+            make_gduser(acc_ball=97, color=40, color2=11, acc_glow=1, color3=3),
+            icons.FORM_BY_KEY["ball"],
+        )
+        fallback = await icons.fetch_one(
+            make_gduser(acc_ball=97, color=40, color2=11, acc_glow=1),
+            icons.FORM_BY_KEY["ball"],
+        )
+        assert with_color3 is not None and fallback is not None
+        assert not _same_image(with_color3, fallback)
+
 
 
 def sheet_size(rows: int) -> tuple[int, int]:
