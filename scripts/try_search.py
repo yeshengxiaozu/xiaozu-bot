@@ -28,16 +28,16 @@ MIN_ID_LEN = 4  # 和 __init__.py 里判断"这串数字是不是 id"的规则�
 
 def reload_all() -> None:
     """等价于插件里的 reload_all()，但不需要 import 整个插件包"""
-    for name in ("nlwapi", "platapi", "aredlapi"):
+    for name in ("api.nlwapi", "api.platapi", "api.aredlapi"):
         module = import_submodule(name)
         module.reload()
 
 
 def search_by_name(name: str) -> list:
     """复刻 __init__.py 里的 search_by_name，数据源和顺序保持一致"""
-    gddlapi = import_submodule("gddlapi")
-    nlwapi = import_submodule("nlwapi")
-    platapi = import_submodule("platapi")
+    gddlapi = import_submodule("api.gddlapi")
+    nlwapi = import_submodule("api.nlwapi")
+    platapi = import_submodule("api.platapi")
 
     normalized = name.strip().lower()
     results: dict[int, dict] = {}
@@ -97,8 +97,8 @@ def _get_level(gdapi, level_id: int):
 
 
 async def run(query: str, out: Path, do_reload: bool) -> int:
-    gdapi = import_submodule("gdapi")
-    draw = import_submodule("draw")
+    gdapi = import_submodule("api.gdapi")
+    draw = import_submodule("render.draw")
 
     if do_reload:
         print("== 先重载一遍本地缓存")
@@ -142,8 +142,12 @@ async def run_full(raw_args: str, out: Path, pages: int) -> int:
     走的是和 bot 里同一套 fullsearch.py，只是把「等用户回消息」换成了
     自动往后翻 N 页，最后把第一条出成图。
     """
-    fullsearch = import_submodule("fullsearch")
-    draw = import_submodule("draw")
+    # commands/fullsearch.py 里会创建 matcher，需要先初始化 nonebot（~none 驱动即可，不装适配器）
+    import nonebot
+
+    nonebot.init(driver="~none", command_start={"*"}, command_sep={"."})
+    fullsearch = import_submodule("commands.fullsearch")
+    draw = import_submodule("render.draw")
 
     try:
         session, err = fullsearch.start_session(raw_args)

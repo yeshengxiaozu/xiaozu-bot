@@ -8,14 +8,12 @@ from typing import Any
 import requests
 from nonebot import logger
 
-HTTP_OK = 200
+from ..constants import HTTP_OK
+from ..paths import DATA_DIR as WORK_FOLDER
+
 # 外网请求超时。不设的话 requests 会一直等，
 # 而这个模块在 import 期就会去抓，等于能把 bot 卡死在启动阶段。
 AREDL_TIMEOUT = 15
-
-# 数据目录。以前写的是相对当前工作目录的 "xiaozu_bot/plugins/..."，
-# 换个目录启动就读不到；改成相对本文件。
-WORK_FOLDER = Path(__file__).resolve().parent / "data"
 
 """get /api/aredl/levels SCHEMA
 [{

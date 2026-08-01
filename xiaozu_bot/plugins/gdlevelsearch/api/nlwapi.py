@@ -1,11 +1,10 @@
 import json
 import time
-from pathlib import Path
 from typing import Any
 
 from nonebot import logger
 
-HTTP_OK = 200
+from ..paths import DATA_DIR as WORK_FOLDER
 
 
 class Level:
@@ -93,7 +92,6 @@ hdslevel_dict = {}
 
 # 数据目录。以前写的是相对当前工作目录的 "xiaozu_bot/plugins/..."，
 # 换个目录启动就读不到；改成相对本文件。
-WORK_FOLDER = Path(__file__).resolve().parent / "data"
 
 # 四个数据源长得一模一样，列出来循环处理就行
 _SOURCES = (

@@ -18,14 +18,14 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from xiaozu_bot.plugins.gdlevelsearch import fullsearch, gdapi, ratings
-from xiaozu_bot.plugins.gdlevelsearch.gdapi import (
+from xiaozu_bot.plugins.gdlevelsearch import gdapi
+from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
     GD_PAGE_SIZE,
     GD_TOTAL_CAP,
     GDLevel,
     SearchPage,
 )
-from xiaozu_bot.plugins.gdlevelsearch.gddlapi import (
+from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import (
     GDDL_SUBMISSION_LIMIT,
     PROGRESS_FILTERS,
     SORT_DIRECTIONS,
@@ -34,6 +34,7 @@ from xiaozu_bot.plugins.gdlevelsearch.gddlapi import (
     Submission,
     SubmissionPage,
 )
+from xiaozu_bot.plugins.gdlevelsearch.commands import fullsearch, ratings
 
 # ---------------------------------------------------------------------------
 # 公共小工具
@@ -410,7 +411,7 @@ class TestRatingsQueryApiKwargs:
 
     def test_kwarg_names_match_getsubmissions_signature(self) -> None:
         """键名写错了不会报错（**kwargs 都能收），只能靠这条守住"""
-        from xiaozu_bot.plugins.gdlevelsearch.gddlapi import Gddl
+        from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import Gddl
 
         params = set(inspect.signature(Gddl.getsubmissions).parameters)
         emitted = ratings.RatingsQuery(

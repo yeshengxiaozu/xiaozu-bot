@@ -3,8 +3,9 @@ from typing import Any
 import requests
 from nonebot import logger
 
+from ..constants import HTTP_OK
+
 apikey = "3244ce47ed4cf932ec348d68cdf72496de68ee48a2846044db906baa28a7cf7d"
-HTTP_OK = 200
 GDDL_PLAT_LENGTH = 6
 # 提交评分一页放几条。网页上是 10 条一页，跟着来。
 GDDL_SUBMISSION_LIMIT = 10

@@ -14,9 +14,9 @@ from typing import NamedTuple
 from nonebot import logger
 from PIL import Image, ImageDraw
 
+from ..api.gdapi import GDUser
 from . import iconrender
 from .draw import RES_DIR, _load_font
-from .gdapi import GDUser
 
 
 class Form(NamedTuple):

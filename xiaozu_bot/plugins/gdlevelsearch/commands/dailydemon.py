@@ -9,14 +9,17 @@ GDDL 的数据是会变的（有人提交评分，关卡的 enjoyment / tier / �
 存的是关卡 id，按日期做 key，过期时间给两天，旧的自己会清掉。
 """
 
+import asyncio
 import datetime
 import random
 
-from nonebot import logger
+from nonebot import logger, on_command
+from nonebot.internal.adapter import Bot, Event
 
-from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
+from xiaozu_bot.utils.json_storage import JsonRedis
 
-from .gddlapi import Gddl, GDDLLevel
+from ..api.gddlapi import Gddl, GDDLLevel
+from ..services.search import getlevelinfo, send_result
 
 # 挑关卡的条件
 TIER_MIN = 1
@@ -32,7 +35,9 @@ FILTERS = {
 }
 
 # 和别的插件一样放自己的 data 目录，这个目录的 *.json 已经在 .gitignore 里了
-r = JsonRedis(plugin_storage(__file__))
+from ..paths import storage
+
+r = JsonRedis(storage())
 
 KEY_PREFIX = "dailydemon_"
 # 存两天，跨天之后旧的自动过期，不用手动清
@@ -152,3 +157,30 @@ def describe_conditions() -> str:
         f"tier {TIER_MIN}-{TIER_MAX}、enjoyment {ENJOYMENT_MIN}+、"
         f"提交数 {SUBMISSION_MIN}+"
     )
+
+
+# ----------------------------------------------------------------- dailydemon
+# 每天一关，条件写死在上面的逻辑里，按日期定死所以一天之内不会变。
+
+dailydemon = on_command("dailydemon")
+
+
+@dailydemon.handle()
+async def handle_dailydemon(bot: Bot, event: Event) -> None:
+    level_info, total, err = await asyncio.to_thread(get_daily_demon)
+    if level_info is None:
+        await dailydemon.finish(err)
+
+    level = await asyncio.to_thread(getlevelinfo, level_info.ID)
+    if not level:
+        await dailydemon.finish(
+            f"今日关卡是 {level_info.Meta.Name}（ID {level_info.ID}），"
+            "但是拿详细信息的时候出错了"
+        )
+
+    await bot.send(
+        event,
+        f"今日关卡（{describe_conditions()}，候选 {total} 关）：",
+    )
+    await send_result(bot, event, level)
+    await dailydemon.finish()

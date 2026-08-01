@@ -26,8 +26,8 @@ import pytest
 import requests
 
 from xiaozu_bot.plugins.gdlevelsearch import aredlapi, gdapi
-from xiaozu_bot.plugins.gdlevelsearch.aredlapi import Aredl, AREDLLevel
-from xiaozu_bot.plugins.gdlevelsearch.gdapi import (
+from xiaozu_bot.plugins.gdlevelsearch.api.aredlapi import Aredl, AREDLLevel
+from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
     GDLevel,
     GDUser,
     SearchPage,

@@ -255,7 +255,7 @@ def enrich_levels_with_ids(
                 # 副本，已经和主的分叉了（主的重构成了 parse_server_key_value_pairs
                 # 那套并多了 GDUser），留着只会让 bug 要修两遍，所以删掉了。
                 try:
-                    from ...gdapi import search_levels_by_name  # bot 里跑
+                    from ...api.gdapi import search_levels_by_name  # bot 里跑
                 except ImportError:
                     from gdapi import search_levels_by_name  # 单独跑脚本时
                 levels = search_levels_by_name(name)

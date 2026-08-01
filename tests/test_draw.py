@@ -26,7 +26,8 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from xiaozu_bot.plugins.gdlevelsearch import draw
-from xiaozu_bot.plugins.gdlevelsearch.draw import (
+from xiaozu_bot.plugins.gdlevelsearch.api.platapi import PlatInfo
+from xiaozu_bot.plugins.gdlevelsearch.render.draw import (
     _fetch_thumbnail,
     _load_font,
     _none,
@@ -36,7 +37,6 @@ from xiaozu_bot.plugins.gdlevelsearch.draw import (
     select_tags,
     wrap_text_by_width,
 )
-from xiaozu_bot.plugins.gdlevelsearch.platapi import PlatInfo
 
 # 整个文件都要 Pillow 合图 + 加载字体文件，63 个用例约 2.2s，是全套里最慢的一块。
 # 平时改别的插件可以 `-m "not slow"` 跳过；CI 和发版前照跑不误。

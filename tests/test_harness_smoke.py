@@ -52,8 +52,8 @@ def test_json_storage_imports_and_exports() -> None:
     [
         "xiaozu_bot.plugins.jrrp",
         "xiaozu_bot.plugins.roulette",
-        "xiaozu_bot.plugins.gdlevelsearch.gdapi",
-        "xiaozu_bot.plugins.gdlevelsearch.aredlapi",
+        "xiaozu_bot.plugins.gdlevelsearch.api.gdapi",
+        "xiaozu_bot.plugins.gdlevelsearch.api.aredlapi",
     ],
 )
 def test_plugin_modules_import(module_name: str) -> None:
@@ -65,7 +65,7 @@ def test_plugin_modules_import(module_name: str) -> None:
 
 def test_gdapi_exposes_official_song_map() -> None:
     """gdlevelsearch.gdapi 的官方曲目表在 import 期就该建好"""
-    gdapi = importlib.import_module("xiaozu_bot.plugins.gdlevelsearch.gdapi")
+    gdapi = importlib.import_module("xiaozu_bot.plugins.gdlevelsearch.api.gdapi")
 
     assert gdapi.OFFICIAL_SONG_MAP[0] == ("Stereo Madness", "Foreverbound")
     assert gdapi.GD_PAGE_SIZE == 10
@@ -341,7 +341,7 @@ def test_stub_requests_can_raise_to_exercise_error_paths(stub_requests) -> None:
 
 def test_stub_requests_drives_real_plugin_code(stub_requests) -> None:
     """真拿它去驱动 aredlapi.fetch_aredl_levels，证明桩接在了正确的位置"""
-    aredlapi = importlib.import_module("xiaozu_bot.plugins.gdlevelsearch.aredlapi")
+    aredlapi = importlib.import_module("xiaozu_bot.plugins.gdlevelsearch.api.aredlapi")
     stub_requests.get(
         "https://api.aredl.net/v2/api/aredl/levels",
         FakeLevelsResponse(),

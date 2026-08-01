@@ -15,9 +15,10 @@ import io
 import math
 import plistlib
 import zipfile
-from pathlib import Path
 
 from PIL import Image, ImageColor
+
+from ..paths import ICONS_ZIP
 
 # 颜色索引表（GD 颜色 id -> 十六进制色值）
 color_map = {
@@ -52,9 +53,6 @@ color_map = {
 # 颜色 id 超出索引表（以后 GD 又加颜色）时兜底，别让整个图标渲染失败
 FALLBACK_COLOR = "#ffffff"
 
-# 配置：图集 zip 随插件发布，路径相对本文件定位
-PLUGIN_DIR = Path(__file__).resolve().parent
-ICONS_ZIP = PLUGIN_DIR / "resources" / "icons_uhd.zip"
 
 # 静态渲染时把图标在画布里的纵向位置对齐到和游戏一致（iconkit 的 yOffsets）
 Y_OFFSETS = {"player_ball": -10, "bird": 30, "spider": 7, "swing": -15}

@@ -4,6 +4,8 @@ from typing import Any
 
 from nonebot import logger
 
+from ..paths import DATA_DIR
+
 
 class PlatInfo:
     """Represents one level entry from plat_combined.json."""
@@ -110,7 +112,7 @@ class PlatData:
 
     def __init__(self, cache_file: str | None = None) -> None:
         self.cache_file = cache_file or (
-            Path(__file__).parent / "data" / "plat_combined.json"
+            DATA_DIR / "plat_combined.json"
         )
         self.entries: list[PlatInfo] = []
         self.main_entries: list[PlatInfo] = []

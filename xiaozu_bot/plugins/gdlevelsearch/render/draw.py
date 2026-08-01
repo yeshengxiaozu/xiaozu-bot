@@ -7,11 +7,13 @@ import httpx
 from nonebot import logger
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from .aredlapi import Aredl
-from .gdapi import GDLevel
-from .gddlapi import Gddl
-from .nlwapi import Nlw
-from .platapi import Platapi, PlatInfo
+from ..api.aredlapi import Aredl
+from ..api.gdapi import GDLevel
+from ..api.gddlapi import Gddl
+from ..api.nlwapi import Nlw
+from ..api.platapi import Platapi, PlatInfo
+from ..constants import HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR, HTTP_TIMEOUT
+from ..paths import PLUGIN_DIR, RES_DIR
 
 # Tier 颜色表
 TIER_COLOR_MAP = {
@@ -45,8 +47,6 @@ def select_tags(level:PlatInfo) -> list[str]:
     return level.tags
 
 # ----------------- 常量 -----------------
-PLUGIN_DIR = Path(__file__).resolve().parent
-RES_DIR = PLUGIN_DIR / "resources"
 
 
 def _load_font(path: Path, size: int) -> ImageFont.FreeTypeFont:
@@ -102,7 +102,6 @@ THUMB_SHADOW_OFFSET = 6
 THUMB_SHADOW_ALPHA = 100
 THUMB_SHADOW_BLUR = 6
 
-HTTP_TIMEOUT = 10
 
 SIDEBAR_X_OFFSET = 20
 ## 已统一圆角半径，删除SIDEBAR_RADIUS，全部用PANEL_RADIUS
@@ -246,9 +245,6 @@ except (OSError, json.JSONDecodeError):
 # 缩略图偶尔会因为网络抖动/服务冷启动拿不到，直接退占位图太可惜了，重试几次。
 THUMB_RETRIES = 3
 THUMB_BACKOFF = 0.6          # 第 n 次失败后等 THUMB_BACKOFF * n 秒
-HTTP_OK = 200
-HTTP_NOT_FOUND = 404
-HTTP_SERVER_ERROR = 500
 
 
 async def _none() -> None:

@@ -1,15 +1,21 @@
-"""*gdratings 的参数解析、翻页会话和排版。
+"""*gdratings 的参数解析、翻页会话、排版和 NoneBot 命令。
 
 展示 GDDL 上某关卡的「Submitted ratings」——每个人给的 tier 和 enjoyment。
-和 fullsearch.py 一样，这里不 import nonebot 的 matcher，方便脚本单独跑。
+会话逻辑在本文件上半部分；命令部分在下半部分。
 """
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 
-from nonebot import logger
+from nonebot import logger, on_command, on_message
+from nonebot.internal.adapter import Bot, Event, Message
+from nonebot.params import CommandArg
+from nonebot.rule import Rule
 
-from .gddlapi import GDDL_SUBMISSION_LIMIT, Gddl, Submission, SubmissionPage
+from ..api.gddlapi import GDDL_SUBMISSION_LIMIT, Gddl, Submission, SubmissionPage
+from ..services.search import _clear_all_sessions
+from .fullsearch import NEXT_WORDS, PREV_WORDS, STOP_WORDS
 
 SESSION_TIMEOUT = 120
 
@@ -256,3 +262,97 @@ def start_session(text: str) -> tuple[RatingsSession | None, str]:
     if not subs:
         return None, f"「{level_name or level_id}」在 GDDL 上还没有人提交评分"
     return session, ""
+
+
+# ------------------------------------------------------------------ gdratings
+# 看某关卡在 GDDL 上的提交评分（网页上「Submitted ratings」那块）。
+
+gdratings = on_command("gdratings")
+
+ratings_sessions: dict[str, RatingsSession] = {}
+ratings_timeouts: dict[str, asyncio.Task] = {}
+
+
+def _drop_ratings(session_id: str) -> None:
+    ratings_sessions.pop(session_id, None)
+    task = ratings_timeouts.pop(session_id, None)
+    if task:
+        task.cancel()
+
+
+def has_ratings(event: Event) -> bool:
+    return event.get_session_id() in ratings_sessions
+
+
+gdratingsselect = on_message(Rule(has_ratings), priority=100, block=False)
+
+
+async def clear_ratings(bot: Bot, event: Event, session_id: str) -> None:
+    await asyncio.sleep(SESSION_TIMEOUT)
+    if session_id in ratings_sessions:
+        ratings_sessions.pop(session_id, None)
+        ratings_timeouts.pop(session_id, None)
+        await bot.send(event, "评分列表超时，已结束")
+
+
+def _arm_ratings_timeout(bot: Bot, event: Event, session_id: str) -> None:
+    old = ratings_timeouts.pop(session_id, None)
+    if old:
+        old.cancel()
+    ratings_timeouts[session_id] = asyncio.create_task(
+        clear_ratings(bot, event, session_id)
+    )
+
+
+@gdratings.handle()
+async def handle_gdratings(
+    bot: Bot, event: Event, arg: Message = CommandArg()
+) -> None:
+    """看某关卡在 GDDL 上每个人给的 tier / enjoyment"""
+    _clear_all_sessions(event)
+    session_id = event.get_session_id()
+
+    try:
+        session, err = await asyncio.to_thread(
+            start_session, arg.extract_plain_text().strip()
+        )
+    except ArgError as e:
+        await gdratings.finish(str(e))
+    except Exception as e:
+        logger.exception("[gdratings] 查询失败")
+        await gdratings.finish(f"查询出错了：{e}")
+
+    if session is None:
+        await gdratings.finish(err)
+
+    # 只有一页就不用挂会话了，发完拉倒
+    if session.total_pages <= 1:
+        await gdratings.finish(session.render())
+
+    ratings_sessions[session_id] = session
+    _arm_ratings_timeout(bot, event, session_id)
+    await gdratings.finish(session.render())
+
+
+@gdratingsselect.handle()
+async def handle_ratings_choice(bot: Bot, event: Event) -> None:
+    """gdratings 只需要翻页，没有选中这一说"""
+    session_id = event.get_session_id()
+    session = ratings_sessions.get(session_id)
+    if session is None:
+        await gdratingsselect.finish()
+
+    choice = event.get_message().extract_plain_text().strip().lower()
+
+    if choice in STOP_WORDS:
+        _drop_ratings(session_id)
+        await gdratingsselect.finish("已结束")
+
+    if choice in NEXT_WORDS or choice in PREV_WORDS:
+        go = session.go_next if choice in NEXT_WORDS else session.go_prev
+        ok, msg = await asyncio.to_thread(go)
+        _arm_ratings_timeout(bot, event, session_id)
+        await gdratingsselect.finish(session.render() if ok else msg)
+
+    # 其他消息一概不理，别吞群聊
+    await gdratingsselect.finish()

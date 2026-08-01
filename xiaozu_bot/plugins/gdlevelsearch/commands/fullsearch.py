@@ -1,15 +1,26 @@
-"""*gdfullsearch 的参数解析、翻页会话和文本排版。
+"""*gdfullsearch 的参数解析、翻页会话、文本排版和 NoneBot 命令。
 
-这里刻意不 import 任何 nonebot 的 matcher —— 只依赖 gdapi，
-这样 scripts/try_search.py 不起 bot 也能把整套逻辑跑一遍。
+会话逻辑在本文件上半部分；命令部分（matcher + handler）在下半部分。
+scripts/try_search.py 要单独跑会话逻辑时，会先 init `~none` 驱动再 import 本模块。
 """
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 
-from nonebot import logger
+from nonebot import logger, on_command, on_message
+from nonebot.internal.adapter import Bot, Event, Message
+from nonebot.params import CommandArg
+from nonebot.rule import Rule
 
-from .gdapi import DEMON_STARS, GD_PAGE_SIZE, GDLevel, SearchPage, search_levels_page
+from ..api.gdapi import (
+    DEMON_STARS,
+    GD_PAGE_SIZE,
+    GDLevel,
+    SearchPage,
+    search_levels_page,
+)
+from ..services.search import _clear_all_sessions, send_result
 
 # 会话多久没人动就丢掉。原来 gdsearch 是 30 秒，翻页要慢慢看，放宽一点。
 SESSION_TIMEOUT = 120
@@ -302,3 +313,116 @@ def start_session(text: str) -> tuple[FullSearchSession | None, str]:
     if not levels:
         return None, f"没有找到「{query.query}」相关的关卡（{query.describe()}）"
     return session, ""
+
+
+# ------------------------------------------------------------------ gdfullsearch
+# 直连 GD 服务器搜索，带翻页选择器。会话逻辑在上面。
+
+gdfullsearch = on_command("gdfullsearch")
+
+# 按 session_id 存（群里是 group_xxx_yyy，私聊是 private_yyy）。
+# commands/search.py 的 search_cache 只按 user_id，同一个人在两个群里搜会串，新的不继承这毛病。
+fullsearch_sessions: dict[str, FullSearchSession] = {}
+fullsearch_timeouts: dict[str, asyncio.Task] = {}
+
+NEXT_WORDS = {"n", "next", "下一页", "下页"}
+PREV_WORDS = {"p", "prev", "上一页", "上页"}
+STOP_WORDS = {"结束", "取消", "退出", "q"}
+
+
+def _drop_fullsearch(session_id: str) -> None:
+    fullsearch_sessions.pop(session_id, None)
+    task = fullsearch_timeouts.pop(session_id, None)
+    if task:
+        task.cancel()
+
+
+def has_fullsearch(event: Event) -> bool:
+    return event.get_session_id() in fullsearch_sessions
+
+
+gdfullsearchselect = on_message(Rule(has_fullsearch), priority=100, block=False)
+
+
+async def clear_fullsearch(bot: Bot, event: Event, session_id: str) -> None:
+    await asyncio.sleep(SESSION_TIMEOUT)
+    if session_id in fullsearch_sessions:
+        fullsearch_sessions.pop(session_id, None)
+        fullsearch_timeouts.pop(session_id, None)
+        await bot.send(event, "搜索超时，已结束")
+
+
+def _arm_timeout(bot: Bot, event: Event, session_id: str) -> None:
+    old = fullsearch_timeouts.pop(session_id, None)
+    if old:
+        old.cancel()
+    fullsearch_timeouts[session_id] = asyncio.create_task(
+        clear_fullsearch(bot, event, session_id)
+    )
+
+
+@gdfullsearch.handle()
+async def handle_gdfullsearch(
+    bot: Bot, event: Event, arg: Message = CommandArg()
+) -> None:
+    """直接问 GD 服务器要结果，默认只搜 rated"""
+    _clear_all_sessions(event)
+    session_id = event.get_session_id()
+
+    try:
+        # 请求和解析都是同步阻塞的，别堵在事件循环上
+        session, err = await asyncio.to_thread(
+            start_session, arg.extract_plain_text().strip()
+        )
+    except ArgError as e:
+        await gdfullsearch.finish(str(e))
+    except Exception as e:
+        logger.exception("[gdfullsearch] 搜索失败")
+        await gdfullsearch.finish(f"搜索出错了：{e}")
+
+    if session is None:
+        await gdfullsearch.finish(err)
+
+    # 只有一条就别让人再选一次了，和 gdsearch 的行为保持一致
+    if len(session.current_levels) == 1:
+        await send_result(bot, event, session.current_levels[0])
+        await gdfullsearch.finish()
+
+    fullsearch_sessions[session_id] = session
+    _arm_timeout(bot, event, session_id)
+    await gdfullsearch.finish(session.render())
+
+
+@gdfullsearchselect.handle()
+async def handle_fullsearch_choice(bot: Bot, event: Event) -> None:
+    """处理翻页选择器里的输入"""
+    session_id = event.get_session_id()
+    session = fullsearch_sessions.get(session_id)
+    if session is None:
+        await gdfullsearchselect.finish()
+
+    choice = event.get_message().extract_plain_text().strip().lower()
+
+    if choice in STOP_WORDS:
+        _drop_fullsearch(session_id)
+        await gdfullsearchselect.finish("已结束搜索")
+
+    if choice in NEXT_WORDS or choice in PREV_WORDS:
+        go = session.go_next if choice in NEXT_WORDS else session.go_prev
+        ok, msg = await asyncio.to_thread(go)
+        _arm_timeout(bot, event, session_id)
+        await gdfullsearchselect.finish(session.render() if ok else msg)
+
+    if not choice.isdigit():
+        # 不是给我们的消息，别吞群聊
+        await gdfullsearchselect.finish()
+
+    levels = session.current_levels
+    index = int(choice)
+    if index < 1 or index > len(levels):
+        await gdfullsearchselect.finish(f"请输入 1-{len(levels)} 之间的序号")
+
+    level = levels[index - 1]
+    _drop_fullsearch(session_id)
+    await send_result(bot, event, level)
+    await gdfullsearchselect.finish()

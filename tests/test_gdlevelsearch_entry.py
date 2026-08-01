@@ -24,10 +24,32 @@ from PIL import Image
 from tests.conftest import DEFAULT_USER_ID, FakeBot, run_handler, sent_texts
 from xiaozu_bot.plugins import gdlevelsearch
 from xiaozu_bot.plugins.gdlevelsearch import SearchResult, icons
-from xiaozu_bot.plugins.gdlevelsearch.gdapi import GDLevel, GDUser
-from xiaozu_bot.plugins.gdlevelsearch.gddlapi import GDDLLevel
-from xiaozu_bot.plugins.gdlevelsearch.nlwapi import Level as NlwLevel
-from xiaozu_bot.plugins.gdlevelsearch.platapi import PlatInfo
+from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import GDLevel, GDUser
+from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import GDDLLevel
+from xiaozu_bot.plugins.gdlevelsearch.api.nlwapi import Level as NlwLevel
+from xiaozu_bot.plugins.gdlevelsearch.api.platapi import PlatInfo
+from xiaozu_bot.plugins.gdlevelsearch.commands import (
+    dailydemon as cmd_dailydemon,
+)
+from xiaozu_bot.plugins.gdlevelsearch.commands import (
+    fullsearch as cmd_fullsearch,
+)
+from xiaozu_bot.plugins.gdlevelsearch.commands import (
+    gdicon as cmd_gdicon,
+)
+from xiaozu_bot.plugins.gdlevelsearch.commands import (
+    gduser as cmd_gduser,
+)
+from xiaozu_bot.plugins.gdlevelsearch.commands import (
+    random as cmd_random,
+)
+from xiaozu_bot.plugins.gdlevelsearch.commands import (
+    ratings as cmd_ratings,
+)
+from xiaozu_bot.plugins.gdlevelsearch.commands import (
+    search as cmd_search,
+)
+from xiaozu_bot.plugins.gdlevelsearch.services import search as svc_search
 
 # ==========================================================================
 # 造数据
@@ -209,9 +231,9 @@ def no_timeout_tasks(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     async def _noop_ratings(bot: Any, event: Any, session_id: str) -> None:
         armed.append(f"ratings:{session_id}")
 
-    monkeypatch.setattr(gdlevelsearch, "clear_search_cache", _noop_search)
-    monkeypatch.setattr(gdlevelsearch, "clear_fullsearch", _noop_full)
-    monkeypatch.setattr(gdlevelsearch, "clear_ratings", _noop_ratings)
+    monkeypatch.setattr(cmd_search, "clear_search_cache", _noop_search)
+    monkeypatch.setattr(cmd_fullsearch, "clear_fullsearch", _noop_full)
+    monkeypatch.setattr(cmd_ratings, "clear_ratings", _noop_ratings)
     return armed
 
 
@@ -224,7 +246,7 @@ def stub_image(monkeypatch: pytest.MonkeyPatch) -> list[GDLevel]:
         drawn.append(level)
         return Image.new("RGB", (1, 1), (7, 8, 9))
 
-    monkeypatch.setattr(gdlevelsearch, "create_image_from_gdlevel", _fake)
+    monkeypatch.setattr(svc_search, "create_image_from_gdlevel", _fake)
     return drawn
 
 
@@ -353,9 +375,9 @@ def sources(monkeypatch: pytest.MonkeyPatch) -> Any:
         fake_gddl = FakeGddl(gddl)
         fake_nlw = FakeNlw(nlw)
         fake_plat = FakePlatapi(plat)
-        monkeypatch.setattr(gdlevelsearch, "Gddl", fake_gddl)
-        monkeypatch.setattr(gdlevelsearch, "Nlw", fake_nlw)
-        monkeypatch.setattr(gdlevelsearch, "Platapi", fake_plat)
+        monkeypatch.setattr(svc_search, "Gddl", fake_gddl)
+        monkeypatch.setattr(svc_search, "Nlw", fake_nlw)
+        monkeypatch.setattr(svc_search, "Platapi", fake_plat)
         return fake_gddl, fake_nlw, fake_plat
 
     return _install
@@ -497,7 +519,7 @@ class TestSearchByName:
         左边永远非空，or 那一支根本走不到。
         """
         rec = RecordingLogger()
-        monkeypatch.setattr(gdlevelsearch, "logger", rec)
+        monkeypatch.setattr(svc_search, "logger", rec)
         sources(nlw=[nlw_level("42", "X", tier=None, source="IDS")])
 
         gdlevelsearch.search_by_name("X")
@@ -510,7 +532,7 @@ class TestSearchByName:
     ) -> None:
         """有 tier 就照印，后缀 " Tier" 这下也真的跟上了"""
         rec = RecordingLogger()
-        monkeypatch.setattr(gdlevelsearch, "logger", rec)
+        monkeypatch.setattr(svc_search, "logger", rec)
         sources(nlw=[nlw_level("42", "X", tier="7", source="NLW")])
 
         gdlevelsearch.search_by_name("X")
@@ -522,7 +544,7 @@ class TestSearchByName:
     ) -> None:
         """空串也算没有 tier —— `or` 判的是 falsy"""
         rec = RecordingLogger()
-        monkeypatch.setattr(gdlevelsearch, "logger", rec)
+        monkeypatch.setattr(svc_search, "logger", rec)
         sources(nlw=[nlw_level("42", "X", tier="", source="LW")])
 
         gdlevelsearch.search_by_name("X")
@@ -612,7 +634,7 @@ class TestGetCreator:
     ) -> None:
         """这是兜底函数，被调到本身就说明上游出问题了，所以是 warning"""
         rec = RecordingLogger()
-        monkeypatch.setattr(gdlevelsearch, "logger", rec)
+        monkeypatch.setattr(svc_search, "logger", rec)
         stub_requests.get(self.URL, make_response(json_data={"cache_username": "R"}))
 
         gdlevelsearch.get_creator(128)
@@ -622,29 +644,29 @@ class TestGetCreator:
 class TestGetDifficulty:
     def test_returns_the_label(self, monkeypatch: pytest.MonkeyPatch) -> None:
         level = gd_level(stars=10, demon_difficulty=3)
-        monkeypatch.setattr(gdlevelsearch, "get_level_by_id", lambda _id: level)
+        monkeypatch.setattr(svc_search, "get_level_by_id", lambda _id: level)
         assert gdlevelsearch.get_difficulty(128) == level.difficulty_label()
 
     def test_none_level_gives_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(gdlevelsearch, "get_level_by_id", lambda _id: None)
+        monkeypatch.setattr(svc_search, "get_level_by_id", lambda _id: None)
         assert gdlevelsearch.get_difficulty(128) is None
 
     def test_exception_gives_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def boom(_id: int) -> Any:
             raise RuntimeError("GD 服务器又挂了")
 
-        monkeypatch.setattr(gdlevelsearch, "get_level_by_id", boom)
+        monkeypatch.setattr(svc_search, "get_level_by_id", boom)
         assert gdlevelsearch.get_difficulty(128) is None
 
 
 class TestGetLevelInfo:
     def test_passes_the_level_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
         level = gd_level(name="X")
-        monkeypatch.setattr(gdlevelsearch, "get_level_by_id", lambda _id: level)
+        monkeypatch.setattr(svc_search, "get_level_by_id", lambda _id: level)
         assert gdlevelsearch.getlevelinfo(1) is level
 
     def test_none_stays_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(gdlevelsearch, "get_level_by_id", lambda _id: None)
+        monkeypatch.setattr(svc_search, "get_level_by_id", lambda _id: None)
         assert gdlevelsearch.getlevelinfo(1) is None
 
     def test_exception_is_not_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -653,7 +675,7 @@ class TestGetLevelInfo:
         def boom(_id: int) -> Any:
             raise RuntimeError("boom")
 
-        monkeypatch.setattr(gdlevelsearch, "get_level_by_id", boom)
+        monkeypatch.setattr(svc_search, "get_level_by_id", boom)
         with pytest.raises(RuntimeError):
             gdlevelsearch.getlevelinfo(1)
 
@@ -772,7 +794,7 @@ class TestHandleGdsearch:
         """
         seen: list[str] = []
         monkeypatch.setattr(
-            gdlevelsearch, "search_by_name", lambda n: seen.append(n) or []
+            cmd_search, "search_by_name", lambda n: seen.append(n) or []
         )
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg=text
@@ -786,10 +808,10 @@ class TestHandleGdsearch:
         level = gd_level(name="By ID")
         seen: list[int] = []
         monkeypatch.setattr(
-            gdlevelsearch, "getlevelinfo", lambda i: (seen.append(i), level)[1]
+            cmd_search, "getlevelinfo", lambda i: (seen.append(i), level)[1]
         )
         monkeypatch.setattr(
-            gdlevelsearch, "search_by_name",
+            cmd_search, "search_by_name",
             lambda n: pytest.fail("id 分支不该再去搜名字"),
         )
 
@@ -802,7 +824,7 @@ class TestHandleGdsearch:
     async def test_unknown_id_says_so(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(gdlevelsearch, "getlevelinfo", lambda _i: None)
+        monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: None)
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
         )
@@ -813,7 +835,7 @@ class TestHandleGdsearch:
     async def test_no_name_match_says_so(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(gdlevelsearch, "search_by_name", lambda _n: [])
+        monkeypatch.setattr(cmd_search, "search_by_name", lambda _n: [])
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="Nope"
         )
@@ -827,9 +849,9 @@ class TestHandleGdsearch:
     ) -> None:
         """只有一个结果就不再让人选一次，也不建缓存"""
         monkeypatch.setattr(
-            gdlevelsearch, "search_by_name", lambda _n: [SearchResult(9, "Only")]
+            cmd_search, "search_by_name", lambda _n: [SearchResult(9, "Only")]
         )
-        monkeypatch.setattr(gdlevelsearch, "getlevelinfo", lambda _i: gd_level(name="Only"))
+        monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: gd_level(name="Only"))
 
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="Only"
@@ -842,7 +864,7 @@ class TestHandleGdsearch:
     ) -> None:
         """三条结果一条消息发完，每条查到的东西都得在里面；列表怎么排版不算行为"""
         monkeypatch.setattr(
-            gdlevelsearch, "search_by_name",
+            cmd_search, "search_by_name",
             lambda _n: [
                 SearchResult(111, "Full", "Cr", "35.0", "Extreme Demon"),
                 SearchResult(222, "NoCreator", None, "12.5", "Insane Demon"),
@@ -850,7 +872,7 @@ class TestHandleGdsearch:
             ],
         )
         monkeypatch.setattr(
-            gdlevelsearch, "get_difficulty", lambda _i: pytest.fail("有 difficulty 就不该再打 gdapi")
+            cmd_search, "get_difficulty", lambda _i: pytest.fail("有 difficulty 就不该再打 gdapi")
         )
 
         await run_handler(
@@ -872,11 +894,11 @@ class TestHandleGdsearch:
         """difficulty 是 None 的条目才会挨个去打 gdapi 补"""
         asked: list[int] = []
         monkeypatch.setattr(
-            gdlevelsearch, "search_by_name",
+            cmd_search, "search_by_name",
             lambda _n: [SearchResult(1, "A"), SearchResult(2, "B", difficulty="已知")],
         )
         monkeypatch.setattr(
-            gdlevelsearch, "get_difficulty",
+            cmd_search, "get_difficulty",
             lambda i: (asked.append(i), "现查的")[1],
         )
 
@@ -894,7 +916,7 @@ class TestHandleGdsearch:
         monkeypatch: pytest.MonkeyPatch, no_timeout_tasks: list[str],
     ) -> None:
         results = [SearchResult(1, "A", difficulty="d"), SearchResult(2, "B", difficulty="d")]
-        monkeypatch.setattr(gdlevelsearch, "search_by_name", lambda _n: results)
+        monkeypatch.setattr(cmd_search, "search_by_name", lambda _n: results)
 
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="X"
@@ -970,7 +992,7 @@ class TestHandleChoice:
         self._prime()
         asked: list[int] = []
         monkeypatch.setattr(
-            gdlevelsearch, "getlevelinfo",
+            cmd_search, "getlevelinfo",
             lambda i: (asked.append(i), gd_level(name="Second"))[1],
         )
 
@@ -984,7 +1006,7 @@ class TestHandleChoice:
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         self._prime()
-        monkeypatch.setattr(gdlevelsearch, "getlevelinfo", lambda _i: None)
+        monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: None)
 
         await run_handler(gdlevelsearch.gdsearchselect, fake_bot, make_group_event("1"))
         # 行为是「报错时得把选中那条的 id 说出来」，不然没法查
@@ -1018,7 +1040,7 @@ class TestHandleGduser:
     ) -> None:
         """空参数只回一句话就完事，不去打 gdapi —— 提示词怎么写不算行为"""
         monkeypatch.setattr(
-            gdlevelsearch, "get_user_by_name",
+            cmd_gduser, "get_user_by_name",
             lambda _n: pytest.fail("没给名字就不该去查用户"),
         )
         await run_handler(
@@ -1030,7 +1052,7 @@ class TestHandleGduser:
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """查不到就只回一句，不再往下发资料"""
-        monkeypatch.setattr(gdlevelsearch, "get_user_by_name", lambda _n: None)
+        monkeypatch.setattr(cmd_gduser, "get_user_by_name", lambda _n: None)
         await run_handler(
             gdlevelsearch.gduser, fake_bot, make_group_event("*gduser"), arg="Nobody"
         )
@@ -1040,7 +1062,7 @@ class TestHandleGduser:
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """三段可选信息都为空时也能发出去，用户名和三个计数都在里面"""
-        monkeypatch.setattr(gdlevelsearch, "get_user_by_name", lambda _n: make_gduser())
+        monkeypatch.setattr(cmd_gduser, "get_user_by_name", lambda _n: make_gduser())
         await run_handler(
             gdlevelsearch.gduser, fake_bot, make_group_event("*gduser"), arg="Player"
         )
@@ -1054,7 +1076,7 @@ class TestHandleGduser:
     ) -> None:
         """creator_points 非 0 时那个数字要出现在资料里（0 是不印的，但那是排版）"""
         monkeypatch.setattr(
-            gdlevelsearch, "get_user_by_name", lambda _n: make_gduser(creator_points=7)
+            cmd_gduser, "get_user_by_name", lambda _n: make_gduser(creator_points=7)
         )
         await run_handler(
             gdlevelsearch.gduser, fake_bot, make_group_event("*gduser"), arg="Player"
@@ -1070,7 +1092,7 @@ class TestHandleGduser:
             platformer_levels=[9, 10, 11, 12, 13, 14],
             demons_breakdown=list(range(20, 32)),
         )
-        monkeypatch.setattr(gdlevelsearch, "get_user_by_name", lambda _n: user)
+        monkeypatch.setattr(cmd_gduser, "get_user_by_name", lambda _n: user)
 
         await run_handler(
             gdlevelsearch.gduser, fake_bot, make_group_event("*gduser"), arg="Player"
@@ -1091,7 +1113,7 @@ class TestHandleGdrandom:
     ) -> None:
         """一个参数都不给就回一句用法，不去 GDDL 抽关 —— 用法怎么写不算行为"""
         fake = FakeGddl()
-        monkeypatch.setattr(gdlevelsearch, "Gddl", fake)
+        monkeypatch.setattr(cmd_random, "Gddl", fake)
 
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg=""
@@ -1116,7 +1138,7 @@ class TestHandleGdrandom:
     ) -> None:
         """参数不合法就回一句话打住，一次都不去 GDDL 抽关"""
         fake = FakeGddl()
-        monkeypatch.setattr(gdlevelsearch, "Gddl", fake)
+        monkeypatch.setattr(cmd_random, "Gddl", fake)
 
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg=arg
@@ -1130,7 +1152,7 @@ class TestHandleGdrandom:
     ) -> None:
         """写反了也认：tier 高低、enjoyment 高低都会自动交换"""
         fake = FakeGddl()
-        monkeypatch.setattr(gdlevelsearch, "Gddl", fake)
+        monkeypatch.setattr(cmd_random, "Gddl", fake)
 
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"),
@@ -1142,7 +1164,7 @@ class TestHandleGdrandom:
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         fake = FakeGddl()
-        monkeypatch.setattr(gdlevelsearch, "Gddl", fake)
+        monkeypatch.setattr(cmd_random, "Gddl", fake)
 
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg="15"
@@ -1152,7 +1174,7 @@ class TestHandleGdrandom:
     async def test_no_match_replies_without_an_image(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(gdlevelsearch, "Gddl", FakeGddl())
+        monkeypatch.setattr(cmd_random, "Gddl", FakeGddl())
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg="15"
         )
@@ -1166,8 +1188,8 @@ class TestHandleGdrandom:
     ) -> None:
         fake = FakeGddl()
         fake.random_result = gddl_level(4321, "Random Pick")
-        monkeypatch.setattr(gdlevelsearch, "Gddl", fake)
-        monkeypatch.setattr(gdlevelsearch, "getlevelinfo", lambda _i: gd_level(name="R"))
+        monkeypatch.setattr(cmd_random, "Gddl", fake)
+        monkeypatch.setattr(cmd_random, "getlevelinfo", lambda _i: gd_level(name="R"))
 
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg="15"
@@ -1197,7 +1219,7 @@ class TestHandleGdiconArgs:
     ) -> None:
         seen: list[str] = []
         monkeypatch.setattr(
-            gdlevelsearch, "get_user_by_name", lambda n: seen.append(n) or None
+            cmd_gdicon, "get_user_by_name", lambda n: seen.append(n) or None
         )
         await run_handler(
             gdlevelsearch.gdicon, fake_bot, make_group_event("*gdicon"), arg="RobTop ship"
@@ -1212,7 +1234,7 @@ class TestHandleGdiconArgs:
         """`and words` 这个条件：第一个词就算叫 wave 也当用户名，有人 ID 就叫这个"""
         seen: list[str] = []
         monkeypatch.setattr(
-            gdlevelsearch, "get_user_by_name", lambda n: seen.append(n) or None
+            cmd_gdicon, "get_user_by_name", lambda n: seen.append(n) or None
         )
         await run_handler(
             gdlevelsearch.gdicon, fake_bot, make_group_event("*gdicon"), arg="wave"
@@ -1224,7 +1246,7 @@ class TestHandleGdiconArgs:
     ) -> None:
         seen: list[str] = []
         monkeypatch.setattr(
-            gdlevelsearch, "get_user_by_name", lambda n: seen.append(n) or None
+            cmd_gdicon, "get_user_by_name", lambda n: seen.append(n) or None
         )
         await run_handler(
             gdlevelsearch.gdicon, fake_bot, make_group_event("*gdicon"),
@@ -1237,7 +1259,7 @@ class TestHandleGdiconArgs:
     ) -> None:
         seen: list[str] = []
         monkeypatch.setattr(
-            gdlevelsearch, "get_user_by_name", lambda n: seen.append(n) or None
+            cmd_gdicon, "get_user_by_name", lambda n: seen.append(n) or None
         )
         await run_handler(
             gdlevelsearch.gdicon, fake_bot, make_group_event("*gdicon"), arg="-a RobTop"
@@ -1249,7 +1271,7 @@ class TestHandleGdiconArgs:
     ) -> None:
         """-a 剥完什么都不剩就回一句话，不去打 gdapi"""
         monkeypatch.setattr(
-            gdlevelsearch, "get_user_by_name",
+            cmd_gdicon, "get_user_by_name",
             lambda _n: pytest.fail("只有 flag、没有名字时不该去查用户"),
         )
         await run_handler(
@@ -1267,7 +1289,7 @@ class TestHandleGdiconArgs:
         """
         user = GDUser()
         user.user_name = "RobTop"
-        monkeypatch.setattr(gdlevelsearch, "get_user_by_name", lambda _n: user)
+        monkeypatch.setattr(cmd_gdicon, "get_user_by_name", lambda _n: user)
         asked: list[Any] = []
 
         async def fake_fetch_one(u: GDUser, form: Any) -> Image.Image:
@@ -1290,7 +1312,7 @@ class TestHandleGdiconArgs:
         """没给 gamemode 时默认 cube；取不到图就只回一句话，不发空图"""
         user = GDUser()
         user.user_name = "RobTop"
-        monkeypatch.setattr(gdlevelsearch, "get_user_by_name", lambda _n: user)
+        monkeypatch.setattr(cmd_gdicon, "get_user_by_name", lambda _n: user)
         asked: list[Any] = []
 
         async def fake_fetch_one(u: GDUser, form: Any) -> None:
@@ -1318,7 +1340,7 @@ class TestHandleDailyDemon:
         # 用个明显假的串，免得以后有人以为这是插件里的提示语而去"顺手统一措辞"。
         error = "【挑选器自己的错误话术】"
         monkeypatch.setattr(
-            gdlevelsearch, "get_daily_demon", lambda: (None, 0, error)
+            cmd_dailydemon, "get_daily_demon", lambda: (None, 0, error)
         )
         await run_handler(
             gdlevelsearch.dailydemon, fake_bot, make_group_event("*dailydemon")
@@ -1330,10 +1352,10 @@ class TestHandleDailyDemon:
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            gdlevelsearch, "get_daily_demon",
+            cmd_dailydemon, "get_daily_demon",
             lambda: (gddl_level(777, "Daily One"), 42, ""),
         )
-        monkeypatch.setattr(gdlevelsearch, "getlevelinfo", lambda _i: None)
+        monkeypatch.setattr(cmd_dailydemon, "getlevelinfo", lambda _i: None)
 
         await run_handler(
             gdlevelsearch.dailydemon, fake_bot, make_group_event("*dailydemon")
@@ -1350,11 +1372,11 @@ class TestHandleDailyDemon:
         monkeypatch: pytest.MonkeyPatch, stub_image: list[GDLevel],
     ) -> None:
         monkeypatch.setattr(
-            gdlevelsearch, "get_daily_demon",
+            cmd_dailydemon, "get_daily_demon",
             lambda: (gddl_level(777, "Daily One"), 42, ""),
         )
-        monkeypatch.setattr(gdlevelsearch, "getlevelinfo", lambda _i: gd_level(name="D"))
-        monkeypatch.setattr(gdlevelsearch, "describe_conditions", lambda: "tier 20-25")
+        monkeypatch.setattr(cmd_dailydemon, "getlevelinfo", lambda _i: gd_level(name="D"))
+        monkeypatch.setattr(cmd_dailydemon, "describe_conditions", lambda: "tier 20-25")
 
         await run_handler(
             gdlevelsearch.dailydemon, fake_bot, make_group_event("*dailydemon")

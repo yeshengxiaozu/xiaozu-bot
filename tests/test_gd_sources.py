@@ -32,9 +32,16 @@ from typing import Any
 import pytest
 from PIL import Image, ImageChops
 
-from xiaozu_bot.plugins.gdlevelsearch import gddlapi, iconrender, icons, nlwapi, platapi
-from xiaozu_bot.plugins.gdlevelsearch.gdapi import GDUser
-from xiaozu_bot.plugins.gdlevelsearch.gddlapi import (
+from xiaozu_bot.plugins.gdlevelsearch import (
+    gddlapi,
+    iconrender,
+    icons,
+    nlwapi,
+    paths,
+    platapi,
+)
+from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import GDUser
+from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import (
     GDDL_LIMIT_MAX,
     GDDL_LIMIT_MIN,
     GDDL_PLAT_LENGTH,
@@ -46,7 +53,7 @@ from xiaozu_bot.plugins.gdlevelsearch.gddlapi import (
     Submission,
     SubmissionPage,
 )
-from xiaozu_bot.plugins.gdlevelsearch.nlwapi import (
+from xiaozu_bot.plugins.gdlevelsearch.api.nlwapi import (
     HDSlevel,
     IDSlevel,
     Level,
@@ -54,9 +61,9 @@ from xiaozu_bot.plugins.gdlevelsearch.nlwapi import (
     Nlw,
     NLWlevel,
 )
-from xiaozu_bot.plugins.gdlevelsearch.platapi import Platapi, PlatData, PlatInfo
+from xiaozu_bot.plugins.gdlevelsearch.api.platapi import Platapi, PlatData, PlatInfo
 
-dailydemon = import_module("xiaozu_bot.plugins.gdlevelsearch.dailydemon")
+dailydemon = import_module("xiaozu_bot.plugins.gdlevelsearch.commands.dailydemon")
 
 # ==========================================================================
 # 造数据的小工具
@@ -1287,7 +1294,7 @@ class TestPlatapiFacade:
         monkeypatch.setattr(PlatData, "_fetch", lambda self: [])
         data = PlatData()
         assert Path(data.cache_file) == (
-            Path(platapi.__file__).parent / "data" / "plat_combined.json"
+            paths.DATA_DIR / "plat_combined.json"
         )
 
     def test_reload_refetches_from_the_default_path(
