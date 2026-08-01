@@ -346,23 +346,19 @@ def parse_offset(text):
 
 
 def tint_image(img, color):
-    """保留原始明暗的染色（等价 PIXI tint 的乘法）：黑→黑，灰→深色目标色，白→目标色。"""
+    """逐通道乘法染色，等价 PIXI 的 tint：结果 = 贴图RGB × 目标色 / 255。
+
+    白色贴图行为就是"白→目标色、黑→黑"；关键是不能用亮度灰度近似——
+    有些图标贴图自带彩色（比如 ball 75 的红色舌头），乘白色必须原样保留红色，
+    用亮度近似会把红色抹成深灰/黑。
+    """
     img = img.convert("RGBA")
     target_r, target_g, target_b = ImageColor.getrgb(color)
-    pixels = img.load()
-    for y in range(img.height):
-        for x in range(img.width):
-            r, g, b, a = pixels[x, y]
-            if a == 0:
-                continue
-            brightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-            pixels[x, y] = (
-                int(target_r * brightness),
-                int(target_g * brightness),
-                int(target_b * brightness),
-                a,
-            )
-    return img
+    r, g, b, a = img.split()
+    r_lut = [v * target_r // 255 for v in range(256)]
+    g_lut = [v * target_g // 255 for v in range(256)]
+    b_lut = [v * target_b // 255 for v in range(256)]
+    return Image.merge("RGBA", (r.point(r_lut), g.point(g_lut), b.point(b_lut), a))
 
 
 def _darken(img: Image.Image, factor: float) -> Image.Image:

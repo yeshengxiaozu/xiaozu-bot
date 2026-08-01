@@ -1838,6 +1838,28 @@ class TestIconLayoutData:
             assert not _same_image(with_color3, fallback), form
 
 
+class TestBakedColors:
+    async def test_ball_75_keeps_red_tongue(self) -> None:
+        """贴图自带彩色（ball 75 的红色舌头）在染色后必须保留。
+
+        染色是逐通道乘法（PIXI tint）：白贴图照常上色，但贴图里自带的
+        红色像素乘白色仍是红色；用亮度灰度近似会把红色抹成深灰/黑。
+        """
+        img = await icons.fetch_one(
+            make_gduser(acc_ball=75, color=1, color2=1, acc_glow=0),
+            icons.FORM_BY_KEY["ball"],
+        )
+        assert img is not None
+        px = img.convert("RGBA").load()
+        red = 0
+        for y in range(img.height):
+            for x in range(img.width):
+                r, g, b, a = px[x, y]
+                if a > 0 and r > 120 and r > g + 60 and r > b + 60:
+                    red += 1
+        assert red >= 100
+
+
 class TestUfoDome:
     async def test_ufo_has_white_dome_but_cube_does_not(self) -> None:
         """UFO 圆顶是白色 _3_001 层；cube 没有圆顶，同样配色下不该有纯白像素。"""
