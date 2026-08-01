@@ -64,6 +64,11 @@ from .commands.fullsearch import (  # noqa: F401
 from .commands.gdicon import gdicon  # noqa: F401
 from .commands.gduser import gduser  # noqa: F401
 from .commands.help import gdsearchhelp, update_cmd  # noqa: F401
+from .commands.manage import (  # noqa: F401
+    gdsearchmanage,
+    gdsearchmanage_select,
+    gdsearchstatus,
+)
 from .commands.random import gdrandom  # noqa: F401
 from .commands.ratings import (  # noqa: F401
     _drop_ratings,

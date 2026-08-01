@@ -30,6 +30,8 @@ async def handle_gdsearchhelp() -> None:
   -s 排序   tier / enj / date / progress / attempts / rr
   -asc      正序（默认倒序）
   -v        只看通关的人
+
+管理员可用 *gdsearch_manage help 查看手动管理命令帮助
 """  # noqa: N806
     # 那几个references的实现我扔给xiaozubot_help模块了
     await gdsearchhelp.finish(HELP_STR)

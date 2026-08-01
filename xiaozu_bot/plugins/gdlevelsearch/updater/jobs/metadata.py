@@ -35,6 +35,7 @@ except ImportError:
 os.environ['NO_PROXY'] = 'history.geometrydash.eu,geometrydash.eu'
 GD_HISTORY_API = "https://history.geometrydash.eu/api/v1/search/level/advanced/"
 CACHE_FILENAME = "metadata.json"
+UNMATCHED_FILENAME = "metadata_unmatched.json"
 # 并发控制
 MAX_CONCURRENT = 5          # 建议不超过 5，减少 API 压力
 REQUEST_INTERVAL = 0.5      # 秒
@@ -82,6 +83,41 @@ def load_metadata_cache(cache_dir: Path):
         except Exception:
             logger.warning("Failed to load metadata cache, starting fresh")
     return []
+
+
+def load_unmatched(cache_dir: Path) -> list[dict]:
+    """读取「自动匹配确定失败」的关卡清单（name + creator + 失败原因）。"""
+    path = Path(cache_dir) / UNMATCHED_FILENAME
+    if path.exists():
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+        except Exception:
+            logger.warning("Failed to load unmatched cache, starting fresh")
+    return []
+
+
+def save_unmatched(cache_dir: Path, entries: list[dict]) -> None:
+    """写入「自动匹配确定失败」的关卡清单。"""
+    path = Path(cache_dir) / UNMATCHED_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(entries, f, ensure_ascii=False, indent=4)
+
+
+def _prune_unmatched(cache_dir: Path, unmatched_map: dict, resolved_keys: set) -> None:
+    """把本轮已自动解决的条目从清单移除并写回，其余按关卡名排序保留。"""
+    for key in resolved_keys:
+        unmatched_map.pop(key, None)
+    save_unmatched(
+        cache_dir,
+        sorted(
+            unmatched_map.values(),
+            key=lambda e: (e.get("name", "").lower(), e.get("creator", "").lower()),
+        ),
+    )
 
 # ---------- API 抓取 ----------
 # 原来这里还有第三个参数 `loose: bool = False`，函数体里**从来没读过它**，
@@ -216,6 +252,11 @@ def enrich_levels_with_ids(
         key = (entry["name"], entry["creator"])
         cache_map[key] = int(entry["id"])
 
+    # 未匹配清单：上一轮「确定失败」的关卡；本轮自动解决掉的移除，仍失败的保留/新增
+    unmatched = load_unmatched(cache_dir)
+    unmatched_map = {(e["name"], e["creator"]): e for e in unmatched}
+    resolved_keys: set[tuple[str, str]] = set()
+
     # 找出需要抓取的关卡
     to_fetch = []
     for level in levels:
@@ -224,11 +265,13 @@ def enrich_levels_with_ids(
         key = (name, creator_norm)
         if key in cache_map:
             level["id"] = cache_map[key]
+            resolved_keys.add(key)
         else:
             to_fetch.append((level, name, level["creator"], creator_norm))
 
     if not to_fetch:
         logger.info("All levels already have metadata cached.")
+        _prune_unmatched(cache_dir, unmatched_map, resolved_keys)
         return
 
     logger.info(f"Fetching metadata for {len(to_fetch)} levels...")
@@ -236,6 +279,21 @@ def enrich_levels_with_ids(
     rate_limiter = RateLimiter(interval)
     lock = Lock()
     new_entries = []
+
+    def record_unmatched(name: str, creator_norm: str, reason: str) -> None:
+        """记一条「自动匹配确定失败」：已有条目只更新原因，不重复加。"""
+        with lock:
+            key = (name, creator_norm)
+            entry = unmatched_map.get(key)
+            if entry is None:
+                unmatched_map[key] = {
+                    "name": name,
+                    "creator": creator_norm,
+                    "reason": reason,
+                    "added_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            else:
+                entry["reason"] = reason
 
     def fetch_one(level_obj, name, creator_raw, creator_norm):
         # 查询前再次检查缓存（防止并发重复插入）
@@ -261,13 +319,16 @@ def enrich_levels_with_ids(
                 levels = search_levels_by_name(name)
                 if not levels:
                     logger.error(f"Could not find metadata for '{name}' by '{creator_raw}'")
+                    record_unmatched(name, creator_norm, "not-found")
                     return
                 levels = [level for level in levels if level.stars == 10 and level.level_name.strip().lower() == name.strip().lower()]
                 if len(levels) == 0:
                     logger.error(f"Could not find metadata for '{name}' by '{creator_raw}'")
+                    record_unmatched(name, creator_norm, "not-found")
                     return
                 if len(levels) > 1:
                     logger.error(f"Multiple levels found, manual selection required for '{name}' by '{creator_raw}'")
+                    record_unmatched(name, creator_norm, "ambiguous")
                     return
                 logger.info(f"fallback to gdapi for '{name}' by '{creator_raw}' successfully")
                 online_id = levels[0].level_id
@@ -280,6 +341,7 @@ def enrich_levels_with_ids(
             with lock:
                 cache_map[(name, creator_norm)] = online_id
                 new_entries.append(entry)
+                resolved_keys.add((name, creator_norm))
 
         except Exception as e:
             logger.error(f"Error fetching metadata for '{name}' by '{creator_raw}': {e}")
@@ -298,7 +360,8 @@ def enrich_levels_with_ids(
             for future in as_completed(futures):
                 future.result()  # 抛出异常（如果有）
 
-    # 保存缓存
+    # 保存缓存，并清理未匹配清单
     cache.extend(new_entries)
     save_metadata_cache(cache, cache_dir)
+    _prune_unmatched(cache_dir, unmatched_map, resolved_keys)
     logger.info(f"Metadata fetch complete. {len(new_entries)} new entries added to cache.")

@@ -2716,3 +2716,96 @@ class TestSetupUpdaterSslPatch:
 
         assert callable(ssl._create_default_https_context)
         assert isinstance(ssl._create_default_https_context(), ssl.SSLContext)
+
+
+# ==========================================================================
+# metadata.py —— 自动匹配「确定失败」落盘未匹配清单
+# ==========================================================================
+class TestMetadataUnmatched:
+    """自动匹配确定失败（查无此关 / 多条候选）落盘 metadata_unmatched.json；
+
+    成功与网络/异常不落盘（下次跑大概率自愈）。
+    """
+
+    @staticmethod
+    def _unmatched(tmp_path: Path) -> list[dict]:
+        path = tmp_path / "metadata_unmatched.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+
+    @staticmethod
+    def _entries(levels: list[dict], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                 fetch_data: Any, fallback: Any) -> None:
+        monkeypatch.setattr(metadata, "fetch_level_data", fetch_data)
+        monkeypatch.setattr(gdapi, "search_levels_by_name", fallback)
+        metadata.enrich_levels_with_ids(levels, tmp_path, max_workers=2, interval=0)
+
+    def test_not_found_records_unmatched(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """gdapi 兜底也 0 条 -> 清单记 not-found，关卡没有 id。"""
+        levels = [{"name": "X", "creator": "Alice"}]
+        self._entries(levels, tmp_path, monkeypatch,
+                      fetch_data=lambda n, c: None, fallback=lambda n: [])
+        assert "id" not in levels[0]
+        entry = self._unmatched(tmp_path)[0]
+        assert entry["name"] == "X"
+        assert entry["creator"] == "alice"
+        assert entry["reason"] == "not-found"
+        assert "added_at" in entry
+
+    def test_ambiguous_records_unmatched(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """gdapi 兜底多条 -> 记 ambiguous，等人工选择。"""
+        hits = [
+            SimpleNamespace(stars=10, level_name="X", level_id=1),
+            SimpleNamespace(stars=10, level_name="X", level_id=2),
+        ]
+        levels = [{"name": "X", "creator": "Bob"}]
+        self._entries(levels, tmp_path, monkeypatch,
+                      fetch_data=lambda n, c: None, fallback=lambda n: hits)
+        assert "id" not in levels[0]
+        entry = self._unmatched(tmp_path)[0]
+        assert entry["name"] == "X" and entry["creator"] == "bob"
+        assert entry["reason"] == "ambiguous"
+
+    def test_outer_exception_is_not_recorded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """网络/其他异常不落盘：多半是瞬时问题，下次跑大概率自愈。"""
+        def boom(name: str, creator: str) -> Any:
+            raise RuntimeError("network down")
+
+        levels = [{"name": "X", "creator": "Alice"}]
+        self._entries(levels, tmp_path, monkeypatch,
+                      fetch_data=boom, fallback=lambda n: [])
+        assert "id" not in levels[0]
+        assert self._unmatched(tmp_path) == []
+
+    def test_success_fetch_does_not_record_unmatched(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """抓取成功：关卡有 id，清单不新增条目，metadata 缓存照常扩展。"""
+        levels = [{"name": "X", "creator": "Alice"}]
+        self._entries(levels, tmp_path, monkeypatch,
+                      fetch_data=lambda n, c: {"online_id": 123}, fallback=None)
+        assert levels[0]["id"] == 123
+        assert self._unmatched(tmp_path) == []
+        cache = json.loads((tmp_path / "metadata.json").read_text(encoding="utf-8"))
+        assert cache == [{"name": "X", "creator": "alice", "id": 123}]
+
+    def test_cache_hit_removes_previous_unmatched(self, tmp_path: Path) -> None:
+        """本轮自动解决（缓存命中）的旧未匹配条目被清掉，无关条目保留。"""
+        _write_json(tmp_path / "metadata.json", [{"name": "X", "creator": "alice", "id": 42}])
+        _write_json(tmp_path / "metadata_unmatched.json", [
+            {"name": "X", "creator": "alice", "reason": "not-found", "added_at": "t"},
+            {"name": "Y", "creator": "bob", "reason": "ambiguous", "added_at": "t"},
+        ])
+        levels = [{"name": "X", "creator": "Alice"}]
+        metadata.enrich_levels_with_ids(levels, tmp_path, max_workers=1, interval=0)
+        assert levels[0]["id"] == 42
+        remaining = self._unmatched(tmp_path)
+        assert [(e["name"], e["creator"]) for e in remaining] == [("Y", "bob")]
+
+    def test_early_return_still_prunes_unmatched(self, tmp_path: Path) -> None:
+        """所有关卡都命中缓存（无需抓取）时，也要清理已解决的未匹配条目。"""
+        _write_json(tmp_path / "metadata.json", [{"name": "X", "creator": "alice", "id": 42}])
+        _write_json(tmp_path / "metadata_unmatched.json", [
+            {"name": "X", "creator": "alice", "reason": "not-found", "added_at": "t"},
+        ])
+        levels = [{"name": "X", "creator": "Alice"}]
+        metadata.enrich_levels_with_ids(levels, tmp_path, max_workers=1, interval=0)
+        assert levels[0]["id"] == 42
+        assert self._unmatched(tmp_path) == []
