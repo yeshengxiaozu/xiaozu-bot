@@ -191,12 +191,6 @@ class GDLevel:
         # 优先自定义歌曲
         if self.song_info:
             return self.song_info.get("name")
-        # 官方歌曲
-        off_id = self.official_song
-        # 部分关卡可能 custom_song_id 为 0 但官方歌曲空，需要检查
-        if off_id is not None and off_id in OFFICIAL_SONG_MAP:
-            name, _author = OFFICIAL_SONG_MAP[off_id]
-            return name
         return "Unknown"
 
     @property
@@ -205,12 +199,6 @@ class GDLevel:
         # 优先自定义歌曲
         if self.song_info:
             return self.song_info.get("artist_name")
-        # 官方歌曲
-        off_id = self.official_song
-        # 部分关卡可能 custom_song_id 为 0 但官方歌曲空，需要检查
-        if off_id is not None and off_id in OFFICIAL_SONG_MAP:
-            _name, author = OFFICIAL_SONG_MAP[off_id]
-            return author
         return "Unknown"
 
     def decrypt_password(self) -> str | None:
@@ -701,7 +689,8 @@ def _search_levels(
         if level.custom_song_id and level.custom_song_id in song_dict:
             level.song_info = song_dict[level.custom_song_id]
         elif (
-            level.official_song is not None and level.official_song in OFFICIAL_SONG_MAP
+            not level.custom_song_id and level.official_song is not None
+            and level.official_song in OFFICIAL_SONG_MAP
         ):
             level.song_info = None
         else:
