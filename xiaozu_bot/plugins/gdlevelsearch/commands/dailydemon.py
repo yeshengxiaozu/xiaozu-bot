@@ -123,7 +123,7 @@ def get_daily_demon(
 
     total = head.get("total", 0)
     if not total:
-        return None, 0, "GDDL 上没有符合条件的关卡（这不太正常，可能是接口变了）"
+        return None, 0, "错误：GDDL返回的信息显示存在0个符合条件的关卡（显然不应该发生）"
 
     recent = get_recent()
     rng = random.Random(today_seed(day))
@@ -175,7 +175,7 @@ async def handle_dailydemon(bot: Bot, event: Event) -> None:
     if not level:
         await dailydemon.finish(
             f"今日关卡是 {level_info.Meta.Name}（ID {level_info.ID}），"
-            "但是拿详细信息的时候出错了"
+            "渲染图片的时候发生未知错误。"
         )
 
     await bot.send(

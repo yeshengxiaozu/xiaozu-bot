@@ -12,6 +12,7 @@ from ..api.gdapi import GDLevel
 from ..api.gddlapi import Gddl
 from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi, PlatInfo
+from ..api.listsapi import Lists
 from ..constants import HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR, HTTP_TIMEOUT
 from ..paths import PLUGIN_DIR, RES_DIR
 
@@ -726,6 +727,8 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
         edel = getattr(aredl_info, "edel_enjoyment", None)
         if edel is not None and not getattr(aredl_info, "is_edel_pending", False):
             rank_parts.append(f"EDEL {edel:.1f}")
+    elif Lists.search_level(level_id):
+        rank_parts.append(Lists.search_level(level_id))
     rank_line = " | ".join(rank_parts) if rank_parts else ""
 
     # tier 信息与前缀
