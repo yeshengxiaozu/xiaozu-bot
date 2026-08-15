@@ -212,9 +212,14 @@ py -3.13 -m venv .venv313
 python scripts/run_updater.py
 ```
 
-**2026-07-27 实测跑通过一次**：10 个任务全绿，发布 6 个文件，用时 135 秒。
+**2026-07-27 实测跑通过一次**（GDDL 接入前）：10 个任务全绿，发布 6 个文件，用时 135 秒。
 数据变动量：hds -83 条、ids +26、nlw +27、plat_combined +53、nong_index +17
 （都是上游榜单的正常增删，核对过不是被截断）。
+
+GDDL 是同一流水线里的 best-effort 任务，快照发布为
+`xiaozu_bot/plugins/gdlevelsearch/data/gddl_levels.json`。它每天随更新器尝试抓取；
+如果 GDDL 失败，会保留旧快照并继续发布其他成功的数据源。`gddlapi.py` 会在在线请求失败时
+回退到这份快照。
 
 想先小范围试试，用这个 —— 它只发 2 个 Sheets 请求，而且产出的
 `platrank_weights.json` 属于中间文件（不在 `PUBLISHED_FILES` 里），

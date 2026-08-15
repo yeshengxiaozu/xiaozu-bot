@@ -3,7 +3,12 @@ from typing import Any
 import requests
 from nonebot import logger
 
-from ..constants import HTTP_OK
+try:
+    from ..constants import HTTP_OK
+    from . import gddl_store
+except ImportError:  # standalone updater script mode
+    import gddl_store
+    from constants import HTTP_OK
 
 apikey = "3244ce47ed4cf932ec348d68cdf72496de68ee48a2846044db906baa28a7cf7d"
 GDDL_PLAT_LENGTH = 6
@@ -311,13 +316,26 @@ class Gddl:
             "Authorization": f"Bearer {apikey}",
         }
         data = {"name": name}
+        remote_failed = True
         try:
             response = requests.get(url, headers=headers, params=data, timeout=GDDL_TIMEOUT)
             if response.status_code == HTTP_OK:
                 data = response.json()
-                return [GDDLLevel(level_data) for level_data in data["levels"]]
-        except requests.RequestException as e:
+                result = [GDDLLevel(level_data) for level_data in data["levels"]]
+                remote_failed = False
+                return result
+        except (requests.RequestException, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error fetching levels: {e}")
+        if remote_failed:
+            cached = []
+            for level in gddl_store.get_by_name(name):
+                try:
+                    cached.append(GDDLLevel(level))
+                except (KeyError, TypeError, ValueError):
+                    logger.warning("[gddl] skipping malformed local level")
+            if cached:
+                logger.info(f"[gddl] name lookup fell back to local snapshot: {name!r}")
+            return cached
         return []
 
     @staticmethod
@@ -340,10 +358,54 @@ class Gddl:
                 # 调用方想并发的话可以自己单独调 getleveltags
                 tags = Gddl.getleveltags(level_id) if with_tags else None
                 return GDDLLevel(data, tags)
-        except requests.RequestException as e:
+        except (requests.RequestException, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error fetching level by ID: {e}")
-            return None
+        cached = gddl_store.get_by_id(level_id)
+        if cached is not None:
+            try:
+                result = GDDLLevel(cached)
+            except (KeyError, TypeError, ValueError):
+                logger.warning(f"[gddl] malformed local level for ID {level_id}")
+            else:
+                logger.info(f"[gddl] ID lookup fell back to local snapshot: {level_id}")
+                return result
         return None
+
+    @staticmethod
+    def _searchlevels_online(
+        page: int = 0,
+        limit: int = 1,
+        sort: str = "ID",
+        sort_direction: str | None = None,
+        **filters: Any,
+    ) -> dict[str, Any] | None:
+        url = "https://gdladder.com/api/level/search"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {apikey}",
+        }
+        params: dict[str, Any] = {"page": max(0, page), "limit": limit, "sort": sort}
+        if sort_direction is not None:
+            params["sortDirection"] = sort_direction
+        params.update({k: v for k, v in filters.items() if v is not None})
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=GDDL_TIMEOUT)
+        except (requests.RequestException, ValueError) as e:
+            logger.error(f"[gddl] 搜索失败: {e}")
+            return None
+        if response.status_code != HTTP_OK:
+            logger.warning(f"[gddl] 搜索接口返回 {response.status_code}，参数 {params}")
+            return None
+        try:
+            payload = response.json()
+        except (ValueError, TypeError):
+            logger.error("[gddl] 搜索接口返回了无法解析的 JSON")
+            return None
+        if not isinstance(payload, dict) or "levels" not in payload:
+            logger.error("[gddl] 搜索接口返回了无效的 payload")
+            return None
+        return payload
 
     @staticmethod
     def searchlevels(
@@ -352,29 +414,25 @@ class Gddl:
         sort: str = "ID",
         **filters: Any,
     ) -> dict[str, Any] | None:
-        """按条件搜 GDDL，返回原始响应（带 total / limit / page / levels）。
-
-        filters 直接透传给接口，常用的有 minRating / maxRating（1-39）、
-        minEnjoyment / maxEnjoyment（0-10）、minSubmissionCount。
-        请求失败返回 None。
-        """
-        url = "https://gdladder.com/api/level/search"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {apikey}",
-        }
-        params: dict[str, Any] = {"page": max(0, page), "limit": limit, "sort": sort}
-        params.update({k: v for k, v in filters.items() if v is not None})
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=15)
-        except requests.RequestException as e:
-            logger.error(f"[gddl] 搜索失败: {e}")
-            return None
-        if response.status_code != HTTP_OK:
-            logger.warning(f"[gddl] 搜索接口返回 {response.status_code}，参数 {params}")
-            return None
-        return response.json()
+        """按条件搜 GDDL，远端失败时使用本地快照。"""
+        remote_filters = dict(filters)
+        sort_direction = remote_filters.pop("sortDirection", None)
+        payload = Gddl._searchlevels_online(
+            page=page,
+            limit=limit,
+            sort=sort,
+            sort_direction=sort_direction,
+            **remote_filters,
+        )
+        if payload is not None:
+            return payload
+        return gddl_store.search_levels(
+            page=page,
+            limit=limit,
+            sort=sort,
+            sort_direction=sort_direction,
+            **remote_filters,
+        )
 
     @staticmethod
     def getlevelbyindex(index: int, **filters: Any) -> GDDLLevel | None:

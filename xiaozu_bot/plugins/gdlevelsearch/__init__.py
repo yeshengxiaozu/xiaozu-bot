@@ -13,7 +13,7 @@ import asyncio
 
 from nonebot import get_driver, logger, require
 
-from .api import aredlapi, gdapi, gddlapi, nlwapi, platapi  # noqa: F401
+from .api import aredlapi, gdapi, gddl_store, gddlapi, nlwapi, platapi  # noqa: F401
 from .render import draw, iconrender, icons  # noqa: F401
 
 require("nonebot_plugin_apscheduler")
@@ -26,7 +26,12 @@ def reload_all() -> None:
     不主动调用这个的话，updater 半夜抓完的新数据要等到下次重启才生效。
     """
     logger.info("[gdlevelsearch] 开始重载本地缓存")
-    for name, module in (("nlw", nlwapi), ("plat", platapi), ("aredl", aredlapi)):
+    for name, module in (
+        ("gddl", gddl_store),
+        ("nlw", nlwapi),
+        ("plat", platapi),
+        ("aredl", aredlapi),
+    ):
         try:
             module.reload()
         except Exception:

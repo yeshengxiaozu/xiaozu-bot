@@ -8,6 +8,7 @@
 「*gdsearch_manage help 查看管理命令帮助」一个入口。
 """
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -19,7 +20,6 @@ from nonebot.permission import SUPERUSER
 from nonebot.rule import Rule
 
 from .. import paths
-import asyncio
 
 try:
     from ..updater.jobs import getmetadata

@@ -10,9 +10,9 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from ..api.aredlapi import Aredl
 from ..api.gdapi import GDLevel
 from ..api.gddlapi import Gddl
+from ..api.listsapi import Lists
 from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi, PlatInfo
-from ..api.listsapi import Lists
 from ..constants import HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR, HTTP_TIMEOUT
 from ..paths import PLUGIN_DIR, RES_DIR
 

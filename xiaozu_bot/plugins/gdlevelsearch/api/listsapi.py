@@ -1,7 +1,7 @@
-'''
+"""
 These lists cant be fetched by api and will not frequently change,
 thus will be manually edited by myself
-'''
+"""
 
 IDL=[
     0, # there is no #0 so it occpupies index 0
@@ -34,6 +34,7 @@ IDL=[
     113550212, # December by Duque01
     37669046, # Theory of Visible v3 by BlueLite
     61644725, # Edens Blessing by Subwoofer
+    83059349, # Moon by MadisonYuko
     26258120, # Osiris by jakerz95
     92805174, # Linear Lane by UniverseDevon
     66212145, # Mint Candy by SoDaZ
@@ -48,7 +49,6 @@ IDL=[
     70444771, # Right Out by solstacoded
     21256194, # Cosmic Calamity by SrGuillester
     83325475, # Chimera by VERSU5
-    83059349, # Moon by MadisonYuko
     71572193, # Gang by Doggie
     134171086, # Time Lapse by GrenadeofTacos
     141463819, # Decapitate by Lia
@@ -227,6 +227,7 @@ HDL = [
     79947145,  # Skywanderers by theblackhell
     34084435,  # Switchblade by ryanab
     27762542,  # Epoch by fluore
+    6690054,   # Toxicpower by Rlol
     89777251,  # Cubic Force by edooox
     73670615,  # Anya II by anya21
     74651415,  # Dark Tides by rkath and more
@@ -308,7 +309,7 @@ HDL = [
     36441965,  # RippLeZ by endlevel and failure444
     48871881,  # Forrest Gamp by th04
     28115629,  # Club Chamber by dreameater
-    97317220,  # NOIR by falkuma
+    #97317220,  # NOIR by falkuma
 ]
 
 MDL = [
@@ -360,12 +361,12 @@ MDL = [
     72499462,  # Magic Mushroom
     70365234,  # escuro
     62307519,  # Burnt Toast II
-    9287687,  # Resurrection
     51445108,  # Frametrapped
     59391556,  # Judgement
     63493335,  # Thermal blast
     57334967,  # True Calamity
     63564063,  # Beyond (Krawler)
+    9287687,  # Resurrection
     652062,  # X Club
     79655559,  # Hydrangea
     60151777,  # LIGHT
@@ -620,7 +621,8 @@ EDL = [
 ]
 
 class Lists:
-    def search_level(id_value):
+    @staticmethod
+    def search_level(id_value: int|str):
         """
         在 IDL、HDL、MDL、EDL 四个列表中搜索 id。
         匹配成功返回形如 "IDL #20" 的字符串，否则返回 None。

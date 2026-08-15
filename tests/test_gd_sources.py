@@ -33,6 +33,7 @@ import pytest
 from PIL import Image, ImageChops
 
 from xiaozu_bot.plugins.gdlevelsearch import (
+    gddl_store,
     gddlapi,
     iconrender,
     icons,
@@ -200,6 +201,22 @@ def make_plat_row(level_id: str = "111", name: str = "Plat A", **over: Any) -> d
     }
     row.update(over)
     return row
+
+
+@pytest.fixture
+def gddl_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use an isolated in-memory GDDL snapshot for fallback tests."""
+    monkeypatch.setattr(gddl_store, "levels", [])
+    monkeypatch.setattr(gddl_store, "by_id", {})
+    monkeypatch.setattr(gddl_store, "_by_name", {})
+    monkeypatch.setattr(gddl_store, "fetched_at", None)
+    gddl_store._rebuild_indexes(
+        [
+            make_level_payload(ID=123, Meta=make_meta_payload(Name="Cached Level")),
+            make_level_payload(ID=456, Rating=30, Enjoyment=9, SubmissionCount=20),
+        ],
+        "test",
+    )
 
 
 # ==========================================================================
@@ -608,6 +625,38 @@ class TestGddlLevelLookup:
         import requests as _requests
         stub_requests.get("/api/level/123", _requests.Timeout("t"))
         assert Gddl.getlevelbyid(123) is None
+
+
+class TestGddlLocalFallback:
+    def test_id_lookup_uses_snapshot_after_remote_failure(
+        self, gddl_snapshot: None, stub_requests: Any
+    ) -> None:
+        import requests as _requests
+
+        stub_requests.get("/api/level/123", _requests.Timeout("t"))
+        level = Gddl.getlevelbyid(123, with_tags=False)
+        assert level is not None
+        assert level.Meta.Name == "Cached Level"
+
+    def test_name_lookup_uses_snapshot_after_remote_failure(
+        self, gddl_snapshot: None, stub_requests: Any
+    ) -> None:
+        import requests as _requests
+
+        stub_requests.get(GDDL_SEARCH_URL, _requests.ConnectionError("offline"))
+        levels = Gddl.getlevelsbyname("cached level")
+        assert [level.ID for level in levels] == [123]
+
+    def test_search_lookup_applies_local_filters_and_paging(
+        self, gddl_snapshot: None, stub_requests: Any
+    ) -> None:
+        import requests as _requests
+
+        stub_requests.get(GDDL_SEARCH_URL, _requests.ConnectionError("offline"))
+        payload = Gddl.searchlevels(page=0, limit=1, minRating=20)
+        assert payload is not None
+        assert payload["total"] == 2
+        assert [level["ID"] for level in payload["levels"]] == [123]
 
 
 class TestGddlSearch:

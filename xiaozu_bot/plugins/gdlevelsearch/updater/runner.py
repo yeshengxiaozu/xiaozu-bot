@@ -7,6 +7,7 @@ from nonebot import logger
 
 from .jobs import (
     fetchsfh,
+    gddl,
     getmetadata,
     hds,
     ids,
@@ -23,6 +24,7 @@ _lock = asyncio.Lock()
 
 # 每个任务： 任务名 -> 执行函数
 JOBS: dict[str, Callable[[], None]] = {
+    "gddl": gddl.fetch,
     "nlw": nlw.fetch,
     "ids": ids.fetch,
     "lw": lw.fetch,
@@ -40,9 +42,13 @@ JOBS: dict[str, Callable[[], None]] = {
 #   第 2 层：platbatch 要 platdata/platdiff/platrank_weights，
 #            getmetadata 要 nlw/ids/lw/hds
 STAGES: tuple[tuple[str, ...], ...] = (
-    ("nlw", "ids", "lw", "hds", "platdiff", "platrank", "platdata", "sfh"),
+    ("gddl", "nlw", "ids", "lw", "hds", "platdiff", "platrank", "platdata", "sfh"),
     ("platbatch", "getmetadata"),
 )
+
+# GDDL is a best-effort mirror. A failed scan must leave its old snapshot in
+# place, but it must not prevent unrelated sources from being published.
+OPTIONAL_JOBS = frozenset({"gddl"})
 
 
 async def _run_job(name: str) -> tuple[str, Exception | None]:
@@ -65,7 +71,8 @@ async def run_all_async(stop_on_error: bool = True) -> dict:
     """跑完整条流水线。
 
     同一层的任务并发跑，层与层之间等前一层全部结束。
-    **全部成功才会把 staging 里的东西发布到 data/**，中途挂了线上数据一动不动。
+    必需任务全部成功才会把 staging 里的东西发布到 data/；可降级任务失败时，
+    只发布其他已经成功的源。
     """
     if _lock.locked():
         raise RuntimeError("已经有一个更新任务在跑了，等它跑完再来")
@@ -89,16 +96,25 @@ async def run_all_async(stop_on_error: bool = True) -> dict:
                         {"job": name, "error": str(error), "type": type(error).__name__}
                     )
 
-            if results["failed"] and stop_on_error:
+            fatal_failures = [
+                item for item in results["failed"] if item["job"] not in OPTIONAL_JOBS
+            ]
+            if fatal_failures and stop_on_error:
                 logger.warning(
                     "[RUNNER] 这一层有失败的，停在这里不再往下跑，也不发布 —— "
                     "线上数据保持上一次的样子"
                 )
                 break
 
-        if results["failed"]:
+        fatal_failures = [
+            item for item in results["failed"] if item["job"] not in OPTIONAL_JOBS
+        ]
+        if fatal_failures:
             # 不发布，staging 留着方便查问题
-            raise RuntimeError(f"Updater failed: {results['failed']}")
+            raise RuntimeError(f"Updater failed: {fatal_failures}")
+
+        if results["failed"]:
+            logger.warning(f"[RUNNER] optional jobs failed; publishing other sources: {results['failed']}")
 
         results["published"] = publish()
         logger.info(f"[RUNNER] finished: {results}")

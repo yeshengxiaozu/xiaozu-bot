@@ -32,6 +32,7 @@ from xiaozu_bot.plugins.gdlevelsearch.updater import notify, paths, runner
 from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
     constants,
     fetchsfh,
+    gddl,
     getmetadata,
     googlesheetapi,
     hds,
@@ -119,6 +120,7 @@ class TestPaths:
     def test_发布清单与中间产物清单不重叠(self) -> None:
         # bot 只读 PUBLISHED_FILES 里这几个，INTERMEDIATE_FILES 是 platbatch 的输入
         assert paths.PUBLISHED_FILES == (
+            "gddl_levels.json",
             "nlw_levels.json",
             "ids_levels.json",
             "lw_levels.json",
@@ -281,8 +283,9 @@ def _install_jobs(
 class TestRunnerTables:
     """JOBS / STAGES 这两张表本身"""
 
-    def test_jobs_表就是这十个且指向对的函数(self) -> None:
+    def test_jobs_表就是这些且指向对的函数(self) -> None:
         assert {
+            "gddl": gddl.fetch,
             "nlw": nlw.fetch,
             "ids": ids.fetch,
             "lw": lw.fetch,
@@ -297,7 +300,7 @@ class TestRunnerTables:
 
     def test_stages_两层且不重不漏(self) -> None:
         assert runner.STAGES == (
-            ("nlw", "ids", "lw", "hds", "platdiff", "platrank", "platdata", "sfh"),
+            ("gddl", "nlw", "ids", "lw", "hds", "platdiff", "platrank", "platdata", "sfh"),
             ("platbatch", "getmetadata"),
         )
         flat = [name for stage in runner.STAGES for name in stage]
@@ -344,6 +347,30 @@ class TestRunnerRunAll:
         ).read_text(encoding="utf-8") == "COMBINED"
         # 发布完 staging 里就空了
         assert list(data_dirs.staging.iterdir()) == []
+
+    async def test_gddl_失败时保留旧快照但继续发布其他源(
+        self,
+        data_dirs: SimpleNamespace,
+        fresh_lock: asyncio.Lock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def job_gddl() -> None:
+            raise RuntimeError("GDDL 暂时不可用")
+
+        def job_nlw() -> None:
+            paths.staged("nlw_levels.json").write_text("NEW", encoding="utf-8")
+
+        _install_jobs(
+            monkeypatch,
+            {"gddl": job_gddl, "nlw": job_nlw},
+            (("gddl", "nlw"),),
+        )
+
+        result = await runner.run_all_async()
+
+        assert result["failed"][0]["job"] == "gddl"
+        assert result["published"] == ["nlw_levels.json"]
+        assert (data_dirs.data / "nlw_levels.json").read_text(encoding="utf-8") == "NEW"
 
     async def test_某个_job_挂了就绝不发布_线上数据一动不动(
         self,

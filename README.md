@@ -154,10 +154,11 @@ pytest 的 `tmp_path`，干净 checkout 上照样全绿。
 ## 数据更新
 
 `gdlevelsearch` 的关卡数据来自 `xiaozu_bot/plugins/gdlevelsearch/data/*.json`，
-由 `updater/` 下的十个抓取任务生成：
+由 `updater/` 下的十一个抓取任务生成：
 
 - 每天凌晨 3 点自动跑一次（`updater/__init__.py` 里注册的定时任务）
 - 超级用户可以发 `*gdsearch_update` 手动触发
+- GDDL 快照写入 `data/gddl_levels.json`；它是 best-effort 任务，远端失败会保留旧快照，不阻塞其他数据源发布
 
 两条路径跑完都会调 `reload_all()` 把新数据读进内存，**不需要重启 bot**。
 各个 api 模块是在 import 时把数据读进模块级 list/dict 的，
@@ -168,16 +169,20 @@ pytest 的 `tmp_path`，干净 checkout 上照样全绿。
 任务按依赖分成两层，同一层并发跑（都是网络 IO，丢线程池里）：
 
 ```
-第 1 层： nlw  ids  lw  hds  platdiff  platrank  platdata  sfh
+第 1 层： gddl  nlw  ids  lw  hds  platdiff  platrank  platdata  sfh
 第 2 层： platbatch（要上面三个 plat 文件）  getmetadata（要上面四个 levels 文件）
 ```
 
-抓下来的东西先写进 `data/.staging/`，**整条流水线全绿了才原子地搬进 `data/`**。
+抓下来的东西先写进 `data/.staging/`，**必需任务成功后才原子地搬进 `data/`**。
 
 这一步是必须的：`nlw`/`ids`/`lw`/`hds` 抓下来的数据是不带 metadata 的，
 要等最后 `getmetadata` 回填。以前是直接写进 `data/`，中间任何一步失败
 （runner 默认遇错即停）都会让 bot 读到缺 metadata 的半成品，把好数据冲掉。
-现在失败就不发布，`data/` 保持上一次的样子，中间产物留在 `.staging/` 方便排查。
+必需任务失败就不发布，`data/` 保持上一次的样子，中间产物留在 `.staging/` 方便排查；
+GDDL 属于可降级任务，单独失败时其他成功的数据源仍会发布。
+
+`gddlapi.py` 查询时优先访问 GDDL 在线接口；在线请求失败后，按关卡 ID、名称或搜索条件回退到
+`data/gddl_levels.json` 快照，因此 GDDL 暂时不可用时已有数据仍可查询。
 
 ## 关键配置与外部服务
 

@@ -19,6 +19,7 @@ STAGING_DIR = DATA_DIR / ".staging"
 
 # 这些是 bot 真正会读的文件，只有它们需要"做完才发布"
 PUBLISHED_FILES = (
+    "gddl_levels.json",
     "nlw_levels.json",
     "ids_levels.json",
     "lw_levels.json",
@@ -82,7 +83,7 @@ def publish() -> list[str]:
     用 os.replace，同一个文件系统上是原子的，不会出现读到写一半的文件。
     返回实际发布了哪些文件。
 
-    **注意原子性的边界**：每个文件各自是原子的，但这里是 6 次独立的 replace。
+    **注意原子性的边界**：每个文件各自是原子的，但这里是 7 次独立的 replace。
     中途被 kill / 磁盘满，DATA_DIR 里会留下「一部分是新的、一部分是上一轮的」
     的混合状态。重跑一次就能收敛，但别把它当成一次全有或全无的事务。
 
