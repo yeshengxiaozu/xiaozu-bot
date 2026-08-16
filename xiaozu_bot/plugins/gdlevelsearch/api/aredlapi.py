@@ -24,7 +24,7 @@ name*: string
 position*: integer
 publisher_id*: uuid # the code didn't use the internal id of aredl
 points*: integer
-legacy*: boolean
+status*: enum       # Pending┃MainList┃Legacy┃Removed
 level_id*: integer
 two_player*: bool   # Whether this is the 2P version of a level or not.
 tags*: [string or null]
@@ -40,7 +40,7 @@ class AREDLLevel:
     name: str
     position: int
     points: int #100x of actual display point
-    legacy: bool
+    status: str
     level_id: int
     two_player: bool
     tags: list[str]
@@ -56,7 +56,8 @@ class AREDLLevel:
         self.position = jsondict["position"]
         self.name = jsondict["name"]
         self.points = jsondict["points"]
-        self.legacy = jsondict["legacy"]
+        self.status = jsondict["status"]
+        self.legacy = (self.status == "Legacy") 
         self.level_id = jsondict["level_id"]
         self.two_player = jsondict["two_player"]
         self.tags = jsondict["tags"]
@@ -103,6 +104,9 @@ def get_aredl_levels() -> list[AREDLLevel]:
         except (OSError, json.JSONDecodeError):
             logger.exception(f"[aredlapi] 缓存读不了，当过期处理: {aredlfilepath}")
             data = {}
+        except :
+            logger.exception(f"[aredlapi] 缓存读取时出现其他错误，当过期处理: {aredlfilepath}")
+            data = {}
         if True:
             timestamp = data.get("timestamp")
             if timestamp and time.time() - timestamp < 24 * 3600:
@@ -121,7 +125,7 @@ def get_aredl_levels() -> list[AREDLLevel]:
             "position": level.position,
             "name": level.name,
             "points": level.points,
-            "legacy": level.legacy,
+            "status": level.status,
             "level_id": level.level_id,
             "two_player": level.two_player,
             "tags": level.tags,
@@ -170,6 +174,9 @@ def get_arepl_levels() -> list[AREDLLevel]:
         except (OSError, json.JSONDecodeError):
             logger.exception(f"[aredlapi] 缓存读不了，当过期处理: {areplfilepath}")
             data = {}
+        except :
+            logger.exception(f"[aredlapi] 缓存读取时出现其他错误，当过期处理: {areplfilepath}")
+            data = {}
         if True:
             timestamp = data.get("timestamp")
             if timestamp and time.time() - timestamp < 24 * 3600:
@@ -190,7 +197,7 @@ def get_arepl_levels() -> list[AREDLLevel]:
             "position": level.position,
             "name": level.name,
             "points": level.points,
-            "legacy": level.legacy,
+            "status": level.status,
             "level_id": level.level_id,
             "two_player": level.two_player,
             "tags": level.tags,
