@@ -679,7 +679,7 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
         if plat_info.pemonlist:
             rank_parts.append(f"{plat_info.pemonlist}(Pemonlist)")
     elif aredl_info:
-        if getattr(aredl_info, "legacy", False):
+        if getattr(aredl_info, "status", False) == "Legacy":
             rank_parts.append("AREDL #Legacy")
         else:
             rank_parts.append(f"AREDL #{aredl_info.position}")

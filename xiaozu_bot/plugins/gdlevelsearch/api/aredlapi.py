@@ -57,7 +57,6 @@ class AREDLLevel:
         self.name = jsondict["name"]
         self.points = jsondict["points"]
         self.status = jsondict["status"]
-        self.legacy = (self.status == "Legacy") 
         self.level_id = jsondict["level_id"]
         self.two_player = jsondict["two_player"]
         self.tags = jsondict["tags"]
