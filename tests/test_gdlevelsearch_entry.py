@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any
 
 import pytest
@@ -24,7 +25,11 @@ from PIL import Image
 from tests.conftest import DEFAULT_USER_ID, FakeBot, run_handler, sent_texts
 from xiaozu_bot.plugins import gdlevelsearch
 from xiaozu_bot.plugins.gdlevelsearch import SearchResult, icons
-from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import GDLevel, GDUser
+from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
+    GDAPIUnavailable,
+    GDLevel,
+    GDUser,
+)
 from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import GDDLLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.nlwapi import Level as NlwLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.platapi import PlatInfo
@@ -388,6 +393,56 @@ class TestSearchByName:
         sources()
         assert gdlevelsearch.search_by_name("Nope") == []
 
+    def test_gddl_failure_does_not_hide_local_source_matches(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _gddl, _nlw, _plat = sources(
+            nlw=[nlw_level("42", "Fallback", creator="Cached")]
+        )
+
+        def _broken(_name: str) -> Any:
+            raise RuntimeError("temporary GDDL outage")
+
+        monkeypatch.setattr(svc_search.Gddl, "getlevelsbyname", _broken)
+
+        got = gdlevelsearch.search_by_name("Fallback")
+
+        assert [(item.id, item.name, item.creator) for item in got] == [
+            (42, "Fallback", "Cached")
+        ]
+
+    def test_nlw_failure_does_not_hide_gddl_matches(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _gddl, _nlw, _plat = sources(gddl=[gddl_level(7, "Stable")])
+
+        def _broken(_name: str) -> Any:
+            raise RuntimeError("temporary NLW outage")
+
+        monkeypatch.setattr(svc_search.Nlw, "getlevelbyname", _broken)
+
+        got = gdlevelsearch.search_by_name("Stable")
+
+        assert [(item.id, item.name) for item in got] == [(7, "Stable")]
+
+    def test_plat_failure_does_not_hide_nlw_matches(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _gddl, _nlw, _plat = sources(
+            nlw=[nlw_level("8", "Stable Plat Fallback")]
+        )
+
+        def _broken(_name: str) -> Any:
+            raise RuntimeError("temporary Plat outage")
+
+        monkeypatch.setattr(svc_search.Platapi, "getlevelbyname", _broken)
+
+        got = gdlevelsearch.search_by_name("Stable Plat Fallback")
+
+        assert [(item.id, item.name) for item in got] == [
+            (8, "Stable Plat Fallback")
+        ]
+
     def test_gddl_none_is_tolerated(self, sources: Any) -> None:
         """`Gddl.getlevelsbyname(name) or []` —— 接口返回 None 不该炸"""
         sources(gddl=None)
@@ -550,6 +605,57 @@ class TestSearchByName:
         gdlevelsearch.search_by_name("X")
 
         assert "Find a result in LW: Unknown Tier" in rec.infos
+
+    def test_slow_source_times_out_without_hiding_other_matches(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """单个数据源卡住时，其余来源仍按 deadline 内返回结果。"""
+        release = threading.Event()
+
+        def _slow(_name: str) -> Any:
+            release.wait(10)
+            return []
+
+        _gddl, _nlw, _plat = sources(nlw=[nlw_level("42", "Fast", creator="Cached")])
+        monkeypatch.setattr(_gddl, "getlevelsbyname", _slow)
+        monkeypatch.setattr(svc_search, "SOURCE_LOOKUP_TIMEOUT", 0.2)
+
+        try:
+            got = gdlevelsearch.search_by_name("Fast")
+        finally:
+            release.set()
+
+        assert [(item.id, item.name, item.creator) for item in got] == [
+            (42, "Fast", "Cached")
+        ]
+
+    def test_sources_are_queried_in_parallel(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GDDL 阻塞时 NLW 仍能开始执行，证明三个查询不是串行的。"""
+        started = threading.Event()
+        gate = threading.Event()
+
+        def _gddl_waiting(_name: str) -> Any:
+            started.set()
+            gate.wait(5)
+            return []
+
+        def _nlw_releases(_name: str) -> Any:
+            started.wait(5)
+            gate.set()
+            return [nlw_level("42", "Parallel", creator="Cached")]
+
+        _gddl, _nlw, _plat = sources()
+        monkeypatch.setattr(_gddl, "getlevelsbyname", _gddl_waiting)
+        monkeypatch.setattr(_nlw, "getlevelbyname", _nlw_releases)
+        monkeypatch.setattr(svc_search, "SOURCE_LOOKUP_TIMEOUT", 5)
+
+        got = gdlevelsearch.search_by_name("Parallel")
+
+        assert [(item.id, item.name, item.creator) for item in got] == [
+            (42, "Parallel", "Cached")
+        ]
 
 
 # ==========================================================================
@@ -830,6 +936,26 @@ class TestHandleGdsearch:
         )
         # 行为是「查不到就回一句话，不出图」
         assert len(sent_texts(fake_bot)) == 1
+        assert image_segments(fake_bot) == []
+
+    async def test_gdapi_network_failure_gets_a_retryable_message(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _unavailable(_id: int) -> Any:
+            raise GDAPIUnavailable("offline")
+
+        monkeypatch.setattr(cmd_search, "getlevelinfo", _unavailable)
+
+        await run_handler(
+            gdlevelsearch.gdsearch,
+            fake_bot,
+            make_group_event("*gdsearch"),
+            arg="12345",
+        )
+
+        assert sent_texts(fake_bot) == [
+            cmd_search.GD_API_UNAVAILABLE_MESSAGE
+        ]
         assert image_segments(fake_bot) == []
 
     async def test_no_name_match_says_so(

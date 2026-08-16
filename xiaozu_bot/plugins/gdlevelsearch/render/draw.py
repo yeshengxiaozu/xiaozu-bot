@@ -3,7 +3,6 @@ import io
 import os
 from pathlib import Path
 
-import httpx
 from nonebot import logger
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -13,8 +12,8 @@ from ..api.gddlapi import Gddl
 from ..api.listsapi import Lists
 from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi, PlatInfo
-from ..constants import HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR, HTTP_TIMEOUT
 from ..paths import PLUGIN_DIR, RES_DIR
+from . import thumbnail as _thumbnail
 
 # Tier 颜色表
 TIER_COLOR_MAP = {
@@ -243,65 +242,23 @@ try:
 except (OSError, json.JSONDecodeError):
     logger.warning(f"NONG 索引读不了，歌名会退回 GD 自带的：{_nong_path}")
 
-# 缩略图偶尔会因为网络抖动/服务冷启动拿不到，直接退占位图太可惜了，重试几次。
-THUMB_RETRIES = 3
-THUMB_BACKOFF = 0.6          # 第 n 次失败后等 THUMB_BACKOFF * n 秒
-
-
-async def _none() -> None:
-    """gather 里占个位，省得为「没有缩略图」单开一条分支"""
-    return
-
-
-def _thumbnail_id_for(level_id: int | None) -> str:
-    """官方前三关在缩略图站上的 id 和关卡 id 不一样，单独映射"""
-    if level_id is None:
-        return ""
-    # 必须带下界：没有下界的话负数会从表尾倒着取（-1 静默拿到别的关的图），
-    # 再小一点直接 IndexError。负数是无意义输入，和其他表外 id 一样原样转字符串。
-    if 0 <= level_id <= 3:
-        return ["0", "14", "18", "20"][level_id]
-    return str(level_id)
-
-
-async def _fetch_thumbnail(thumbnail_id: str) -> bytes | None:
-    """取关卡缩略图，失败会重试。拿不到返回 None。
-
-    404 不重试 —— 那是「这关本来就没有缩略图」，重试只会让每张没图的卡
-    白等三倍时间。只有超时、连接失败、5xx 这种一看就是暂时性的才重试。
-    """
-    url = f"https://levelthumbs.prevter.me/thumbnail/{thumbnail_id}/medium"
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "image/webp,image/*;q=0.8"}
-
-    async with httpx.AsyncClient(follow_redirects=True) as client:
-        for attempt in range(1, THUMB_RETRIES + 1):
-            try:
-                resp = await client.get(url, headers=headers, timeout=HTTP_TIMEOUT)
-            except Exception as e:
-                logger.warning(
-                    f"缩略图第 {attempt}/{THUMB_RETRIES} 次失败（{type(e).__name__}）: {thumbnail_id}"
-                )
-            else:
-                if resp.status_code == HTTP_NOT_FOUND:
-                    logger.info(f"这关没有缩略图（404），不重试: {thumbnail_id}")
-                    return None
-                if resp.status_code == HTTP_OK and resp.content:
-                    if attempt > 1:
-                        logger.info(f"缩略图第 {attempt} 次尝试成功: {thumbnail_id}")
-                    return resp.content
-                logger.warning(
-                    f"缩略图第 {attempt}/{THUMB_RETRIES} 次拿到 HTTP {resp.status_code}"
-                    f"（{len(resp.content)}B）: {thumbnail_id}"
-                )
-                if resp.status_code < HTTP_SERVER_ERROR:
-                    # 4xx（除了 404）重试也没意义
-                    return None
-
-            if attempt < THUMB_RETRIES:
-                await asyncio.sleep(THUMB_BACKOFF * attempt)
-
-    logger.warning(f"缩略图 {THUMB_RETRIES} 次都没拿到，退回占位图: {thumbnail_id}")
-    return None
+def _optional_remote_result(value: object, source: str) -> object | None:
+    """Convert an optional remote-task exception into a missing value."""
+    if isinstance(value, asyncio.CancelledError):
+        raise value
+    if isinstance(value, BaseException):
+        if not isinstance(value, Exception):
+            raise value
+        logger.warning(f"{source} lookup failed while rendering: {value}")
+        return None
+    return value
+# Keep the historical names importable from draw.py while the implementation
+# lives in the focused thumbnail module.
+THUMB_RETRIES = _thumbnail.THUMB_RETRIES
+THUMB_BACKOFF = _thumbnail.THUMB_BACKOFF
+_none = _thumbnail._none
+_thumbnail_id_for = _thumbnail._thumbnail_id_for
+_fetch_thumbnail = _thumbnail._fetch_thumbnail
 
 
 async def create_level_image(
@@ -688,8 +645,12 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
     gddl_info, gddl_tags, thumb_bytes = await asyncio.gather(
         asyncio.to_thread(Gddl.getlevelbyid, level_id, False),
         asyncio.to_thread(Gddl.getleveltags, level_id),
-        _fetch_thumbnail(thumbnail_id) if (httpx and thumbnail_id) else _none(),
+        _fetch_thumbnail(thumbnail_id) if thumbnail_id else _none(),
+        return_exceptions=True,
     )
+    gddl_info = _optional_remote_result(gddl_info, "GDDL level")
+    gddl_tags = _optional_remote_result(gddl_tags, "GDDL tags")
+    thumb_bytes = _optional_remote_result(thumb_bytes, "thumbnail")
     if gddl_info is not None and gddl_tags:
         gddl_info.Tags = gddl_tags
 

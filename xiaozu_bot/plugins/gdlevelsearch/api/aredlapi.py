@@ -10,6 +10,8 @@ from nonebot import logger
 
 from ..constants import HTTP_OK
 from ..paths import DATA_DIR as WORK_FOLDER
+from .http import ServiceUnavailable
+from .http import request as http_request
 
 # 外网请求超时。不设的话 requests 会一直等，
 # 而这个模块在 import 期就会去抓，等于能把 bot 卡死在启动阶段。
@@ -78,8 +80,8 @@ def fetch_aredl_levels() -> list[AREDLLevel]:
         "Content-Type": "application/json",
     }
     try:
-        response = requests.get(url, headers=headers, timeout=AREDL_TIMEOUT)
-    except requests.RequestException as e:
+        response = http_request("GET", url, headers=headers, timeout=AREDL_TIMEOUT)
+    except (requests.RequestException, ServiceUnavailable) as e:
         logger.error(f"[aredlapi] 拉取失败 {url}: {e}")
         return []
     if response.status_code == HTTP_OK:
@@ -145,8 +147,8 @@ def fetch_arepl_levels() -> list[AREDLLevel]:
         "Content-Type": "application/json",
     }
     try:
-        response = requests.get(url, headers=headers, timeout=AREDL_TIMEOUT)
-    except requests.RequestException as e:
+        response = http_request("GET", url, headers=headers, timeout=AREDL_TIMEOUT)
+    except (requests.RequestException, ServiceUnavailable) as e:
         logger.error(f"[aredlapi] 拉取失败 {url}: {e}")
         return []
     if response.status_code == HTTP_OK:

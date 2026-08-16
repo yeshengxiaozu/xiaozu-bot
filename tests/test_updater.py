@@ -1698,7 +1698,7 @@ class TestPersistently:
 
         assert f() == "ok"
         assert len(calls) == 3
-        assert clock.slept == [2, 4]  # 2**1, 2**2
+        assert clock.slept == ([60, 60] if status == 429 else [2, 4])
 
     @pytest.mark.parametrize("status", [400, 403, 404])
     def test_不可重试的_HttpError_直接抛(

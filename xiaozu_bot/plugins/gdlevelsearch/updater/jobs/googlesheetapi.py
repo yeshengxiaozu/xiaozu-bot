@@ -20,6 +20,8 @@ def persistently(func):
             except HttpError as e:
                 if e.resp.status in (429, 500, 503):
                     wait = 2 ** attempt
+                    if e.resp.status == 429:
+                        wait = 60
                     logger.warning(f'API error {e.resp.status}, retrying in {wait}s...')
                     time.sleep(wait)
                 else:

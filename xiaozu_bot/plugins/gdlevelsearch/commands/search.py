@@ -7,6 +7,7 @@ from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
+from ..api.gdapi import GDAPIUnavailable
 from ..services.search import (
     _clear_all_sessions,
     get_difficulty,
@@ -20,6 +21,7 @@ gdsearch = on_command("gdsearch")
 # 搜索缓存与超时
 search_cache = {}
 timeout_tasks = {}
+GD_API_UNAVAILABLE_MESSAGE = "GD 关卡服务器暂时无法访问，请稍后重试"
 
 
 def has_cache(event: Event) -> bool:
@@ -53,7 +55,10 @@ async def handle_gdsearch(
 
     # ID 搜索
     if len(name) > 4 and name.isdigit():
-        level = await asyncio.to_thread(getlevelinfo, int(name))
+        try:
+            level = await asyncio.to_thread(getlevelinfo, int(name))
+        except GDAPIUnavailable:
+            await gdsearch.finish(GD_API_UNAVAILABLE_MESSAGE)
         if level:
             await send_result(bot, event, level)
         else:
@@ -66,7 +71,10 @@ async def handle_gdsearch(
         await gdsearch.finish(f"没有找到名为 '{name}' 的demon关卡")
 
     if len(results) == 1:
-        level = await asyncio.to_thread(getlevelinfo, results[0].id)
+        try:
+            level = await asyncio.to_thread(getlevelinfo, results[0].id)
+        except GDAPIUnavailable:
+            await gdsearch.finish(GD_API_UNAVAILABLE_MESSAGE)
         if level:
             await send_result(bot, event, level)
         else:
@@ -125,7 +133,10 @@ async def handle_choice(bot: Bot, event: Event) -> None:
         timeout_tasks[user_id].cancel()
         del timeout_tasks[user_id]
 
-    level = await asyncio.to_thread(getlevelinfo, result.id)
+    try:
+        level = await asyncio.to_thread(getlevelinfo, result.id)
+    except GDAPIUnavailable:
+        await gdsearchselect.finish(GD_API_UNAVAILABLE_MESSAGE)
     if level:
         await send_result(bot, event, level)
     else:

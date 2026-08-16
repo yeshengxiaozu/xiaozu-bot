@@ -13,7 +13,10 @@ from threading import Lock
 import requests
 import urllib3
 from nonebot import logger
-from requests.adapters import HTTPAdapter, Retry
+
+from xiaozu_bot.utils.json_storage import write_json_atomic
+
+from ...api.http import RequestSession
 
 
 # 抄出来的ui函数
@@ -40,16 +43,8 @@ UNMATCHED_FILENAME = "metadata_unmatched.json"
 MAX_CONCURRENT = 5          # 建议不超过 5，减少 API 压力
 REQUEST_INTERVAL = 0.5      # 秒
 
-# ---------- HTTP 会话（全局复用） ----------
-http = requests.Session()
-retry_strategy = Retry(
-    total=3,
-    backoff_factor=0.5,
-    status_forcelist=[429, 500, 502, 503, 504],
-    allowed_methods=["GET"]
-)
-adapter = HTTPAdapter(max_retries=retry_strategy)
-http.mount("https://", adapter)
+# ---------- HTTP 会话（统一走插件共享的重试策略） ----------
+http = RequestSession()
 
 # 默认 verify 参数：优先使用 certifi，否则关闭验证（不推荐）
 DEFAULT_VERIFY = CA_BUNDLE or False
@@ -69,8 +64,7 @@ def save_metadata_cache(cache: list[dict], cache_dir: str):
     """保存 metadata 缓存到文件"""
     path = Path(cache_dir) / CACHE_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(cache, f, ensure_ascii=False, indent=4)
+    write_json_atomic(path, cache, indent=4)
     return []
 
 def load_metadata_cache(cache_dir: Path):
@@ -103,8 +97,7 @@ def save_unmatched(cache_dir: Path, entries: list[dict]) -> None:
     """写入「自动匹配确定失败」的关卡清单。"""
     path = Path(cache_dir) / UNMATCHED_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(entries, f, ensure_ascii=False, indent=4)
+    write_json_atomic(path, entries, indent=4)
 
 
 def _prune_unmatched(cache_dir: Path, unmatched_map: dict, resolved_keys: set) -> None:

@@ -1,6 +1,7 @@
-import json
 import time
 from typing import Any
+
+from xiaozu_bot.utils.json_storage import write_json_atomic
 
 from .googlesheetapi import SheetAPI, persistently
 
@@ -54,8 +55,11 @@ def fetch_levels(service, sheet_name: str) -> list[dict[str, Any]]:
 def fetch():
     data = fetch_levels(service=SheetAPI.get_service(),sheet_name="Weight")
     output_path = staged("platrank_weights.json")
-    with output_path.open("w", encoding="utf-8") as f:
-       json.dump({"timestamp": time.time(), "levels": data}, f, indent=4)
+    write_json_atomic(
+        output_path,
+        {"timestamp": time.time(), "levels": data},
+        indent=4,
+    )
 
 if __name__ == "__main__":
     fetch()

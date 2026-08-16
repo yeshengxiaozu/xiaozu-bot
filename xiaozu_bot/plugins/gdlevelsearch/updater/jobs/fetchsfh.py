@@ -1,7 +1,8 @@
-import json
-
-import requests
 from nonebot import logger
+
+from xiaozu_bot.utils.json_storage import write_json_atomic
+
+from ...api.http import request as http_request
 
 try:
     from ..paths import staged
@@ -52,20 +53,30 @@ def main():
     headers = {
         "Content-Type": "application/json",
     }
-    response = requests.get(url, headers=headers, timeout=30)
-    if response.status_code == 200:
+    try:
+        response = http_request("GET", url, headers=headers, timeout=30)
+    except Exception as exc:
+        logger.error(f"[SFH] 索引下载失败，保留旧数据: {exc}")
+        return
+    if response.status_code != 200:
+        logger.error(f"[SFH] 索引返回 HTTP {response.status_code}，保留旧数据")
+        return
+    try:
         data = response.json()
-    else:
+    except Exception as exc:
+        logger.error(f"[SFH] 索引 JSON 解析失败，保留旧数据: {exc}")
         return
     # 2. 构建映射
     logger.info("[SFH] 正在构建 level ID -> 歌曲信息 映射...")
     mapping = build_level_to_song_mapping(data)
+    if not isinstance(mapping, dict) or not mapping:
+        logger.error("[SFH] 新映射为空，疑似上游数据损坏，保留旧快照")
+        return
     logger.info(f"[SFH] 共映射了 {len(mapping)} 个 level ID")
 
     # 3. 保存到本地 JSON 文件
     output_file = staged("nong_index.json")
-    with output_file.open("w", encoding="utf-8") as f:
-        json.dump(mapping, f, indent=4, ensure_ascii=False)
+    write_json_atomic(output_file, mapping, indent=4)
     logger.info(f"[SFH] 映射已保存到 {output_file}")
 
 if __name__ == "__main__":

@@ -6,18 +6,29 @@ from urllib.parse import unquote
 import requests
 from nonebot import logger
 
+from ..constants import HTTP_RETRY_ATTEMPTS, HTTP_RETRY_BACKOFF
+from .http import ServiceUnavailable
+from .http import request as http_request
+
 DEMON_STARS = 10
 LENGTH_PLAT = 5
 
 # boomlings 是 RobTop 自己的服务器，经常半死不活。
 # requests 默认是不超时的，一个卡住的连接能让调用方等到天荒地老。
 GD_TIMEOUT = 15
+GD_RETRIES = HTTP_RETRY_ATTEMPTS
+GD_RETRY_BACKOFF = HTTP_RETRY_BACKOFF
 
 # GD 服务器一页固定给 10 条
 GD_PAGE_SIZE = 10
 # 响应里的 total 到这个数就是封顶了，不是真实条数。
 # 实测：搜 bloodbath 不加筛选 total=9999，加 star=1 之后 total=5。
 GD_TOTAL_CAP = 9999
+
+
+class GDAPIUnavailable(RuntimeError):
+    """Raised when the Geometry Dash level endpoint stays unreachable."""
+
 
 OFFICIAL_SONG_MAP = {
     -1: ("Practice: Stay Inside Me", "OcularNebula"),
@@ -576,6 +587,7 @@ def _search_levels(
     game_version: int = 22,
     binary_version: int = 42,
     gdw: int = 0,
+    raise_on_request_error: bool = False,
     **kwargs: Any,
 ) -> SearchPage:
     """i dumped every param so it looks like this lol"""
@@ -627,7 +639,20 @@ def _search_levels(
     data.update(kwargs)
 
     try:
-        resp = requests.post(url, data=data, headers=headers, timeout=GD_TIMEOUT)
+        resp = http_request(
+            "POST",
+            url,
+            data=data,
+            headers=headers,
+            timeout=GD_TIMEOUT,
+        )
+    except ServiceUnavailable as e:
+        logger.error(f"[gdapi] search request exhausted: {e}")
+        if raise_on_request_error:
+            raise GDAPIUnavailable(
+                "Geometry Dash level service is temporarily unavailable"
+            ) from e
+        return SearchPage(page=page)
     except requests.RequestException as e:
         logger.error(f"[gdapi] 搜索请求失败: {e}")
         return SearchPage(page=page)
@@ -745,7 +770,13 @@ def get_user_info(
         "targetAccountID": str(user_id)
     }
     try:
-        resp = requests.post(url, data=data, headers=headers, timeout=GD_TIMEOUT)
+        resp = http_request(
+            "POST",
+            url,
+            data=data,
+            headers=headers,
+            timeout=GD_TIMEOUT,
+        )
     except requests.RequestException as e:
         logger.error(f"[gdapi] get_user_info({user_id}) 请求失败: {e}")
         return None
@@ -766,7 +797,13 @@ def search_user(
         "str": name
     }
     try:
-        resp = requests.post(url, data=data, headers=headers, timeout=GD_TIMEOUT)
+        resp = http_request(
+            "POST",
+            url,
+            data=data,
+            headers=headers,
+            timeout=GD_TIMEOUT,
+        )
     except requests.RequestException as e:
         logger.error(f"[gdapi] search_user({name}) 请求失败: {e}")
         return None
@@ -839,11 +876,12 @@ def get_level_by_id(level_id: int) -> GDLevel | None:
     """通过关卡 ID 获取单个关卡对象。"""
     if level_id in OFFICIAL_LEVELS:
         return OFFICIAL_LEVELS[level_id]
-    results = search_levels(
+    page = _search_levels(
         query=str(level_id),
+        raise_on_request_error=True,
     )
-    if results:
-        return results[0]
+    if page.levels:
+        return page.levels[0]
     return None
 
 def get_user_by_name(user_name: str) -> GDUser | None:

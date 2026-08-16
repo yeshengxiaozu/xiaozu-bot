@@ -2,6 +2,8 @@ import json
 import time
 from typing import Any
 
+from xiaozu_bot.utils.json_storage import write_json_atomic
+
 from .constants import PLAT_DIFF_ID, PLAT_DIFF_NAME
 from .googlesheetapi import SheetAPI, persistently
 
@@ -149,8 +151,7 @@ def save_plat_diff_cache(entries: list[PlatDiff]) -> None:
         'entries': [entry.to_dict() for entry in entries],
     }
 
-    with cache_path.open('w', encoding='utf-8') as f:
-        json.dump(payload, f, indent=4)
+    write_json_atomic(cache_path, payload, indent=4)
 
 
 def load_plat_diff_cache() -> list[PlatDiff]:

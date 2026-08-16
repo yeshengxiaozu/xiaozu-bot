@@ -1,8 +1,9 @@
-import json
 import time
 from typing import Any
 
 from nonebot import logger
+
+from xiaozu_bot.utils.json_storage import write_json_atomic
 
 from .googlesheetapi import SheetAPI, persistently
 
@@ -189,9 +190,14 @@ def fetch():
     logger.info('[NLW] 开始生成 NLW 数据文件')
     data = fetch_all_levels()
     output_path = staged("nlw_levels.json")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as f:
-       json.dump({"timestamp": time.time(), "levels": data['regular']+data['platformer']+data['pending']}, f, indent=4)
+    write_json_atomic(
+        output_path,
+        {
+            "timestamp": time.time(),
+            "levels": data['regular'] + data['platformer'] + data['pending'],
+        },
+        indent=4,
+    )
     logger.info(f"[NLW] 已保存到 {output_path}")
 
 if __name__ == '__main__':

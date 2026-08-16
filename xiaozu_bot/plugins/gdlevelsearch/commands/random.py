@@ -6,6 +6,7 @@ from nonebot import on_command
 from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 
+from ..api.gdapi import GDAPIUnavailable
 from ..api.gddlapi import Gddl
 from ..services.search import getlevelinfo, send_result
 
@@ -51,7 +52,10 @@ async def handle_gdrandom(bot: Bot, event: Event, arg: Message = CommandArg()) -
     if not result:
         await gdrandom.finish("没有找到符合条件的关卡，把条件放宽点试试")
 
-    level = await asyncio.to_thread(getlevelinfo, result.ID)
+    try:
+        level = await asyncio.to_thread(getlevelinfo, result.ID)
+    except GDAPIUnavailable:
+        await gdrandom.finish("GD 关卡服务器暂时无法访问，请稍后重试")
     if level:
         await send_result(bot, event, level)
     else:

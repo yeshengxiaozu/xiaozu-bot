@@ -30,7 +30,7 @@ import pytest
 
 from tests.conftest import REPO_ROOT
 from xiaozu_bot.utils import json_storage
-from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage
+from xiaozu_bot.utils.json_storage import JsonRedis, plugin_storage, write_json_atomic
 
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 _MISSING = object()
@@ -897,6 +897,72 @@ class TestLoadAndSave:
         assert "小组" in text
         assert "\\u" not in text
         assert "\n    " in text  # indent=4
+
+
+# ===========================================================================
+# write_json_atomic（updater 落盘共用）
+# ===========================================================================
+class TestWriteJsonAtomic:
+    def test_writes_complete_payload_then_replaces(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "snapshot.json"
+        seen: list[tuple[Path, Path, str]] = []
+        real_replace = os.replace
+
+        def spy_replace(src: Any, dst: Any) -> Any:
+            seen.append((Path(src), Path(dst), Path(src).read_text(encoding="utf-8")))
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(json_storage.os, "replace", spy_replace)
+        write_json_atomic(path, {"levels": [1, 2], "中文": "值"}, indent=2)
+
+        assert len(seen) == 1
+        src, dst, content = seen[0]
+        assert src.name.startswith(".snapshot.json.") and src.name.endswith(".tmp")
+        assert dst == path
+        assert json.loads(content) == {"levels": [1, 2], "中文": "值"}
+        assert not src.exists()
+        assert json.loads(path.read_text(encoding="utf-8")) == {
+            "levels": [1, 2],
+            "中文": "值",
+        }
+
+    def test_failed_replace_preserves_old_snapshot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "snapshot.json"
+        path.write_text('{"levels": [1]}', encoding="utf-8")
+
+        def boom(src: Any, dst: Any) -> Any:
+            raise OSError("磁盘满了")
+
+        monkeypatch.setattr(json_storage.os, "replace", boom)
+        with pytest.raises(OSError, match="磁盘满了"):
+            write_json_atomic(path, {"levels": [1, 2]})
+
+        assert json.loads(path.read_text(encoding="utf-8")) == {"levels": [1]}
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_serialization_failure_keeps_old_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "snapshot.json"
+        path.write_text('{"levels": [1]}', encoding="utf-8")
+        monkeypatch.setattr(
+            json_storage.os, "replace", lambda *a: pytest.fail("不应 replace")
+        )
+
+        with pytest.raises(TypeError):
+            write_json_atomic(path, {"levels": [object()]})
+
+        assert json.loads(path.read_text(encoding="utf-8")) == {"levels": [1]}
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_creates_missing_parent_directory(self, tmp_path: Path) -> None:
+        path = tmp_path / "nested" / "data" / "snapshot.json"
+        write_json_atomic(path, {"ok": True})
+        assert json.loads(path.read_text(encoding="utf-8")) == {"ok": True}
 
 
 # ===========================================================================

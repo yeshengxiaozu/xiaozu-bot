@@ -5,6 +5,8 @@ from typing import Any
 
 from nonebot import logger
 
+from xiaozu_bot.utils.json_storage import write_json_atomic
+
 try:
     from ..paths import staged, staged_or_published
 except ImportError:
@@ -255,8 +257,7 @@ def batch_process():
     }
 
     output_path = staged("plat_combined.json")
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(output_data, f, indent=4)
+    write_json_atomic(output_path, output_data, indent=4)
 
     logger.info(f"[PLATBATCH] saved to {output_path}")
 

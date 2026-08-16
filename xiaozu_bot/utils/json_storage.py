@@ -1,6 +1,7 @@
 import fnmatch
 import json
 import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -20,6 +21,45 @@ def plugin_storage(plugin_file: str | Path, name: str = "storage.json") -> Path:
     错误的位置新建一个空存储 —— 数据看着就像丢了。
     """
     return Path(plugin_file).resolve().parent / "data" / name
+
+
+def write_json_atomic(
+    path: str | Path,
+    payload: Any,
+    *,
+    indent: int | None = 2,
+    ensure_ascii: bool = False,
+) -> None:
+    """Write JSON through a same-directory temporary file and replace.
+
+    Readers either see the previous complete snapshot or the new complete
+    snapshot; they never observe a partially serialized file.  A failed write
+    leaves the existing target untouched.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_name = handle.name
+            json.dump(payload, handle, ensure_ascii=ensure_ascii, indent=indent)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, target)
+        temporary_name = None
+    finally:
+        if temporary_name:
+            try:
+                Path(temporary_name).unlink()
+            except OSError:
+                logger.warning("atomic JSON temporary cleanup failed: %s", temporary_name)
 
 
 class JsonRedis:

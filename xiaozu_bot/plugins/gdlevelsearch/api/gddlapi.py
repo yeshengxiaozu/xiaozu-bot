@@ -6,9 +6,12 @@ from nonebot import logger
 try:
     from ..constants import HTTP_OK
     from . import gddl_store
+    from .http import request as http_request
 except ImportError:  # standalone updater script mode
     import gddl_store
     from constants import HTTP_OK
+
+    from xiaozu_bot.plugins.gdlevelsearch.api.http import request as http_request
 
 apikey = "3244ce47ed4cf932ec348d68cdf72496de68ee48a2846044db906baa28a7cf7d"
 GDDL_PLAT_LENGTH = 6
@@ -255,7 +258,7 @@ class Gddl:
             else:
                 logger.warning(f"[gddl] 不认识的进度过滤 {progress_filter!r}，忽略")
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=15)
+            response = http_request("GET", url, headers=headers, params=params, timeout=15)
         except requests.RequestException as e:
             logger.error(f"[gddl] 拉取提交评分失败 level={level_id}: {e}")
             return None
@@ -276,7 +279,7 @@ class Gddl:
             "Authorization": f"Bearer {apikey}",
         }
         try:
-            response = requests.get(url, headers=headers, timeout=15)
+            response = http_request("GET", url, headers=headers, timeout=15)
         except requests.RequestException as e:
             logger.error(f"[gddl] 拉取分布失败 level={level_id}: {e}")
             return None
@@ -294,7 +297,7 @@ class Gddl:
             "Authorization": f"Bearer {apikey}",
         }
         try:
-            response = requests.get(url, headers=headers, timeout=GDDL_TIMEOUT)
+            response = http_request("GET", url, headers=headers, timeout=GDDL_TIMEOUT)
         except requests.RequestException as e:
             logger.error(f"[gddl] 拉 tags 失败 level={level_id}: {e}")
             return []
@@ -318,7 +321,7 @@ class Gddl:
         data = {"name": name}
         remote_failed = True
         try:
-            response = requests.get(url, headers=headers, params=data, timeout=GDDL_TIMEOUT)
+            response = http_request("GET", url, headers=headers, params=data, timeout=GDDL_TIMEOUT)
             if response.status_code == HTTP_OK:
                 data = response.json()
                 result = [GDDLLevel(level_data) for level_data in data["levels"]]
@@ -351,7 +354,7 @@ class Gddl:
             "Authorization": f"Bearer {apikey}",
         }
         try:
-            response = requests.get(url, headers=headers, timeout=GDDL_TIMEOUT)
+            response = http_request("GET", url, headers=headers, timeout=GDDL_TIMEOUT)
             if response.status_code == HTTP_OK:
                 data = response.json()
                 # with_tags=False 时不在这里顺带拉 tags —— 那是第二次往返，
@@ -390,7 +393,7 @@ class Gddl:
             params["sortDirection"] = sort_direction
         params.update({k: v for k, v in filters.items() if v is not None})
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=GDDL_TIMEOUT)
+            response = http_request("GET", url, headers=headers, params=params, timeout=GDDL_TIMEOUT)
         except (requests.RequestException, ValueError) as e:
             logger.error(f"[gddl] 搜索失败: {e}")
             return None

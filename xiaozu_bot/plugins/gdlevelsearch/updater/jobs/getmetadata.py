@@ -3,6 +3,8 @@ from pathlib import Path
 
 from nonebot import logger
 
+from xiaozu_bot.utils.json_storage import write_json_atomic
+
 try:
     from ..paths import DATA_DIR, staged, staged_or_published
 except ImportError:
@@ -25,8 +27,7 @@ def save_json_file(filepath, data):
     """写入 JSON 文件"""
     path = Path(filepath)
     try:
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        write_json_atomic(path, data, indent=4)
     except OSError as e:
         logger.error(f"[GETMETADATA] 写入缓存失败: {filepath}: {e}")
 

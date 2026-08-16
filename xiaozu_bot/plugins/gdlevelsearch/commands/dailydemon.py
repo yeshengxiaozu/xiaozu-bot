@@ -18,6 +18,7 @@ from nonebot.internal.adapter import Bot, Event
 
 from xiaozu_bot.utils.json_storage import JsonRedis
 
+from ..api.gdapi import GDAPIUnavailable
 from ..api.gddlapi import Gddl, GDDLLevel
 from ..services.search import getlevelinfo, send_result
 
@@ -171,7 +172,10 @@ async def handle_dailydemon(bot: Bot, event: Event) -> None:
     if level_info is None:
         await dailydemon.finish(err)
 
-    level = await asyncio.to_thread(getlevelinfo, level_info.ID)
+    try:
+        level = await asyncio.to_thread(getlevelinfo, level_info.ID)
+    except GDAPIUnavailable:
+        await dailydemon.finish("GD 关卡服务器暂时无法访问，请稍后重试")
     if not level:
         await dailydemon.finish(
             f"今日关卡是 {level_info.Meta.Name}（ID {level_info.ID}），"

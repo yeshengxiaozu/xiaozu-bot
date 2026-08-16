@@ -239,6 +239,8 @@ def fetch_all_levels() -> list[dict[str, Any]] | None:
         for level in payload.get("levels") or []:
             if isinstance(level, dict) and "ID" in level:
                 seen[int(level["ID"])] = level
+        if number % 50 == 0:
+            logger.info(f"[gddl_store] page {number} fetched")
 
     if total and len(seen) < total * MIN_COMPLETE_RATIO:
         logger.error(f"[gddl_store] only fetched {len(seen)}/{total} levels")

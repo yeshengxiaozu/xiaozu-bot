@@ -26,6 +26,7 @@ import pytest
 import requests
 
 from xiaozu_bot.plugins.gdlevelsearch import aredlapi, gdapi
+from xiaozu_bot.plugins.gdlevelsearch.api import http as http_transport
 from xiaozu_bot.plugins.gdlevelsearch.api.aredlapi import Aredl, AREDLLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
     GDLevel,
@@ -1190,6 +1191,15 @@ class TestSearchLevelsErrorPaths:
         assert result.is_empty is True
         assert result.page == 2
 
+    def test_request_exception_is_retried(self, stub_requests: Any, monkeypatch) -> None:
+        monkeypatch.setattr(http_transport.time, "sleep", lambda _seconds: None)
+        stub_requests.post(GD_LEVELS_URL, requests.Timeout("boomlings 又死了"))
+
+        result = gdapi.search_levels_page(query="x")
+
+        assert result.is_empty is True
+        assert len(stub_requests.calls) == gdapi.GD_RETRIES
+
     @pytest.mark.parametrize(
         "text",
         ["", "garbage", "a#b", "a#b#c"],
@@ -1284,9 +1294,35 @@ class TestGetLevelById:
         stub_requests.post(GD_LEVELS_URL, text="-1")
         assert gdapi.get_level_by_id(999999999) is None
 
-    def test_network_failure_returns_none(self, stub_requests: Any) -> None:
+    def test_network_failure_raises_after_retries(
+        self, stub_requests: Any, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(http_transport.time, "sleep", lambda _seconds: None)
         stub_requests.post(GD_LEVELS_URL, requests.ConnectionError("no route"))
-        assert gdapi.get_level_by_id(999999999) is None
+
+        with pytest.raises(gdapi.GDAPIUnavailable):
+            gdapi.get_level_by_id(999999999)
+        assert len(stub_requests.calls) == gdapi.GD_RETRIES
+
+    def test_network_failure_can_recover_on_retry(
+        self, stub_requests: Any, make_response: Any, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(http_transport.time, "sleep", lambda _seconds: None)
+        attempts = 0
+
+        def flaky(**_kwargs: Any) -> Any:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise requests.Timeout("temporary outage")
+            return make_response(200, text=search_response())
+
+        stub_requests.post(GD_LEVELS_URL, flaky)
+
+        level = gdapi.get_level_by_id(10565740)
+
+        assert level is not None
+        assert attempts == 2
 
     def test_search_is_unfiltered(self, stub_requests: Any) -> None:
         """只带 str，不带任何筛选参数（page 默认 0）。"""
@@ -1519,11 +1555,12 @@ class TestFetchAredlLevels:
         stub_requests.get(AREDL_URL, exc)
         assert aredlapi.fetch_aredl_levels() == []
 
-    def test_no_retry(self, stub_requests: Any) -> None:
+    def test_retry_budget_is_shared(self, stub_requests: Any, monkeypatch) -> None:
         """失败就是失败，不重试 —— 只发一次请求。"""
         stub_requests.get(AREDL_URL, requests.Timeout("timeout"))
+        monkeypatch.setattr(http_transport.time, "sleep", lambda _seconds: None)
         aredlapi.fetch_aredl_levels()
-        assert len(stub_requests.calls) == 1
+        assert len(stub_requests.calls) == http_transport.DEFAULT_POLICY.attempts
 
 
 class TestFetchAreplLevels:

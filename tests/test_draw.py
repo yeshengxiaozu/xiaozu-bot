@@ -26,12 +26,20 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from xiaozu_bot.plugins.gdlevelsearch import draw
+from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import GDLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.platapi import PlatInfo
+from xiaozu_bot.plugins.gdlevelsearch.constants import (
+    HTTP_NOT_FOUND,
+    HTTP_OK,
+    HTTP_SERVER_ERROR,
+)
 from xiaozu_bot.plugins.gdlevelsearch.render.draw import (
     _fetch_thumbnail,
     _load_font,
     _none,
+    _optional_remote_result,
     _thumbnail_id_for,
+    create_image_from_gdlevel,
     create_vertical_gradient,
     rounded_image,
     select_tags,
@@ -420,7 +428,7 @@ class TestMisc:
     def test_retry_constants(self) -> None:
         assert draw.THUMB_RETRIES == 3
         assert draw.THUMB_BACKOFF == 0.6
-        assert (draw.HTTP_OK, draw.HTTP_NOT_FOUND, draw.HTTP_SERVER_ERROR) == (
+        assert (HTTP_OK, HTTP_NOT_FOUND, HTTP_SERVER_ERROR) == (
             200, 404, 500,
         )
 
@@ -479,6 +487,24 @@ class TestFetchThumbnail:
         assert len(stub_httpx.requests) == 1
         assert no_sleep == []
 
+    async def test_recovers_after_an_empty_200_response(
+        self, stub_httpx: Any, no_sleep: list[float]
+    ) -> None:
+        payload = png_bytes()
+        responses = [
+            httpx.Response(200, content=b""),
+            httpx.Response(200, content=payload),
+        ]
+
+        def _next(_request: httpx.Request) -> httpx.Response:
+            return responses.pop(0)
+
+        stub_httpx.get(THUMB_URL, _next)
+
+        assert await _fetch_thumbnail("128") == payload
+        assert len(stub_httpx.requests) == 2
+        assert no_sleep == [pytest.approx(0.6)]
+
     async def test_other_4xx_also_stops_immediately(
         self, stub_httpx: Any, no_sleep: list[float]
     ) -> None:
@@ -532,4 +558,63 @@ class TestFetchThumbnail:
         stub_httpx.get(THUMB_URL, httpx.Response(200, content=b""))
 
         assert await _fetch_thumbnail("128") is None
-        assert len(stub_httpx.requests) == 1
+        assert len(stub_httpx.requests) == 3
+        assert no_sleep == [pytest.approx(0.6), pytest.approx(1.2)]
+
+
+# ========================================================================
+# create_image_from_gdlevel remote-failure isolation
+# ========================================================================
+class TestCreateImageFromGdlevelRemoteFailures:
+    def test_successful_remote_value_is_kept(self) -> None:
+        assert _optional_remote_result(b"image", "thumbnail") == b"image"
+
+    def test_cancellation_is_not_swallowed(self) -> None:
+        with pytest.raises(asyncio.CancelledError):
+            _optional_remote_result(asyncio.CancelledError(), "thumbnail")
+
+    async def test_one_remote_failure_does_not_abort_rendering(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        level = GDLevel()
+        level.level_id = 123
+        level.level_name = "Network Safe"
+        level.length = 3
+        level.is_demon = False
+        level.stars = 5
+        level.demon_difficulty = 0
+        level.is_two_player = False
+        level.epic = 0
+        level.feature_score = 0
+        level.description = ""
+        level.official_song = 0
+        level.custom_song_id = 0
+
+        def _broken(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("temporary upstream failure")
+
+        monkeypatch.setattr(draw.Gddl, "getlevelbyid", _broken)
+        monkeypatch.setattr(draw.Gddl, "getleveltags", _broken)
+
+        async def _broken_thumb(*_args: Any, **_kwargs: Any) -> bytes | None:
+            raise RuntimeError("temporary thumbnail failure")
+
+        monkeypatch.setattr(draw, "_fetch_thumbnail", _broken_thumb)
+        monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Lists, "search_level", lambda _id: None)
+
+        rendered: dict[str, Any] = {}
+
+        async def _fake_create_level_image(**kwargs: Any) -> Image.Image:
+            rendered.update(kwargs)
+            return Image.new("RGB", (1, 1))
+
+        monkeypatch.setattr(draw, "create_level_image", _fake_create_level_image)
+
+        image = await create_image_from_gdlevel(level)
+
+        assert image.size == (1, 1)
+        assert rendered["thumb_bytes"] is None
+        assert rendered["title_text"] == "No info"
