@@ -63,9 +63,9 @@ def build_level_mapping(data):
 
 def fetch():
     # 1. 从 URL 读取数据
-    url = "https://pemonlist.com/api/list"
+    url = "https://pemonlist.com/api/list?limit=1000"
     headers = {
-        "Content-Type": "application/json?limit=1000",
+        "Content-Type": "application/json",
     }
 
     try:

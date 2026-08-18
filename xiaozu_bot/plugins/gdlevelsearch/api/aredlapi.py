@@ -103,7 +103,7 @@ def get_aredl_levels() -> list[AREDLLevel]:
         except (OSError, json.JSONDecodeError):
             logger.exception(f"[aredlapi] 缓存读不了，当过期处理: {aredlfilepath}")
             data = {}
-        except :
+        except : # noqa: E722
             logger.exception(f"[aredlapi] 缓存读取时出现其他错误，当过期处理: {aredlfilepath}")
             data = {}
         if True:
@@ -173,7 +173,7 @@ def get_arepl_levels() -> list[AREDLLevel]:
         except (OSError, json.JSONDecodeError):
             logger.exception(f"[aredlapi] 缓存读不了，当过期处理: {areplfilepath}")
             data = {}
-        except :
+        except : # noqa: E722
             logger.exception(f"[aredlapi] 缓存读取时出现其他错误，当过期处理: {areplfilepath}")
             data = {}
         if True:

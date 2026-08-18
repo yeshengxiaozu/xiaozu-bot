@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import re
 import time
-from xiaozu_bot.utils.json_storage import write_json_atomic
+
 import requests
+
+from xiaozu_bot.utils.json_storage import write_json_atomic
+
 try:
     from ..paths import staged
 except ImportError:
@@ -69,13 +72,14 @@ def fetch() -> None:
             re.DOTALL,
         )
 
-        for match in pattern.finditer(text):
-            levels.append({
+        levels.extend(
+            {
                 "position": match.group("position"),
                 "name": match.group("name").strip(),
                 "creator": match.group("creator").strip().lower(),
-            })
-
+            }
+            for match in pattern.finditer(text)
+        )
     # 按排名重新排序
     levels.sort(key=lambda x: int(x["position"]))
 

@@ -11,23 +11,21 @@ from .jobs import (
     getmetadata,
     hds,
     idl,
-    lists,
     ids,
+    lists,
     lw,
     nlw,
-    platbatch,
-    tpl,
     pemonlist,
+    platbatch,
     platdiff,
+    tpl,
 )
 from .paths import clear_staging, ensure_dirs, publish
 
 _lock = asyncio.Lock()
 
 # 每个任务： 任务名 -> 执行函数
-# 暂时测试一下，禁用掉大部分任务
 JOBS: dict[str, Callable[[], None]] = {
-    "gddl": gddl.fetch,
     "nlw": nlw.fetch,
     "ids": ids.fetch,
     "lw": lw.fetch,
@@ -47,16 +45,11 @@ JOBS: dict[str, Callable[[], None]] = {
 #   第 2 层：platbatch 要 platdata/platdiff/platrank_weights，
 #            getmetadata 要 nlw/ids/lw/hds
 STAGES: tuple[tuple[str, ...], ...] = (
-    ("gddl", "nlw", "ids", "lw", "hds",
+    ("nlw", "ids", "lw", "hds",
      "idl","lists","tpl","pemonlist",
      "platdiff", "sfh"),
     ("platbatch", "getmetadata"),
 )
-
-# GDDL is a best-effort mirror. A failed scan must leave its old snapshot in
-# place, but it must not prevent unrelated sources from being published.
-OPTIONAL_JOBS = frozenset({"gddl"})
-
 
 async def _run_job(name: str) -> tuple[str, Exception | None]:
     """把同步的抓取函数丢到线程里跑。
@@ -104,7 +97,7 @@ async def run_all_async(stop_on_error: bool = True) -> dict:
                     )
 
             fatal_failures = [
-                item for item in results["failed"] if item["job"] not in OPTIONAL_JOBS
+                item for item in results["failed"]
             ]
             if fatal_failures and stop_on_error:
                 logger.warning(
@@ -114,14 +107,11 @@ async def run_all_async(stop_on_error: bool = True) -> dict:
                 break
 
         fatal_failures = [
-            item for item in results["failed"] if item["job"] not in OPTIONAL_JOBS
+            item for item in results["failed"]
         ]
         if fatal_failures:
             # 不发布，staging 留着方便查问题
             raise RuntimeError(f"Updater failed: {fatal_failures}")
-
-        if results["failed"]:
-            logger.warning(f"[RUNNER] optional jobs failed; publishing other sources: {results['failed']}")
 
         results["published"] = publish()
         logger.info(f"[RUNNER] finished: {results}")

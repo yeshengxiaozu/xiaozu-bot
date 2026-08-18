@@ -1,21 +1,22 @@
 import json
 from pathlib import Path
+
 from ..paths import DATA_DIR
 
-class Lists:
-    DATA_PATHS = {
-        "IDL": DATA_DIR/"idl.json",
-        "HDL": DATA_DIR/"hdl.json",
-        "MDL": DATA_DIR/"mdl.json",
-        "EDL": DATA_DIR/"edl.json",
-    }
+DATA_PATHS = {
+    "IDL": DATA_DIR/"idl.json",
+    "HDL": DATA_DIR/"hdl.json",
+    "MDL": DATA_DIR/"mdl.json",
+    "EDL": DATA_DIR/"edl.json",
+}
 
+class Lists:
     @staticmethod
     def _load_level_ids(
         name: str,
         path: str|Path,
     ) -> list[int]:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
         if name == "IDL":
@@ -33,11 +34,11 @@ class Lists:
     def _get_lists(cls) -> dict[str, list[int]]:
         return {
             name: cls._load_level_ids(name, path)
-            for name, path in cls.DATA_PATHS.items()
+            for name, path in DATA_PATHS.items()
         }
 
     @classmethod
-    def search_level(cls, id_value: int | str):
+    def search_level(cls, id_value: int | str) -> str | None:
         """
         在 IDL、HDL、MDL、EDL 四个列表中搜索 id。
 

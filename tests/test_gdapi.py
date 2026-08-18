@@ -1422,7 +1422,7 @@ AREDL_SAMPLE: dict[str, Any] = {
     "name": "Society",
     "position": 1,
     "points": 5000,
-    "legacy": False,
+    "status": "MainList",
     "level_id": 127323087,
     "two_player": False,
     "tags": ["2.2", "Long", "NONG"],
@@ -1487,6 +1487,7 @@ class TestAREDLLevel:
             AREDL_SAMPLE,
             # 五个可空字段全部填上真值，确认不是被写死成 None
             aredl_dict_payload(
+                status="legacy",
                 song=489111,
                 edel_enjoyment=42.5,
                 is_edel_pending=True,

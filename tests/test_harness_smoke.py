@@ -370,7 +370,7 @@ class FakeLevelsResponse:
                 "name": "Bloodbath",
                 "position": 1,
                 "points": 100,
-                "legacy": False,
+                "status": "MainList",
                 "level_id": 10565740,
                 "two_player": False,
                 "tags": [],

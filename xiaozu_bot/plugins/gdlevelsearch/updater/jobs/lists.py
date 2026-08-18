@@ -205,12 +205,9 @@ def fetch() -> None:
         }
 
         for future in as_completed(futures):
-            list_name, config = futures[future]
+            _list_name, config = futures[future]
 
-            try:
-                _, levels = future.result()
-            except Exception:
-                raise
+            _, levels = future.result()
 
             write_json_atomic(
                 config["output"],

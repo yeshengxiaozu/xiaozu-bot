@@ -23,8 +23,10 @@ from .. import paths
 
 try:
     from ..updater.jobs import getmetadata
+    from ..updater.paths import publish
 except ImportError:
     from updater.jobs import getmetadata
+    from updater.paths import publish
 
 # 两个运行时文件都在 data/ 下（gitignore 已覆盖 *.json），不参与 staging/发布
 UNMATCHED_PATH: Path = paths.DATA_DIR / "metadata_unmatched.json"
@@ -178,6 +180,7 @@ async def _process_input(event: Event, text: str) -> str | None:
         # Trigger getmetadata so the manual id is applied immediately.
         try:
             await asyncio.to_thread(getmetadata.main)
+            publish()
         except Exception:
             logger.exception("[gdsearch_manage] 自动触发 getmetadata 失败")
         if remaining:

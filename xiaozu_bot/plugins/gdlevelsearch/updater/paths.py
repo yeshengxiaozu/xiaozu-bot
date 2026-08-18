@@ -34,9 +34,9 @@ PUBLISHED_FILES = (
 
 # 这些只是中间数据（platbatch 的输入），bot 不读，留在 staging 就行
 INTERMEDIATE_FILES = (
-    "platdata.json",
+    "tpl.json",
+    "pemonlist.json",
     "platdiff.json",
-    "platrank_weights.json",
 )
 
 
