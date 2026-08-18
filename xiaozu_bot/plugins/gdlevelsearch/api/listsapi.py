@@ -43,6 +43,7 @@ IDL=[
     92744725, # Pictured as Perfect by tenzk
     68894546, # Eternal Star by GOKILL
     41352267, # The Deathless by Edicts
+    71806852, # Prime by Astriiix
     71514628, # Mania by RatQuesadilla
     82092116, # meow by MrGm211
     93459117, # Fragment by kr1t
@@ -91,6 +92,7 @@ IDL=[
     64843746, # Daily Lunch Special by GrenadeofTacos
     77396433, # Ainoseikatsu by TheBlackHell
     131793727, # hype moments and aur by MineCat9000
+    95063448, # Quantum Diffraction by splash
     67330594, # Memory for Dummies by dashiell10
     108676195, # Chaewon by issanagay
     100378250, # Taranto by SirDany
@@ -119,6 +121,7 @@ IDL=[
     9834617, # Galatic Fragility by TeamSmokeWeed
     119819940, # Bust It Out by Schram
     81107508, # sacred guild by DogGoesWoof
+    76698426, # Desolate Void by SirPotatOwO
     61660310, # Glass by JAVP
     67566303, # Atmosphere by Sting871
     36522386, # Nine CircleX by ViPriN
@@ -133,8 +136,8 @@ IDL=[
     121125922, # Bygawne by Toxic GD
     55007730, # EB by ILRELL
     42980861, # Superstrike by Lemons
+    17683166, # New Supersonic by CronosMx
     23409681, # Galaxy Breaker by BIANOX
-    76698426, # Desolate Void by SirPotatOwO
     17988770, # belic by ozpectro
     105741958, # BLAZING Through by unlurshy
     54934851, # Affine by Arclia
@@ -152,9 +155,6 @@ IDL=[
     130864201, # Happy Birthday by IronIngot
     126657080, # The End is Here by Doggie
     102935585, # IMPULSE by jbooster
-    81043147, # Auroral Bloom by Loltad
-    17683166, # New Supersonic by CronosMx
-    57638361, # Kyrie Eleison by ViPriN
 ]
 
 HDL = [

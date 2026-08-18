@@ -36,7 +36,7 @@ def fetch_regular_cells(service, sheet_name: str) -> dict[str, list]:
     creators = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'D')
     lengths = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'E')
     skillsets = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'G')
-    descriptions = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'H')
+    descriptions = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'I')
 
     return {
         'levels': levels,
