@@ -10,6 +10,8 @@ from .jobs import (
     gddl,
     getmetadata,
     hds,
+    idl,
+    lists,
     ids,
     lw,
     nlw,
@@ -23,12 +25,15 @@ from .paths import clear_staging, ensure_dirs, publish
 _lock = asyncio.Lock()
 
 # 每个任务： 任务名 -> 执行函数
+# 暂时测试一下，禁用掉大部分任务
 JOBS: dict[str, Callable[[], None]] = {
     "gddl": gddl.fetch,
     "nlw": nlw.fetch,
     "ids": ids.fetch,
     "lw": lw.fetch,
     "hds": hds.fetch,
+    "idl": idl.fetch,
+    "lists": lists.fetch,
     "platdiff": platdiff.fetch,
     "platrank": platrank.fetch,
     "platdata": platdata.fetch,
@@ -42,7 +47,9 @@ JOBS: dict[str, Callable[[], None]] = {
 #   第 2 层：platbatch 要 platdata/platdiff/platrank_weights，
 #            getmetadata 要 nlw/ids/lw/hds
 STAGES: tuple[tuple[str, ...], ...] = (
-    ("gddl", "nlw", "ids", "lw", "hds", "platdiff", "platrank", "platdata", "sfh"),
+    ("gddl", "nlw", "ids", "lw", "hds",
+     "idl","lists",
+     "platdiff", "platrank", "platdata", "sfh"),
     ("platbatch", "getmetadata"),
 )
 

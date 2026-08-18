@@ -6,7 +6,7 @@ from nonebot import get_bot, logger
 
 from xiaozu_bot.utils.adapter_compat import send_private
 
-ADMIN_ID = 3251605531  # 改成你的 QQ
+ADMIN_ID = "F64625024CCE65B4A389808F50896488"  # 改成你的 QQ
 
 _last_error_key = None
 

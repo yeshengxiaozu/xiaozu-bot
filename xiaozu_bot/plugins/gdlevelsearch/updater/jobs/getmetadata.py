@@ -38,7 +38,7 @@ def test():
         enrich_levels_with_ids(flat_list, cache_dir=DATA_DIR)
 
 def main():
-    """给 nlw/ids/lw/hds 补 metadata。
+    """给 nlw/ids/lw/hds/idl 补 metadata。
 
     读的是 staging 里刚抓下来的那份（没抓到就退回上一次发布的），
     补完之后写回 staging —— 只有整条流水线都跑完，runner 才会把 staging
@@ -47,7 +47,7 @@ def main():
     metadata.json 是跨次运行的缓存，一直放在 DATA_DIR，不参与发布。
     """
     logger.info(f"[GETMETADATA] 开始补 metadata，缓存目录: {DATA_DIR}")
-    data_sources = ["nlw_levels.json", "ids_levels.json", "lw_levels.json", "hds_levels.json"]
+    data_sources = ["nlw_levels.json", "ids_levels.json", "lw_levels.json", "hds_levels.json", "idl.json"]
 
     # 加载所有数据
     all_data = {}

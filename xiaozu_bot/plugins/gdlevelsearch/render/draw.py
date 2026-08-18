@@ -30,6 +30,7 @@ TIER_COLOR_MAP = {
     # for IDS and HDS
     "Demote": "#3a86e4",
     "Legacy": "#808080",
+    "Leaderboard Mods Wall Of Shame": "#980000",
     # for LW
     "Merciless": "#a7e58d", "Monstrous": "#5bad96",
     "Apocalyptic": "#528cb1","Demonic": "#6d6ab0", "Menacing": "#9452a2",

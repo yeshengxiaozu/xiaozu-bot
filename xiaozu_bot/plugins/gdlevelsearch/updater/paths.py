@@ -24,6 +24,10 @@ PUBLISHED_FILES = (
     "ids_levels.json",
     "lw_levels.json",
     "hds_levels.json",
+    "idl.json",
+    "hdl.json",
+    "mdl.json",
+    "edl.json",
     "plat_combined.json",
     "nong_index.json",
 )
