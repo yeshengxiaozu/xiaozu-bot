@@ -16,7 +16,7 @@ PLUGIN_DIR = Path(__file__).resolve().parent.parent
 DATA_FILE = PLUGIN_DIR / "data" / "gddl_levels.json"
 
 PAGE_SIZE = 25
-FETCH_INTERVAL = 0.7
+FETCH_INTERVAL = 0.3
 RETRY_WAIT = 60
 MIN_COMPLETE_RATIO = 0.95
 TIER_MIN = 1.0

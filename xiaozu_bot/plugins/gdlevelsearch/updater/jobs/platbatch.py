@@ -78,96 +78,233 @@ def extract_base_name(name: str) -> tuple:
 
 def merge_plat_data() -> dict[str, PlatLevel]:
     """
-    合并来自三个模块的数据，以 name 为键值
+    合并来自 TPL、Pemon List、platdiff 的数据。
+
+    数据统一通过 GD Level ID 匹配：
+
+    tpl.json:
+        id       -> level.id
+        name     -> level.name
+        position -> level.tpl
+
+    pemonlist.json:
+        id       -> 匹配 level.id
+        position -> level.pemonlist
+
+    platdiff.json:
+        id        -> 匹配 level.id
+        tier      -> level.tier
+        creator   -> level.creator
+        tags      -> level.tags
+        enjoyment -> level.enjoyment
+        video     -> level.video
     """
-    logger.info("[PLATBATCH] loading platdata...")
+
+    # =========================================================
+    # 1. 加载 TPL
+    # =========================================================
+
+    logger.info("[PLATBATCH] loading tpl...")
+
     try:
-        with staged_or_published("platdata.json").open("r", encoding="utf-8") as f:
-            platdata_raw = json.load(f).get('data', [])
+        with staged_or_published("tpl.json").open("r", encoding="utf-8") as f:
+            tpl_raw = json.load(f)
     except FileNotFoundError:
-        logger.warning("[PLATBATCH] platdata.json not found, skip")
-        platdata_raw = []
+        logger.warning("[PLATBATCH] tpl.json not found, skip")
+        tpl_raw = {}
+
+    # =========================================================
+    # 2. 加载 Pemon List
+    # =========================================================
+
+    logger.info("[PLATBATCH] loading pemonlist...")
+
+    try:
+        with staged_or_published("pemonlist.json").open("r", encoding="utf-8") as f:
+            pemonlist_raw = json.load(f)
+    except FileNotFoundError:
+        logger.warning("[PLATBATCH] pemonlist.json not found, skip")
+        pemonlist_raw = {}
+
+    # =========================================================
+    # 3. 加载 platdiff
+    # =========================================================
 
     logger.info("[PLATBATCH] loading platdiff...")
+
     try:
         with staged_or_published("platdiff.json").open("r", encoding="utf-8") as f:
-            platdiff_raw = json.load(f).get('entries', [])
+            platdiff_raw = json.load(f).get("entries", [])
     except FileNotFoundError:
         logger.warning("[PLATBATCH] platdiff.json not found, skip")
         platdiff_raw = []
 
-    logger.info("[PLATBATCH] loading platrank...")
-    try:
-        with staged_or_published("platrank_weights.json").open("r", encoding="utf-8") as f:
-            platrank_raw = json.load(f).get('levels', [])
-    except FileNotFoundError:
-        logger.warning("[PLATBATCH] platrank_weights.json not found, skip")
-        platrank_raw = []
+    # =========================================================
+    # 4. 以 ID 为主键建立数据
+    # =========================================================
 
-    # 创建以 name 为键的字典
+    merged_by_id: dict[str, PlatLevel] = {}
+
+    # ---------------------------------------------------------
+    # TPL
+    # ---------------------------------------------------------
+
+    if isinstance(tpl_raw, dict):
+        for item in tpl_raw.values():
+            if not isinstance(item, dict):
+                continue
+
+            level_id = item.get("id")
+            name = item.get("name")
+
+            if level_id is None or not name:
+                continue
+
+            level_id = str(level_id)
+            name = str(name).strip()
+
+            if not name:
+                continue
+
+            level = PlatLevel(
+                name=name,
+                id=level_id,
+            )
+
+            if item.get("position") is not None:
+                level.tpl = str(item["position"])
+
+            merged_by_id[level_id] = level
+
+    logger.info(f"[PLATBATCH] loaded {len(merged_by_id)} TPL levels")
+
+    # ---------------------------------------------------------
+    # Pemon List
+    # ---------------------------------------------------------
+
+    pemon_matched = 0
+    pemon_unmatched = 0
+
+    if isinstance(pemonlist_raw, dict):
+        for item in pemonlist_raw.values():
+            if not isinstance(item, dict):
+                continue
+
+            level_id = item.get("id")
+
+            if level_id is None:
+                continue
+
+            level_id = str(level_id)
+
+            level = merged_by_id.get(level_id)
+
+            if level is None:
+                # Pemon 中存在，但 TPL 中不存在
+                name = item.get("name")
+
+                if not name:
+                    continue
+
+                level = PlatLevel(
+                    name=str(name).strip(),
+                    id=level_id,
+                )
+
+                merged_by_id[level_id] = level
+                pemon_unmatched += 1
+            else:
+                pemon_matched += 1
+
+            if item.get("position") is not None:
+                level.pemonlist = str(item["position"])
+
+    logger.info(
+        f"[PLATBATCH] Pemon matched: {pemon_matched}, "
+        f"unmatched: {pemon_unmatched}"
+    )
+
+    # ---------------------------------------------------------
+    # platdiff
+    # ---------------------------------------------------------
+
+    platdiff_matched = 0
+    platdiff_unmatched = 0
+
+    for item in platdiff_raw:
+        if not isinstance(item, dict):
+            continue
+
+        level_id = item.get("id")
+
+        if level_id is None:
+            continue
+
+        level_id = str(level_id)
+
+        level = merged_by_id.get(level_id)
+
+        if level is None:
+            # platdiff 中有，但 TPL / Pemon 都没有
+            # 不主动创建，避免出现没有列表排名的孤立数据
+            platdiff_unmatched += 1
+            continue
+
+        platdiff_matched += 1
+
+        if "tier" in item:
+            level.tier = item.get("tier")
+
+        if "creator" in item:
+            level.creator = item.get("creator")
+
+        if "tags" in item:
+            tags = item.get("tags")
+
+            if isinstance(tags, str):
+                tags = tags.strip()
+
+                if tags:
+                    level.tags = [
+                        tag.strip()
+                        for tag in tags.split(",")
+                        if tag.strip()
+                    ]
+                else:
+                    level.tags = []
+
+            elif isinstance(tags, list):
+                level.tags = [
+                    str(tag).strip()
+                    for tag in tags
+                    if str(tag).strip()
+                ]
+
+        if "enjoyment" in item:
+            level.enjoyment = item.get("enjoyment")
+
+        if "video" in item:
+            level.video = item.get("video")
+
+    logger.info(
+        f"[PLATBATCH] platdiff matched: {platdiff_matched}, "
+        f"unmatched: {platdiff_unmatched}"
+    )
+
+    # =========================================================
+    # 5. 最终转换为 name -> PlatLevel
+    # =========================================================
+
     merged: dict[str, PlatLevel] = {}
 
-    # 1. 加载 platdata
-    for item in platdata_raw:
-        name = item.get('name', '').strip()
-        if not name:
-            continue
+    for level in merged_by_id.values():
+        if level.name in merged:
+            logger.warning(
+                f"[PLATBATCH] duplicate level name: "
+                f"{level.name!r}, ID={level.id}"
+            )
 
-        if name not in merged:
-            merged[name] = PlatLevel(name=name)
-
-        # 只在源数据中存在字段时才赋值，避免 None 覆盖已有值
-        if 'id' in item:
-            merged[name].id = item.get('id')
-        if 'tpl' in item:
-            merged[name].tpl = item.get('tpl')
-        if 'pemonlist' in item:
-            merged[name].pemonlist = item.get('pemonlist')
-
-    # 2. 加载 platdiff
-    for item in platdiff_raw:
-        name = item.get('name', '').strip()
-        if not name:
-            continue
-
-        if name not in merged:
-            merged[name] = PlatLevel(name=name)
-
-        # 优先使用 platdata 的 id，如果没有则使用 platdiff 的
-        if not merged[name].id and 'id' in item:
-            merged[name].id = item.get('id')
-
-        # 只在源数据中存在字段时才赋值
-        if 'tier' in item:
-            merged[name].tier = item.get('tier')
-        if 'creator' in item:
-            merged[name].creator = item.get('creator')
-
-        # 解析 tags（以逗号分隔为 List[str]）
-        if 'tags' in item:
-            tags_str = item.get('tags', '').strip()
-            if tags_str:
-                merged[name].tags = [t.strip() for t in tags_str.split(',') if t.strip()]
-
-        if 'enjoyment' in item:
-            merged[name].enjoyment = item.get('enjoyment')
-        if 'video' in item:
-            merged[name].video = item.get('video')
-
-    # 3. 加载 platrank
-    for item in platrank_raw:
-        name = item.get('name', '').strip()
-        if not name:
-            continue
-
-        if name not in merged:
-            merged[name] = PlatLevel(name=name)
-
-        # 只在源数据中存在字段时才赋值
-        if 'weight' in item:
-            merged[name].weight = item.get('weight')
-        if 'section' in item:
-            merged[name].section = item.get('section')
+        merged[level.name] = level
 
     return merged
 
