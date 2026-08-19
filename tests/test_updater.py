@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import requests
 from googleapiclient.errors import HttpError
 
 import xiaozu_bot.plugins.gdlevelsearch.updater as updater_pkg
@@ -42,7 +43,7 @@ from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
     lw,
     metadata,
     nlw,
-    pemonlist,  #最后四个我还没写也不会写，有空让ai写一下
+    pemonlist,
     platbatch,
     platdiff,
     tpl,
@@ -291,7 +292,6 @@ class TestRunnerTables:
 
     def test_jobs_表就是这些且指向对的函数(self) -> None:
         assert {
-            "gddl": gddl.fetch,
             "nlw": nlw.fetch,
             "ids": ids.fetch,
             "lw": lw.fetch,
@@ -308,7 +308,7 @@ class TestRunnerTables:
 
     def test_stages_两层且不重不漏(self) -> None:
         assert runner.STAGES == (
-            ("gddl", "nlw", "ids", "lw", "hds",
+            ("nlw", "ids", "lw", "hds",
             "idl","lists","tpl","pemonlist",
             "platdiff", "sfh"),
             ("platbatch", "getmetadata"),
@@ -318,7 +318,7 @@ class TestRunnerTables:
         assert set(flat) == set(runner.JOBS), "STAGES 必须正好覆盖 JOBS"
 
     def test_有依赖的_job_排在第二层(self) -> None:
-        # platbatch 要读 platdata/platdiff/platrank_weights，
+        # platbatch 要读 tpl/pemonlist/platdiff，
         # getmetadata 要读 nlw/ids/lw/hds —— 它们的上游全在第一层
         assert set(runner.STAGES[1]) == {"platbatch", "getmetadata"}
         assert {"tpl", "platdiff", "pemonlist"} <= set(runner.STAGES[0])
@@ -357,30 +357,6 @@ class TestRunnerRunAll:
         ).read_text(encoding="utf-8") == "COMBINED"
         # 发布完 staging 里就空了
         assert list(data_dirs.staging.iterdir()) == []
-
-    async def test_gddl_失败时保留旧快照但继续发布其他源(
-        self,
-        data_dirs: SimpleNamespace,
-        fresh_lock: asyncio.Lock,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        def job_gddl() -> None:
-            raise RuntimeError("GDDL 暂时不可用")
-
-        def job_nlw() -> None:
-            paths.staged("nlw_levels.json").write_text("NEW", encoding="utf-8")
-
-        _install_jobs(
-            monkeypatch,
-            {"gddl": job_gddl, "nlw": job_nlw},
-            (("gddl", "nlw"),),
-        )
-
-        result = await runner.run_all_async()
-
-        assert result["failed"][0]["job"] == "gddl"
-        assert result["published"] == ["nlw_levels.json"]
-        assert (data_dirs.data / "nlw_levels.json").read_text(encoding="utf-8") == "NEW"
 
     async def test_某个_job_挂了就绝不发布_线上数据一动不动(
         self,
@@ -585,18 +561,17 @@ class TestConstants:
     # 这里以前有一条 test_各表的_spreadsheet_id，把 7 个 ID 的字面量和从
     # constants 里 import 进来的同一批字面量对了一遍 —— 抄一遍常量再和自己比，
     # 只有「有人故意改了 ID」时才会红，而那时候它也说不出哪个 ID 才是对的。
-    # 真正有价值的只有下面这条「七个 ID 互不相同」：复制粘贴少改一个字母，
+    # 真正有价值的只有下面这条「ID 互不相同」：复制粘贴少改一个字母，
     # 两张表会静默读到同一个文档，是这块唯一会自己发生的错。
-    def test_七张表来自七个不同的文档(self) -> None:
+    # （platrank / platdata 已下线，剩 5 个还在用的 ID。）
+    def test_五张活跃表来自五个不同的文档(self) -> None:
         assert len({
             constants.NLW_ID,
             constants.HDS_ID,
             constants.IDS_ID,
             constants.LW_ID,
-            constants.PLAT_RANK_ID,
             constants.PLAT_DIFF_ID,
-            constants.PLAT_DATA_ID,
-        }) == 7
+        }) == 5
 
     def test_各表的_sheet_名(self) -> None:
         # 原表就是这么拼错的（Levles / Plevles），不要"顺手修好"
@@ -611,16 +586,10 @@ class TestConstants:
         assert constants.LW_LEVELS_NAME == "Tha Levles"
         assert constants.LW_PENDING_LEVELS_NAME == "Pending Levles"
         assert constants.PLAT_DIFF_NAME == "The Chart"
-        assert constants.PLAT_DATA_SHEET_NAME == "Levels"
 
-    def test_改名表的规模与几个代表项(self) -> None:
-        # 注意 FRUITY_LEVELS_NLW 的字面量里 'Collect All Pets' 写了两遍，
-        # 所以 19 而不是 20
-        assert len(constants.FRUITY_LEVELS_NLW) == 19
-        assert len(constants.FRUITY_CREATORS_NLW) == 16
-        assert len(constants.FRUITY_LEVELS_IDS) == 8
-        assert len(constants.FRUITY_CREATORS_IDS) == 2
-        assert len(constants.FRUITY_LEVELS_HDS) == 3
+    def test_改名表的几个代表项(self) -> None:
+        # 不数条数：改名表会随开发增删，规模断言只会让加一行改名的改动
+        # 无谓变红；代表项本身错了才是真的抄错表。
         assert constants.FRUITY_CREATORS_HDS == {}
 
         assert constants.FRUITY_LEVELS_NLW["Graphite Wordle"] == "Graphite World"
@@ -857,8 +826,216 @@ class TestExtractBaseName:
 
 
 class TestMergePlatData:
-    def text_因为有较大的变动_暂时删除原有全部测试代码_等待后续重写(self) -> None:
-        assert True
+    """新的 merge：platdiff 是全集，tpl/pemonlist 只按 level ID 补排名。
+
+    旧实现按 name 合并三张表；重写之后 platdiff 里没有 id 的词条也保留，
+    留给 process_derived_levels() 从主词条继承 ID。
+    """
+
+    def _write_sources(
+        self,
+        dirs: SimpleNamespace,
+        *,
+        tpl_map: dict | None = None,
+        pemon_map: dict | None = None,
+        platdiff_entries: list | None = None,
+    ) -> None:
+        if tpl_map is not None:
+            _write_json(dirs.staging / "tpl.json", tpl_map)
+        if pemon_map is not None:
+            _write_json(dirs.staging / "pemonlist.json", pemon_map)
+        if platdiff_entries is not None:
+            _write_json(
+                dirs.staging / "platdiff.json",
+                {"timestamp": 0, "entries": platdiff_entries},
+            )
+
+    def test_tpl_和_pemonlist_按_id_给_platdiff_补排名(
+        self, data_dirs: SimpleNamespace
+    ) -> None:
+        self._write_sources(
+            data_dirs,
+            tpl_map={"138993732": {"id": "138993732", "name": "Null", "position": 3}},
+            pemon_map={
+                "138993732": {"id": "138993732", "name": "Null", "position": "21"}
+            },
+            platdiff_entries=[
+                {"name": "Null", "id": "138993732", "tier": "5", "creator": "A"}
+            ],
+        )
+
+        level = platbatch.merge_plat_data()["Null"]
+
+        assert level.id == "138993732"
+        assert level.tpl == "3"  # 数字 position 也转成 str
+        assert level.pemonlist == "21"
+        assert (level.tier, level.creator) == ("5", "A")
+
+    def test_id_数字和字符串都能对上(self, data_dirs: SimpleNamespace) -> None:
+        # platdiff 里 id 是 int、tpl 里是 str，两边都转成 str 再比
+        self._write_sources(
+            data_dirs,
+            tpl_map={"7": {"id": "7", "position": "2"}},
+            platdiff_entries=[{"name": "Null", "id": 7}],
+        )
+        assert platbatch.merge_plat_data()["Null"].tpl == "2"
+
+    def test_匹配只看_id_不拿_tpl_pemonlist_的_name_改名(
+        self, data_dirs: SimpleNamespace
+    ) -> None:
+        self._write_sources(
+            data_dirs,
+            tpl_map={"1": {"id": "1", "name": "Old Name", "position": "9"}},
+            platdiff_entries=[{"name": "Real Name", "id": "1"}],
+        )
+        level = platbatch.merge_plat_data()["Real Name"]
+        assert level.name == "Real Name"
+        assert level.tpl == "9"
+
+    def test_只有_tpl_pemonlist_里有的关卡不会凭空出现(
+        self, data_dirs: SimpleNamespace
+    ) -> None:
+        self._write_sources(
+            data_dirs,
+            tpl_map={"1": {"id": "1", "position": "3"}},
+            pemon_map={"2": {"id": "2", "position": "4"}},
+            platdiff_entries=[],
+        )
+        assert platbatch.merge_plat_data() == {}
+
+    def test_platdiff_没有_id_的词条也保留_等派生阶段继承(
+        self, data_dirs: SimpleNamespace
+    ) -> None:
+        self._write_sources(
+            data_dirs,
+            platdiff_entries=[
+                {"name": "Null", "id": "138993732"},
+                {"name": "Null (Deathless)", "tier": "6"},
+            ],
+        )
+        merged = platbatch.merge_plat_data()
+        assert set(merged) == {"Null", "Null (Deathless)"}
+        assert merged["Null (Deathless)"].id is None
+        assert merged["Null (Deathless)"].tier == "6"
+
+    def test_名字为空或全空白的行被丢掉(self, data_dirs: SimpleNamespace) -> None:
+        self._write_sources(
+            data_dirs,
+            platdiff_entries=[
+                {"name": "", "id": "1"},
+                {"name": "   ", "id": "2"},
+            ],
+        )
+        assert platbatch.merge_plat_data() == {}
+
+    def test_名字两端空白被裁掉后再合并(self, data_dirs: SimpleNamespace) -> None:
+        self._write_sources(
+            data_dirs,
+            platdiff_entries=[{"name": " Null ", "id": "1", "tier": "5"}],
+        )
+        merged = platbatch.merge_plat_data()
+        assert set(merged) == {"Null"}
+        assert (merged["Null"].id, merged["Null"].tier) == ("1", "5")
+
+    @pytest.mark.parametrize(
+        ("tags", "expected"),
+        [
+            ("Coin, Deathless", ["Coin", "Deathless"]),
+            ("  Coin ,, Deathless  ", ["Coin", "Deathless"]),
+            ("Coin", ["Coin"]),
+            ("", []),
+            ("   ", []),
+            (",,,", []),
+            (["Coin", " Deathless "], ["Coin", "Deathless"]),
+            (["Coin", "", "  "], ["Coin"]),
+            (["Coin", 1], ["Coin", "1"]),
+        ],
+    )
+    def test_tags_字符串按逗号拆_列表逐个规整(
+        self, data_dirs: SimpleNamespace, tags: Any, expected: list
+    ) -> None:
+        self._write_sources(
+            data_dirs, platdiff_entries=[{"name": "Null", "tags": tags}]
+        )
+        assert platbatch.merge_plat_data()["Null"].tags == expected
+
+    def test_tags_缺失时保持空列表(self, data_dirs: SimpleNamespace) -> None:
+        self._write_sources(data_dirs, platdiff_entries=[{"name": "Null"}])
+        assert platbatch.merge_plat_data()["Null"].tags == []
+
+    def test_tier_creator_enjoyment_video_原样带过来(
+        self, data_dirs: SimpleNamespace
+    ) -> None:
+        self._write_sources(
+            data_dirs,
+            platdiff_entries=[
+                {
+                    "name": "Null",
+                    "id": "1",
+                    "tier": "5",
+                    "creator": "Someone",
+                    "enjoyment": 8.0,
+                    "video": "https://v/1",
+                }
+            ],
+        )
+        level = platbatch.merge_plat_data()["Null"]
+        assert (level.tier, level.creator) == ("5", "Someone")
+        assert (level.enjoyment, level.video) == (8.0, "https://v/1")
+
+    def test_tpl_pemonlist_没有_position_时字段保持_None(
+        self, data_dirs: SimpleNamespace
+    ) -> None:
+        self._write_sources(
+            data_dirs,
+            tpl_map={"1": {"id": "1", "position": None}},
+            pemon_map={"1": {"id": "1"}},
+            platdiff_entries=[{"name": "Null", "id": "1"}],
+        )
+        level = platbatch.merge_plat_data()["Null"]
+        assert level.tpl is None
+        assert level.pemonlist is None
+
+    def test_源文件缺失时跳过不报错(self, data_dirs: SimpleNamespace) -> None:
+        assert platbatch.merge_plat_data() == {}
+
+    def test_部分源文件缺失时其余照常(self, data_dirs: SimpleNamespace) -> None:
+        self._write_sources(
+            data_dirs,
+            platdiff_entries=[{"name": "Null", "id": "1", "tier": "3"}],
+        )
+        merged = platbatch.merge_plat_data()
+        assert set(merged) == {"Null"}
+        assert (merged["Null"].tpl, merged["Null"].pemonlist) == (None, None)
+
+    def test_非_dict_的输入行被跳过(self, data_dirs: SimpleNamespace) -> None:
+        self._write_sources(
+            data_dirs,
+            tpl_map={"1": "not-a-dict", "2": {"id": "2", "position": "3"}},
+            pemon_map={"3": None, "4": {"id": "4", "position": "5"}},
+            platdiff_entries=[
+                None,
+                "junk",
+                {"name": "Null", "id": "2"},
+                {"name": "Beta", "id": "4"},
+            ],
+        )
+        merged = platbatch.merge_plat_data()
+        assert set(merged) == {"Null", "Beta"}
+        assert (merged["Null"].tpl, merged["Beta"].pemonlist) == ("3", "5")
+
+    def test_同名不同_id_的词条只留最后一个(self, data_dirs: SimpleNamespace) -> None:
+        # 最终 dict 按 name 为键，撞名时后面的覆盖前面的（会打 warning）
+        self._write_sources(
+            data_dirs,
+            platdiff_entries=[
+                {"name": "Null", "id": "1", "tier": "A"},
+                {"name": "Null", "id": "2", "tier": "B"},
+            ],
+        )
+        merged = platbatch.merge_plat_data()
+        assert set(merged) == {"Null"}
+        assert (merged["Null"].id, merged["Null"].tier) == ("2", "B")
 
 
 class TestProcessDerivedLevels:
@@ -954,15 +1131,6 @@ class TestCleanLevelData:
         platbatch.clean_level_data(level)
         assert level.id == fixed
 
-    def test_ID_FIX_表本身(self) -> None:
-        assert platbatch.ID_FIX == {
-            "112363390": "112603907",
-            "104683046": "0",
-            "127566338": "0",
-            "Pending Removal": "0",
-        }
-
-
 class TestBatchProcess:
     def test_端到端_合并_派生_清理_排序_落盘(
         self, data_dirs: SimpleNamespace
@@ -1027,6 +1195,427 @@ class TestBatchProcess:
         payload = _read_json(data_dirs.staging / "plat_combined.json")
         assert payload["levels"] == []
 
+
+# ==========================================================================
+# jobs/tpl.py + jobs/pemonlist.py —— 两个榜单 API 抓取，结构几乎一样
+# ==========================================================================
+class TestTplMapping:
+    def test_levelID_转成_int_键并规整字段(self) -> None:
+        data = [
+            {"levelID": "123", "name": "Null", "position": 3, "author": "Someone"},
+            {"levelID": 456, "name": "Beta", "position": "7", "author": None},
+        ]
+        assert tpl.build_level_mapping(data) == {
+            123: {"id": 123, "name": "Null", "position": 3, "creator": "Someone"},
+            456: {"id": 456, "name": "Beta", "position": "7", "creator": None},
+        }
+
+    @pytest.mark.parametrize("level_id", [None, "abc", [], {}])
+    def test_拿不到数字_id_就跳过(self, level_id: Any) -> None:
+        assert tpl.build_level_mapping([{"levelID": level_id, "name": "X"}]) == {}
+
+    def test_非_dict_和非列表输入都返回空(self) -> None:
+        assert tpl.build_level_mapping("junk") == {}
+        assert tpl.build_level_mapping([None, "x"]) == {}
+
+
+class TestTplFetch:
+    def test_抓到之后写进_staging(
+        self,
+        data_dirs: SimpleNamespace,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        stub_requests.get(
+            "gdplatformerlist.com/api/levels",
+            make_response(
+                200,
+                json_data=[
+                    {"levelID": "123", "name": "Null", "position": 3, "author": "Someone"}
+                ],
+            ),
+        )
+
+        tpl.fetch()
+
+        assert _read_json(data_dirs.staging / "tpl.json") == {
+            "123": {"id": 123, "name": "Null", "position": 3, "creator": "Someone"}
+        }
+        assert stub_requests.calls[0]["timeout"] == 30
+
+    def test_非_200_直接返回不落盘(
+        self,
+        data_dirs: SimpleNamespace,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        stub_requests.get("gdplatformerlist.com/api/levels", make_response(503))
+        assert tpl.fetch() is None
+        assert not (data_dirs.staging / "tpl.json").exists()
+
+    def test_解析结果是空映射时保留旧快照(
+        self,
+        data_dirs: SimpleNamespace,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        stub_requests.get(
+            "gdplatformerlist.com/api/levels", make_response(200, json_data=[])
+        )
+        tpl.fetch()
+        assert not (data_dirs.staging / "tpl.json").exists()
+
+    def test_请求抛异常时不落盘(
+        self, data_dirs: SimpleNamespace, stub_requests: Any
+    ) -> None:
+        stub_requests.get("gdplatformerlist.com/api/levels", RuntimeError("boom"))
+        tpl.fetch()
+        assert not (data_dirs.staging / "tpl.json").exists()
+
+
+class TestPemonlistMapping:
+    def test_level_id_转成_int_键并规整字段(self) -> None:
+        data = {
+            "data": [
+                {"level_id": "123", "name": "Null", "placement": 3, "creator": "A"},
+                {"level_id": 456, "name": "Beta", "placement": "7", "creator": None},
+            ]
+        }
+        assert pemonlist.build_level_mapping(data) == {
+            123: {"id": 123, "name": "Null", "position": 3, "creator": "A"},
+            456: {"id": 456, "name": "Beta", "position": "7", "creator": None},
+        }
+
+    @pytest.mark.parametrize("level_id", [None, "abc", [], {}])
+    def test_拿不到数字_id_就跳过(self, level_id: Any) -> None:
+        data = {"data": [{"level_id": level_id, "name": "X"}]}
+        assert pemonlist.build_level_mapping(data) == {}
+
+    def test_data_不是_dict_或列表时返回空(self) -> None:
+        assert pemonlist.build_level_mapping("junk") == {}
+        assert pemonlist.build_level_mapping({"data": "junk"}) == {}
+        assert pemonlist.build_level_mapping({"data": [None, "x"]}) == {}
+
+
+class TestPemonlistFetch:
+    def test_抓到之后写进_staging(
+        self,
+        data_dirs: SimpleNamespace,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        stub_requests.get(
+            "pemonlist.com/api/list",
+            make_response(
+                200,
+                json_data={
+                    "data": [
+                        {"level_id": "123", "name": "Null", "placement": 21, "creator": "A"}
+                    ]
+                },
+            ),
+        )
+
+        pemonlist.fetch()
+
+        assert _read_json(data_dirs.staging / "pemonlist.json") == {
+            "123": {"id": 123, "name": "Null", "position": 21, "creator": "A"}
+        }
+        assert stub_requests.calls[0]["timeout"] == 30
+
+    def test_非_200_直接返回不落盘(
+        self,
+        data_dirs: SimpleNamespace,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        stub_requests.get("pemonlist.com/api/list", make_response(503))
+        assert pemonlist.fetch() is None
+        assert not (data_dirs.staging / "pemonlist.json").exists()
+
+    def test_解析结果是空映射时保留旧快照(
+        self,
+        data_dirs: SimpleNamespace,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        stub_requests.get(
+            "pemonlist.com/api/list", make_response(200, json_data={"data": []})
+        )
+        pemonlist.fetch()
+        assert not (data_dirs.staging / "pemonlist.json").exists()
+
+    def test_请求抛异常时不落盘(
+        self, data_dirs: SimpleNamespace, stub_requests: Any
+    ) -> None:
+        stub_requests.get("pemonlist.com/api/list", RuntimeError("boom"))
+        pemonlist.fetch()
+        assert not (data_dirs.staging / "pemonlist.json").exists()
+
+
+# ==========================================================================
+# jobs/idl.py —— 从 insanedemonlist 的 Next.js 响应里正则抠条目
+# ==========================================================================
+def _idl_chunk(name: str, position: int, publisher: str) -> str:
+    """拼一段 Next.js 响应里的 level 对象（带转义引号，和线上格式一致）"""
+    return (
+        '\\"level\\":{'
+        '\\"id\\":\\"123\\",'
+        '\\"formerRank\\":null,'
+        f'\\"name\\":\\"{name}\\",'
+        f'\\"position\\":{position},'
+        f'\\"publisher\\":\\"{publisher}\\",'
+        '\\"extra\\":1'
+        "}"
+    )
+
+
+def _idl_text(levels: list[tuple]) -> str:
+    return ", ".join(_idl_chunk(*item) for item in levels)
+
+
+class TestIdlFetch:
+    def test_抓到_150_条_按排名排序_写进_staging(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        # 故意倒序给，验证 fetch 内部按 position 重排
+        levels = [(f"Level {i}", i, f"Creator{i}") for i in range(2, 151)]
+        levels.append((" Level 1 ", 1, "Creator1"))
+        levels.reverse()
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get(
+            "insanedemonlist.com/main",
+            make_response(200, text=_idl_text(levels[:75])),
+        )
+        stub_requests.get(
+            "insanedemonlist.com/extended",
+            make_response(200, text=_idl_text(levels[75:])),
+        )
+
+        idl.fetch()
+
+        payload = _read_json(data_dirs.staging / "idl.json")
+        assert isinstance(payload["timestamp"], float)
+        assert [item["position"] for item in payload["levels"]] == [
+            str(i) for i in range(1, 151)
+        ]
+        # 名字裁空白、作者转小写
+        assert payload["levels"][0] == {
+            "position": "1",
+            "name": "Level 1",
+            "creator": "creator1",
+        }
+
+    def test_条数不是_150_就抛_RuntimeError_不落盘(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get(
+            "insanedemonlist.com/main",
+            make_response(200, text=_idl_text([("Only", 1, "c")])),
+        )
+        stub_requests.get(
+            "insanedemonlist.com/extended", make_response(200, text=_idl_text([]))
+        )
+
+        with pytest.raises(RuntimeError, match="150"):
+            idl.fetch()
+        assert not (data_dirs.staging / "idl.json").exists()
+
+    def test_HTTP_错误直接抛出去(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get("insanedemonlist.com/main", make_response(503))
+        stub_requests.get("insanedemonlist.com/extended", make_response(503))
+
+        with pytest.raises(requests.HTTPError):
+            idl.fetch()
+        assert not (data_dirs.staging / "idl.json").exists()
+
+
+# ==========================================================================
+# jobs/lists.py —— hdl/mdl/edl 三个榜单：_list.json + 逐关 json
+# ==========================================================================
+def _stub_lists_routes(
+    stub_requests: Any,
+    make_response: Any,
+    base_url: str,
+    names: list,
+    name_map: dict | None = None,
+) -> None:
+    stub_requests.get(f"{base_url}/_list.json", make_response(200, json_data=list(names)))
+    if name_map is not None:
+        stub_requests.get(
+            f"{base_url}/_name_map.json", make_response(200, json_data=name_map)
+        )
+    for position, name in enumerate(names, start=1):
+        stub_requests.get(
+            f"{base_url}/{name}.json",
+            make_response(
+                200,
+                json_data={"id": position * 10, "author": position, "name": name},
+            ),
+        )
+
+
+class TestListsLevelFetch:
+    def test_带_name_map_时作者_id_换成作者名(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        stub_requests.get(
+            "https://hdl.pages.dev/data/Alpha.json",
+            make_response(200, json_data={"id": 11, "author": 1, "name": "Alpha"}),
+        )
+        out = lists._fetch_level(
+            "https://hdl.pages.dev/data", "Alpha", 3, {"1": "Mapper"}
+        )
+        assert out == {
+            "id": "11",
+            "position": "3",
+            "name": "Alpha",
+            "creator": "Mapper",
+        }
+
+    def test_name_map_查不到时原样用_author_id(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        stub_requests.get(
+            "https://hdl.pages.dev/data/Alpha.json",
+            make_response(200, json_data={"id": 11, "author": 2, "name": "Alpha"}),
+        )
+        out = lists._fetch_level(
+            "https://hdl.pages.dev/data", "Alpha", 1, {"1": "Mapper"}
+        )
+        assert out["creator"] == "2"
+
+    def test_没有_name_map_时作者就是_author_id(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        stub_requests.get(
+            "https://hdl.pages.dev/data/Alpha.json",
+            make_response(200, json_data={"id": 11, "author": 7, "name": "Alpha"}),
+        )
+        out = lists._fetch_level("https://hdl.pages.dev/data", "Alpha", 1, None)
+        assert out["creator"] == "7"
+
+
+class TestListsListFetch:
+    def test_按_position_顺序返回(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        base = "https://hdl.pages.dev/data"
+        _stub_lists_routes(
+            stub_requests, make_response, base, ["Alpha", "Beta"]
+        )
+        out = lists._fetch_list(base, False)
+        assert [item["name"] for item in out] == ["Alpha", "Beta"]
+        assert [item["position"] for item in out] == ["1", "2"]
+        # 没有 name_map，作者就是 author_id 的字符串
+        assert [item["creator"] for item in out] == ["1", "2"]
+
+    def test_use_name_map_才拉_name_map(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        base = "https://hdl.pages.dev/data"
+        _stub_lists_routes(
+            stub_requests, make_response, base, ["Alpha", "Beta"], {"1": "Mapper"}
+        )
+        out = lists._fetch_list(base, True)
+        assert out[0]["creator"] == "Mapper"
+        assert any("_name_map.json" in url for url in stub_requests.urls)
+
+    def test_超过_150_个只取前_150(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        base = "https://hdl.pages.dev/data"
+        names = [f"Lv{i}" for i in range(1, 152)]
+        # 只登记前 150 个的关卡路由；第 151 个要是真去请求会 NetworkBlocked
+        _stub_lists_routes(stub_requests, make_response, base, names)
+        out = lists._fetch_list(base, False)
+        assert len(out) == 150
+        assert out[-1]["name"] == "Lv150"
+
+    def test_单个关卡失败时带上名次和名字(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        base = "https://hdl.pages.dev/data"
+        stub_requests.get(f"{base}/_list.json", make_response(200, json_data=["Alpha", "Beta"]))
+        stub_requests.get(
+            f"{base}/Alpha.json",
+            make_response(200, json_data={"id": 1, "author": 1, "name": "Alpha"}),
+        )
+        stub_requests.get(f"{base}/Beta.json", requests.HTTPError("boom"))
+
+        with pytest.raises(RuntimeError, match="第 2 名关卡.*Beta"):
+            lists._fetch_list(base, False)
+
+
+class TestListsFetch:
+    def test_三个榜单并发抓取并各自落盘(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        configs = {
+            "hard": {
+                "base_url": "https://hdl.example/data",
+                "use_name_map": True,
+                "output_name": "hdl",
+            },
+            "medium": {
+                "base_url": "https://mdl.example/data",
+                "use_name_map": False,
+                "output_name": "mdl",
+            },
+            "easy": {
+                "base_url": "https://edl.example/data",
+                "use_name_map": False,
+                "output_name": "edl",
+            },
+        }
+        monkeypatch.setattr(
+            lists,
+            "LISTS",
+            {
+                name: {
+                    **cfg,
+                    "output": data_dirs.staging / f"{cfg['output_name']}.json",
+                }
+                for name, cfg in configs.items()
+            },
+        )
+        for cfg in configs.values():
+            _stub_lists_routes(
+                stub_requests,
+                make_response,
+                cfg["base_url"],
+                ["Alpha", "Beta"],
+                {"1": "Mapper"} if cfg["use_name_map"] else None,
+            )
+
+        lists.fetch()
+
+        hard = _read_json(data_dirs.staging / "hdl.json")
+        assert [item["name"] for item in hard] == ["Alpha", "Beta"]
+        assert [item["creator"] for item in hard] == ["Mapper", "2"]
+        medium = _read_json(data_dirs.staging / "mdl.json")
+        assert [item["creator"] for item in medium] == ["1", "2"]
+        assert _read_json(data_dirs.staging / "edl.json") == medium
 
 
 # ==========================================================================
@@ -2399,6 +2988,53 @@ class TestNotify:
 # ==========================================================================
 # updater/__init__.py —— 每日任务入口
 # ==========================================================================
+class TestGddlUpdateJob:
+    """gddl 拆出主流水线之后的后台任务，独立于 runner"""
+
+    async def test_成功时不上报也不抛(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        reported: list = []
+        monkeypatch.setattr(updater_pkg, "_gddl_lock", asyncio.Lock())
+        monkeypatch.setattr(gddl, "fetch", lambda: None)
+        monkeypatch.setattr(notify, "report_error", lambda **kw: reported.append(kw))
+
+        await updater_pkg.gddl_update_job()
+
+        assert reported == []
+
+    async def test_失败时上报且不往外抛(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        reported: dict = {}
+
+        async def fake_report(title: str, err: Exception, context: Any = None) -> None:
+            reported.update({"title": title, "err": err, "context": context})
+
+        def boom() -> None:
+            raise RuntimeError("GDDL 暂时不可用")
+
+        monkeypatch.setattr(updater_pkg, "_gddl_lock", asyncio.Lock())
+        monkeypatch.setattr(gddl, "fetch", boom)
+        monkeypatch.setattr(notify, "report_error", fake_report)
+
+        await updater_pkg.gddl_update_job()  # 不该往外抛
+
+        assert reported["title"] == "GDDL 更新失败"
+        assert isinstance(reported["err"], RuntimeError)
+        assert reported["context"] == {"job": "gddl", "stage": "gddl"}
+
+    async def test_上一次还在跑时直接跳过(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        called: list = []
+        lock = asyncio.Lock()
+        monkeypatch.setattr(updater_pkg, "_gddl_lock", lock)
+        monkeypatch.setattr(gddl, "fetch", lambda: called.append("fetch"))
+
+        await lock.acquire()
+        try:
+            await updater_pkg.gddl_update_job()
+        finally:
+            lock.release()
+
+        assert called == []
+
+
 class TestDailyUpdateJob:
     async def test_跑完之后重载内存缓存(self, monkeypatch: pytest.MonkeyPatch) -> None:
         order: list[str] = []

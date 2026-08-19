@@ -7,7 +7,6 @@ from nonebot import logger
 
 from .runner import run_all_async
 
-
 # GDDL 是独立于主 updater 的后台更新任务。
 #
 # 主 updater 通常约 5 分钟完成，而 GDDL 通常需要约 20 分钟。

@@ -102,18 +102,7 @@ LW_LEVELS_NAME = "Tha Levles"
 LW_PENDING_LEVELS_NAME = "Pending Levles"
 
 # ------------------------------
-# PlatRank 常量
-# ------------------------------
-PLAT_RANK_ID = "1uicngbhpej4PEmtYYeGmYlFsA28PwTzzouWb4EWQkTY"
-
-# ------------------------------
 # PlatDiff 常量
 # ------------------------------
 PLAT_DIFF_ID = "1ApwiAVAcBmfyoPW3wvDzc8JvY4Lfg5tFsPlYg3DNWhc"
 PLAT_DIFF_NAME = "The Chart"
-
-# ------------------------------
-# PlatData 常量
-# ------------------------------
-PLAT_DATA_ID = "13rpmCGCC8NKvRJhVcUuxixUdEuc_I6rm9LlwgB2HAsM"
-PLAT_DATA_SHEET_NAME = "Levels"

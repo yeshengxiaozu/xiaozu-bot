@@ -689,8 +689,8 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
         edel = getattr(aredl_info, "edel_enjoyment", None)
         if edel is not None and not getattr(aredl_info, "is_edel_pending", False):
             rank_parts.append(f"EDEL {edel:.1f}")
-    elif Lists.search_level(level_id):
-        rank_parts.append(Lists.search_level(level_id))
+    elif list_rank := Lists.search_level(level_id):
+        rank_parts.append(list_rank)
     rank_line = " | ".join(rank_parts) if rank_parts else ""
 
     # tier 信息与前缀

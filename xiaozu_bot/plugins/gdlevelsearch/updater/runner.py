@@ -7,7 +7,6 @@ from nonebot import logger
 
 from .jobs import (
     fetchsfh,
-    gddl,
     getmetadata,
     hds,
     idl,
@@ -42,7 +41,7 @@ JOBS: dict[str, Callable[[], None]] = {
 
 # 按依赖分层，同一层之间没有先后关系，可以一起跑。
 #   第 1 层：纯抓取，各写各的
-#   第 2 层：platbatch 要 platdata/platdiff/platrank_weights，
+#   第 2 层：platbatch 要 tpl/pemonlist/platdiff，
 #            getmetadata 要 nlw/ids/lw/hds
 STAGES: tuple[tuple[str, ...], ...] = (
     ("nlw", "ids", "lw", "hds",
@@ -96,9 +95,7 @@ async def run_all_async(stop_on_error: bool = True) -> dict:
                         {"job": name, "error": str(error), "type": type(error).__name__}
                     )
 
-            fatal_failures = [
-                item for item in results["failed"]
-            ]
+            fatal_failures = list(results["failed"])
             if fatal_failures and stop_on_error:
                 logger.warning(
                     "[RUNNER] 这一层有失败的，停在这里不再往下跑，也不发布 —— "
@@ -106,9 +103,7 @@ async def run_all_async(stop_on_error: bool = True) -> dict:
                 )
                 break
 
-        fatal_failures = [
-            item for item in results["failed"]
-        ]
+        fatal_failures = list(results["failed"])
         if fatal_failures:
             # 不发布，staging 留着方便查问题
             raise RuntimeError(f"Updater failed: {fatal_failures}")

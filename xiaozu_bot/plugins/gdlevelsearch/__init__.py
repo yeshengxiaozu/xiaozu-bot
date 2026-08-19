@@ -13,7 +13,15 @@ import asyncio
 
 from nonebot import get_driver, logger, require
 
-from .api import aredlapi, gdapi, gddl_store, gddlapi, nlwapi, platapi  # noqa: F401
+from .api import (  # noqa: F401
+    aredlapi,
+    gdapi,
+    gddl_store,
+    gddlapi,
+    listsapi,
+    nlwapi,
+    platapi,
+)
 from .render import draw, iconrender, icons  # noqa: F401
 
 require("nonebot_plugin_apscheduler")
@@ -31,6 +39,7 @@ def reload_all() -> None:
         ("nlw", nlwapi),
         ("plat", platapi),
         ("aredl", aredlapi),
+        ("lists", listsapi),
     ):
         try:
             module.reload()

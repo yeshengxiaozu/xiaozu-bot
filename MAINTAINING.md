@@ -216,17 +216,17 @@ python scripts/run_updater.py
 数据变动量：hds -83 条、ids +26、nlw +27、plat_combined +53、nong_index +17
 （都是上游榜单的正常增删，核对过不是被截断）。
 
-GDDL 是同一流水线里的 best-effort 任务，快照发布为
-`xiaozu_bot/plugins/gdlevelsearch/data/gddl_levels.json`。它每天随更新器尝试抓取；
-如果 GDDL 失败，会保留旧快照并继续发布其他成功的数据源。`gddlapi.py` 会在在线请求失败时
-回退到这份快照。
+GDDL 是独立于主流水线的后台任务，快照发布为
+`xiaozu_bot/plugins/gdlevelsearch/data/gddl_levels.json`。它每天凌晨 3 点和主更新
+同时启动（`updater/__init__.py` 里的 `gddl_update_job`）；GDDL 失败只上报管理员，
+不影响主流水线。`gddlapi.py` 会在在线请求失败时回退到这份快照。
 
-想先小范围试试，用这个 —— 它只发 2 个 Sheets 请求，而且产出的
-`platrank_weights.json` 属于中间文件（不在 `PUBLISHED_FILES` 里），
+想先小范围试试，用这个 —— 它只发 1 个 API 请求，而且产出的
+`tpl.json` 属于中间文件（不在 `PUBLISHED_FILES` 里），
 **跑它绝对不会动 `data/`**：
 
 ```bash
-python scripts/run_updater.py platrank
+python scripts/run_updater.py tpl
 ```
 
 ⚠️ **两条硬规矩**：
@@ -240,9 +240,6 @@ python scripts/run_updater.py platrank
 
 ### 已知还没修的坑，出问题先怀疑这几个
 
-- `updater/jobs/platrank.py` —— `weights[i]` 没做边界检查，Google Sheets 把某列尾部
-  空行裁掉时会 IndexError（会让整条流水线中止，但**不会污染数据**，属于安全的失败）；
-  另外「空权重」被当成分节标题，遇到一整行空的会把后面所有行都丢掉
 - `updater/jobs/getmetadata.py` —— 写回失败只记日志不报错。而且 `open("w")` 是先截断的，
   所以写到一半失败会在 staging 留下一个 0 字节或者半截的文件，然后被发布出去。
   （下面那道下限检查能拦住变空的情况，但拦不住「半截但还有一半」。）
