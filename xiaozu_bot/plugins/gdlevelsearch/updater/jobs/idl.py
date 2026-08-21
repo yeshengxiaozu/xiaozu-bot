@@ -75,7 +75,7 @@ def fetch() -> None:
         levels.extend(
             {
                 "position": match.group("position"),
-                "name": match.group("name").strip(),
+                "name": match.group("name").strip(" ⠀"),
                 "creator": match.group("creator").strip().lower(),
             }
             for match in pattern.finditer(text)

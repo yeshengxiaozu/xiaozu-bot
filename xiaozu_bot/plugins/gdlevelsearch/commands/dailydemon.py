@@ -186,5 +186,5 @@ async def handle_dailydemon(bot: Bot, event: Event) -> None:
         event,
         f"今日关卡（{describe_conditions()}，候选 {total} 关）：",
     )
-    await send_result(bot, event, level)
+    await send_result(bot, event, level.level_id)
     await dailydemon.finish()

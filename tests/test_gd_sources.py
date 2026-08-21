@@ -96,6 +96,7 @@ def make_meta_payload(**over: Any) -> dict[str, Any]:
         "Length": 4,
         "IsTwoPlayer": False,
         "Difficulty": "Extreme",
+        "Rarity": 0,
         "PublisherID": 7,
         "UploadedAt": None,
         "Song": make_song_payload(),
@@ -324,10 +325,16 @@ class TestGddlModels:
             "Length",
             "IsTwoPlayer",
             "Difficulty",
+            "Rarity",
             "Song",
         }
         assert meta.UploadedAt is None
         assert not hasattr(meta, "PublisherID")
+
+    def test_level_meta_preserves_rarity(self) -> None:
+        meta = LevelMeta(make_meta_payload(Rarity=4))
+        assert meta.Rarity == 4
+        assert isinstance(meta.Rarity, int)
 
     def test_gddl_level_every_key_lands_on_the_attribute_of_the_same_name(self) -> None:
         """LevelDTO 的键名和属性名一一对应；number|null 的字段要原样保留 null 而不是变 0。

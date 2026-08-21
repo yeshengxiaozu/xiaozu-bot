@@ -166,8 +166,44 @@ class TestRobustness:
         )
 
         assert listsapi.Lists.search_level(500) == "MDL #1"
-        assert listsapi.Lists.search_level(501) == "MDL #2"
+        assert listsapi.Lists.search_level(501) == "MDL #5"
         assert listsapi.Lists.search_level(None) is None
+
+    def test_坏条目跳过但排名按position字段(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        paths = _make_files(tmp_path, monkeypatch)
+        paths["MDL"].write_text(
+            json.dumps(
+                [
+                    {"id": 500, "position": "3"},
+                    {"id": None, "position": "4"},
+                    {"id": 501, "position": "5"},
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        assert listsapi.Lists.search_level(500) == "MDL #3"
+        assert listsapi.Lists.search_level(501) == "MDL #5"
+
+    def test_无position字段退回文件顺序(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        paths = _make_files(tmp_path, monkeypatch)
+        paths["EDL"].write_text(
+            json.dumps(
+                [
+                    {"id": 700},
+                    {"id": None},
+                    {"id": 701},
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        assert listsapi.Lists.search_level(700) == "EDL #1"
+        assert listsapi.Lists.search_level(701) == "EDL #3"
 
     def test_reload失败时保留旧数据(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         paths = _make_files(tmp_path, monkeypatch)

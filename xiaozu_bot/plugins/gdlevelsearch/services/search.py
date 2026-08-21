@@ -65,7 +65,7 @@ def _add_search_result(
     difficulty: str | None = None,
 ):
     """?results???????????"""
-    if level_id is None:
+    if level_id is None or level_id <= 0:
         return
     if level_id in results:
         item = results[level_id]
@@ -162,6 +162,8 @@ def search_by_name(name: str) -> list[SearchResult]:
     # 3) NLW exact match
     nlw_candidates = source_values.get("nlw") or []
     for level in nlw_candidates:
+        if not level.id:
+            continue
         _add_search_result(
             results,
             int(level.id or 0),
@@ -175,7 +177,7 @@ def search_by_name(name: str) -> list[SearchResult]:
 
     # 4) Platdata exact match
     plat_info = source_values.get("plat")
-    if plat_info:
+    if plat_info and plat_info.id:
         _add_search_result(
             results,
             int(plat_info.id),
@@ -198,8 +200,8 @@ def getlevelinfo(level_id: int) -> GDLevel | None:
 
 
 # ????????pemon / demon / non-demon ???????????????????????
-async def send_result(bot: Bot, event: Event, level_info: GDLevel) -> None:
-    image = await create_image_from_gdlevel(level_info)
+async def send_result(bot: Bot, event: Event, level_id: int) -> None:
+    image = await create_image_from_gdlevel(level_id)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     await send_image(bot, event, buffer)

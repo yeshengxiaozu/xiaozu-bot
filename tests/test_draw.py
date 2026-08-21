@@ -27,6 +27,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from xiaozu_bot.plugins.gdlevelsearch import draw
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import GDLevel
+from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import GDDLLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.platapi import PlatInfo
 from xiaozu_bot.plugins.gdlevelsearch.constants import (
     HTTP_NOT_FOUND,
@@ -593,6 +594,7 @@ class TestCreateImageFromGdlevelRemoteFailures:
         def _broken(*_args: Any, **_kwargs: Any) -> Any:
             raise RuntimeError("temporary upstream failure")
 
+        monkeypatch.setattr(draw, "get_level_by_id", lambda _id: level)
         monkeypatch.setattr(draw.Gddl, "getlevelbyid", _broken)
         monkeypatch.setattr(draw.Gddl, "getleveltags", _broken)
 
@@ -613,8 +615,144 @@ class TestCreateImageFromGdlevelRemoteFailures:
 
         monkeypatch.setattr(draw, "create_level_image", _fake_create_level_image)
 
-        image = await create_image_from_gdlevel(level)
+        image = await create_image_from_gdlevel(level.level_id)
 
         assert image.size == (1, 1)
         assert rendered["thumb_bytes"] is None
         assert rendered["title_text"] == "No info"
+
+    @pytest.mark.parametrize(
+        ("difficulty", "icon_name"),
+        [
+            ("Official", "diffIcon_10.png"),
+            ("Easy", "diffIcon_11.png"),
+            ("Medium", "diffIcon_12.png"),
+            ("Hard", "diffIcon_13.png"),
+            ("Insane", "diffIcon_14.png"),
+            ("Extreme", "diffIcon_15.png"),
+            ("Unexpected", "diffIcon_10.png"),
+        ],
+    )
+    async def test_gddl_fills_missing_gd_fields(
+        self,
+        difficulty: str,
+        icon_name: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        gddl = GDDLLevel(
+            {
+                "ID": 123,
+                "Rating": 20.5,
+                "Enjoyment": 7.5,
+                "Deviation": 1.0,
+                "RatingCount": 10,
+                "EnjoymentCount": 11,
+                "SubmissionCount": 12,
+                "TwoPlayerRating": None,
+                "TwoPlayerEnjoyment": None,
+                "TwoPlayerDeviation": None,
+                "DefaultRating": None,
+                "Showcase": None,
+                "Meta": {
+                    "ID": 123,
+                    "Name": "GDDL Level",
+                    "Description": "GDDL description",
+                    "SongID": 456,
+                    "Length": 4,
+                    "IsTwoPlayer": False,
+                    "Difficulty": difficulty,
+                    "Rarity": 4,
+                    "PublisherID": None,
+                    "UploadedAt": None,
+                    "Song": {"ID": 456, "Name": "GDDL Song", "Author": "GDDL Artist"},
+                },
+            }
+        )
+        monkeypatch.setattr(draw, "get_level_by_id", lambda _id: None)
+        monkeypatch.setattr(draw.Gddl, "getlevelbyid", lambda *_args: gddl)
+        monkeypatch.setattr(draw.Gddl, "getleveltags", lambda _id: [])
+        monkeypatch.setattr(draw, "_fetch_thumbnail", lambda *_args: _none())
+        monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Lists, "search_level", lambda _id: None)
+
+        rendered: dict[str, Any] = {}
+
+        async def _fake_create_level_image(**kwargs: Any) -> Image.Image:
+            rendered.update(kwargs)
+            return Image.new("RGB", (1, 1))
+
+        monkeypatch.setattr(draw, "create_level_image", _fake_create_level_image)
+
+        image = await create_image_from_gdlevel(123)
+
+        assert image.size == (1, 1)
+        assert rendered["level_line"] == "GDDL Level"
+        assert rendered["song_name"] == "GDDL Song"
+        assert rendered["song_artist"] == "GDDL Artist"
+        assert rendered["song_id"] == "456"
+        assert rendered["detail_text"] == "Description: GDDL description"
+        assert rendered["diff_icon_path"].name == icon_name
+        assert rendered["featured_fx_path"].name == "featured_4.png"
+
+    async def test_nong_overrides_gddl_song_when_gdlevel_is_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gddl = GDDLLevel(
+            {
+                "ID": 123,
+                "Rating": None,
+                "Enjoyment": None,
+                "Deviation": None,
+                "RatingCount": 0,
+                "EnjoymentCount": 0,
+                "SubmissionCount": 0,
+                "TwoPlayerRating": None,
+                "TwoPlayerEnjoyment": None,
+                "TwoPlayerDeviation": None,
+                "DefaultRating": None,
+                "Showcase": None,
+                "Meta": {
+                    "ID": 123,
+                    "Name": "Level",
+                    "Description": None,
+                    "SongID": 456,
+                    "Length": 4,
+                    "IsTwoPlayer": False,
+                    "Difficulty": "Extreme",
+                    "Rarity": 0,
+                    "PublisherID": None,
+                    "UploadedAt": None,
+                    "Song": {"ID": 456, "Name": "GDDL Song", "Author": "GDDL Artist"},
+                },
+            }
+        )
+        monkeypatch.setattr(draw, "get_level_by_id", lambda _id: None)
+        monkeypatch.setattr(draw.Gddl, "getlevelbyid", lambda *_args: gddl)
+        monkeypatch.setattr(draw.Gddl, "getleveltags", lambda _id: [])
+        monkeypatch.setattr(draw, "_fetch_thumbnail", lambda *_args: _none())
+        monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Lists, "search_level", lambda _id: None)
+        monkeypatch.setitem(
+            draw.nong_index,
+            "123",
+            {"name": "NONG Song", "artist": "NONG Artist"},
+        )
+
+        rendered: dict[str, Any] = {}
+
+        async def _fake_create_level_image(**kwargs: Any) -> Image.Image:
+            rendered.update(kwargs)
+            return Image.new("RGB", (1, 1))
+
+        monkeypatch.setattr(draw, "create_level_image", _fake_create_level_image)
+
+        await create_image_from_gdlevel(123)
+
+        assert rendered["song_name"] == "NONG Song"
+        assert rendered["song_artist"] == "NONG Artist"
+        assert rendered["song_id"] == "NONG"
+        assert rendered["featured_fx_path"] == Path()
