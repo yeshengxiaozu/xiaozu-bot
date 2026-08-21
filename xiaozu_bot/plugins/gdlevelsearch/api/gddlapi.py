@@ -76,6 +76,7 @@ class LevelMeta:
     Length: int #[1, 2, 3, 4, 5, 6] for tiny, short, medium, long, XL, plat
     IsTwoPlayer: bool
     Difficulty: str #[Official, Easy, Medium, Hard, Insane, Extreme]
+    Rarity: int #[0, 1, 2, 3, 4] for star-rate, featured, epic, legendary, mythic
     PublisherID: int
     UploadedAt: str | None = None
     Song: SongInfo
@@ -88,6 +89,7 @@ class LevelMeta:
         self.Length = jsondict["Length"]
         self.IsTwoPlayer = jsondict["IsTwoPlayer"]
         self.Difficulty = jsondict["Difficulty"]
+        self.Rarity = jsondict["Rarity"]
         self.Song = SongInfo(jsondict["Song"])
 
     def is_pemon(self) -> bool:

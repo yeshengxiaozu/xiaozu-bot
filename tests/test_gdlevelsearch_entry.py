@@ -67,6 +67,7 @@ def gddl_level(
     *,
     rating: float | None = None,
     difficulty: str = "Extreme",
+    rarity: int = 0,
     length: int = 3,
 ) -> GDDLLevel:
     """真的 GDDLLevel —— 构造函数是硬取 jsondict[...]，字段一个都不能少"""
@@ -92,6 +93,7 @@ def gddl_level(
                 "Length": length,  # 6 = plat，触发 is_pemon()
                 "IsTwoPlayer": False,
                 "Difficulty": difficulty,
+                "Rarity": rarity,
                 "Song": {"ID": -1, "Name": "Stereo Madness", "Author": "Foreverbound"},
             },
         }
@@ -243,12 +245,12 @@ def no_timeout_tasks(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 @pytest.fixture
-def stub_image(monkeypatch: pytest.MonkeyPatch) -> list[GDLevel]:
+def stub_image(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """出图那一步换成返回一张 1x1 图，send_result 本体照真跑"""
-    drawn: list[GDLevel] = []
+    drawn: list[int] = []
 
-    async def _fake(level: GDLevel, *a: Any, **k: Any) -> Image.Image:
-        drawn.append(level)
+    async def _fake(level_id: int, *a: Any, **k: Any) -> Image.Image:
+        drawn.append(level_id)
         return Image.new("RGB", (1, 1), (7, 8, 9))
 
     monkeypatch.setattr(svc_search, "create_image_from_gdlevel", _fake)
@@ -355,14 +357,14 @@ class TestAddSearchResult:
         gdlevelsearch._add_search_result(results, None, "Name")  # type: ignore[arg-type]
         assert results == {}
 
-    def test_id_zero_is_inserted(self) -> None:
+    def test_non_positive_id_is_ignored(self) -> None:
         """守卫写的是 `is None` 而不是 falsy，所以 id=0 会被收进来
 
         NLW 那一路是 `int(level.id or 0)`，没有 id 的行会全部挤进 0 这个槽。
         """
         results: dict[int, SearchResult] = {}
         gdlevelsearch._add_search_result(results, 0, "NoId")
-        assert list(results) == [0]
+        assert results == {}
 
 
 # ==========================================================================
@@ -510,7 +512,7 @@ class TestSearchByName:
         sources(nlw=[nlw_level("42", "Sonic Wave", tier="Extreme")])
         assert gdlevelsearch.search_by_name("Sonic Wave")[0].tier is None
 
-    def test_nlw_missing_id_collapses_into_zero(self, sources: Any) -> None:
+    def test_nlw_missing_id_is_ignored(self, sources: Any) -> None:
         """`int(level.id or 0)` —— 没 id 的行全部落进 id=0，互相顶掉"""
         sources(
             nlw=[
@@ -519,7 +521,7 @@ class TestSearchByName:
             ]
         )
         got = gdlevelsearch.search_by_name("whatever")
-        assert [(r.id, r.name, r.creator) for r in got] == [(0, "A", "First")]
+        assert got == []
 
     def test_plat_result_is_included_with_its_tier(self, sources: Any) -> None:
         sources(plat=plat_info("999", "Platty"))
@@ -861,14 +863,14 @@ class TestSessionBookkeeping:
 # ==========================================================================
 class TestSendResult:
     async def test_sends_a_png_image_segment(
-        self, fake_bot: FakeBot, make_group_event: Any, stub_image: list[GDLevel]
+        self, fake_bot: FakeBot, make_group_event: Any, stub_image: list[int]
     ) -> None:
         event = make_group_event("随便")
         level = gd_level(name="X")
 
-        await gdlevelsearch.send_result(fake_bot, event, level)
+        await gdlevelsearch.send_result(fake_bot, event, level.level_id)
 
-        assert stub_image == [level]
+        assert stub_image == [level.level_id]
         segs = image_segments(fake_bot)
         assert len(segs) == 1
         assert segs[0].data["file"].startswith("base64://")
@@ -911,11 +913,7 @@ class TestHandleGdsearch:
         self, fake_bot: FakeBot, make_group_event: Any,
         monkeypatch: pytest.MonkeyPatch, stub_image: list[GDLevel],
     ) -> None:
-        level = gd_level(name="By ID")
-        seen: list[int] = []
-        monkeypatch.setattr(
-            cmd_search, "getlevelinfo", lambda i: (seen.append(i), level)[1]
-        )
+        seen = stub_image
         monkeypatch.setattr(
             cmd_search, "search_by_name",
             lambda n: pytest.fail("id 分支不该再去搜名字"),
@@ -928,24 +926,19 @@ class TestHandleGdsearch:
         assert len(image_segments(fake_bot)) == 1
 
     async def test_unknown_id_says_so(
-        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+        self, fake_bot: FakeBot, make_group_event: Any,
+        stub_image: list[int],
     ) -> None:
-        monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: None)
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
         )
         # 行为是「查不到就回一句话，不出图」
-        assert len(sent_texts(fake_bot)) == 1
-        assert image_segments(fake_bot) == []
+        assert stub_image == [12345]
+        assert len(image_segments(fake_bot)) == 1
 
     async def test_gdapi_network_failure_gets_a_retryable_message(
-        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+        self, fake_bot: FakeBot, make_group_event: Any, stub_image: list[int],
     ) -> None:
-        def _unavailable(_id: int) -> Any:
-            raise GDAPIUnavailable("offline")
-
-        monkeypatch.setattr(cmd_search, "getlevelinfo", _unavailable)
-
         await run_handler(
             gdlevelsearch.gdsearch,
             fake_bot,
@@ -953,10 +946,8 @@ class TestHandleGdsearch:
             arg="12345",
         )
 
-        assert sent_texts(fake_bot) == [
-            cmd_search.GD_API_UNAVAILABLE_MESSAGE
-        ]
-        assert image_segments(fake_bot) == []
+        assert stub_image == [12345]
+        assert len(image_segments(fake_bot)) == 1
 
     async def test_no_name_match_says_so(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
@@ -977,12 +968,11 @@ class TestHandleGdsearch:
         monkeypatch.setattr(
             cmd_search, "search_by_name", lambda _n: [SearchResult(9, "Only")]
         )
-        monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: gd_level(name="Only"))
-
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="Only"
         )
         assert len(image_segments(fake_bot)) == 1
+        assert stub_image == [9]
         assert gdlevelsearch.search_cache == {}
 
     async def test_multiple_matches_are_listed_in_one_message(
@@ -1116,30 +1106,20 @@ class TestHandleChoice:
         monkeypatch: pytest.MonkeyPatch, stub_image: list[GDLevel],
     ) -> None:
         self._prime()
-        asked: list[int] = []
-        monkeypatch.setattr(
-            cmd_search, "getlevelinfo",
-            lambda i: (asked.append(i), gd_level(name="Second"))[1],
-        )
-
         await run_handler(gdlevelsearch.gdsearchselect, fake_bot, make_group_event("2"))
 
-        assert asked == [22]
+        assert stub_image == [22]
         assert len(image_segments(fake_bot)) == 1
         assert gdlevelsearch.search_cache == {}
 
-    async def test_level_lookup_failure_reports_the_id(
-        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    async def test_level_lookup_failure_still_renders_from_fallback_sources(
+        self, fake_bot: FakeBot, make_group_event: Any, stub_image: list[int],
     ) -> None:
         self._prime()
-        monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: None)
-
         await run_handler(gdlevelsearch.gdsearchselect, fake_bot, make_group_event("1"))
         # 行为是「报错时得把选中那条的 id 说出来」，不然没法查
-        texts = sent_texts(fake_bot)
-        assert len(texts) == 1
-        assert "11" in texts[0]
-        assert image_segments(fake_bot) == []
+        assert stub_image == [11]
+        assert len(image_segments(fake_bot)) == 1
 
 
 # ==========================================================================

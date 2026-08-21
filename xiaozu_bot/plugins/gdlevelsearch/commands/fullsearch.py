@@ -385,7 +385,7 @@ async def handle_gdfullsearch(
 
     # 只有一条就别让人再选一次了，和 gdsearch 的行为保持一致
     if len(session.current_levels) == 1:
-        await send_result(bot, event, session.current_levels[0])
+        await send_result(bot, event, session.current_levels[0].level_id)
         await gdfullsearch.finish()
 
     fullsearch_sessions[session_id] = session
@@ -424,5 +424,5 @@ async def handle_fullsearch_choice(bot: Bot, event: Event) -> None:
 
     level = levels[index - 1]
     _drop_fullsearch(session_id)
-    await send_result(bot, event, level)
+    await send_result(bot, event, level.level_id)
     await gdfullsearchselect.finish()

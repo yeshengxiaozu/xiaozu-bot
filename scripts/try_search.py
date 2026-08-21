@@ -129,7 +129,7 @@ async def run(query: str, out: Path, do_reload: bool) -> int:
             return 1
 
     print(f"== 出图：{level.level_name}")
-    image = await draw.create_image_from_gdlevel(level)
+    image = await draw.create_image_from_gdlevel(level.level_id)
     image.save(out, format="PNG")
     size = out.stat().st_size / 1024
     print(f"== 已写入 {out}  ({size:.1f} KB, {image.size[0]}x{image.size[1]})")
@@ -171,7 +171,7 @@ async def run_full(raw_args: str, out: Path, pages: int) -> int:
 
     first = session.current_levels[0]
     print(f"\n== 拿本页第 1 条出图：{first.level_name}")
-    image = await draw.create_image_from_gdlevel(first)
+    image = await draw.create_image_from_gdlevel(first.level_id)
     image.save(out)
     print(f"== 已写入 {out}  ({out.stat().st_size / 1024:.1f} KB, {image.size[0]}x{image.size[1]})")
     return 0

@@ -1,7 +1,7 @@
 """IDL / HDL / MDL / EDL 榜单 id 的内存缓存与查询。
 
 updater 每次跑完会把四个榜单的 JSON 写进 data/，这里负责解析成
-``{榜单名: [id, ...]}`` 后常驻内存；``draw`` 时不再重复读文件。
+``{榜单名: {level id: 排名}}`` 后常驻内存；``draw`` 时不再重复读文件。
 """
 
 from __future__ import annotations
@@ -21,17 +21,19 @@ DATA_PATHS = {
     "EDL": DATA_DIR / "edl.json",
 }
 
-#: 榜单名 -> 按排名排列的 level id 列表（列表索引 + 1 即排名）。
+#: 榜单名 -> {level id: 排名}。排名优先取条目里的 position 字段，
+#: 缺 position 时退回文件顺序（index + 1）。
 #: 首次查询时惰性加载，之后常驻内存；updater 跑完后由 :func:`reload` 刷新。
-_cache: dict[str, list[int]] | None = None
+_cache: dict[str, dict[int, int]] | None = None
 _cache_lock = threading.Lock()
 
 
-def _load_level_ids(name: str, path: str | Path) -> list[int]:
-    """解析单个榜单 JSON，返回按排名排列的 level id 列表。
+def _load_level_ids(name: str, path: str | Path) -> dict[int, int]:
+    """解析单个榜单 JSON，返回 {level id: 排名}。
 
     - 兼容 IDL 的 ``{"timestamp": ..., "levels": [...]}`` 包装结构，也兼容纯列表；
     - 用 ``utf-8-sig`` 读取，容忍带 BOM 的文件；
+    - 排名优先用条目里的 ``position`` 字段，缺失或非法时退回文件顺序；
     - 单个条目缺少有效 ``id`` 时跳过该条目，不让整张榜单崩掉。
     """
     try:
@@ -44,32 +46,40 @@ def _load_level_ids(name: str, path: str | Path) -> list[int]:
     if not isinstance(levels, list):
         raise TypeError(f"{name} 结构异常：找不到 levels 列表")
 
-    ids: list[int] = []
+    ranking: dict[int, int] = {}
     skipped = 0
-    for level in levels:
+    for index, level in enumerate(levels):
         if not isinstance(level, dict):
             skipped += 1
             continue
         try:
-            ids.append(int(level["id"]))
+            level_id = int(level["id"])
         except (KeyError, TypeError, ValueError):
             skipped += 1
+            continue
+        if level_id in ranking:
+            continue
+        try:
+            rank = int(level["position"])
+        except (KeyError, TypeError, ValueError):
+            rank = index + 1
+        ranking[level_id] = rank
 
     if skipped:
         logger.warning(f"[lists] {name} 有 {skipped} 条记录缺少有效 id，已跳过")
 
-    return ids
+    return ranking
 
 
-def _load_all() -> dict[str, list[int]]:
+def _load_all() -> dict[str, dict[int, int]]:
     """从磁盘加载四个榜单；单个文件失败只影响它自己，不影响其余榜单。"""
-    loaded: dict[str, list[int]] = {}
+    loaded: dict[str, dict[int, int]] = {}
     for name, path in DATA_PATHS.items():
         try:
             loaded[name] = _load_level_ids(name, path)
         except Exception as exc:
             logger.warning(f"[lists] 加载 {name} 失败，该榜单暂时为空: {exc}")
-            loaded[name] = []
+            loaded[name] = {}
     return loaded
 
 
@@ -77,17 +87,17 @@ def reload() -> None:
     """重新从磁盘加载四个榜单；单个文件失败时保留该榜单的旧缓存。"""
     global _cache
     with _cache_lock:
-        loaded: dict[str, list[int]] = {}
+        loaded: dict[str, dict[int, int]] = {}
         for name, path in DATA_PATHS.items():
             try:
                 loaded[name] = _load_level_ids(name, path)
             except Exception as exc:
                 logger.warning(f"[lists] 重新加载 {name} 失败，保留旧数据: {exc}")
-                loaded[name] = _cache.get(name, []) if _cache else []
+                loaded[name] = _cache.get(name, {}) if _cache else {}
         _cache = loaded
 
 
-def _get_lists() -> dict[str, list[int]]:
+def _get_lists() -> dict[str, dict[int, int]]:
     """惰性加载并返回缓存；首次调用后解析结果常驻内存。"""
     global _cache
     with _cache_lock:
@@ -111,11 +121,9 @@ class Lists:
         if target == 0:
             return None
 
-        for name, level_list in _get_lists().items():
-            try:
-                idx = level_list.index(target)
-            except ValueError:
-                continue
-            return f"{name} #{idx + 1}"
+        for name, ranking in _get_lists().items():
+            rank = ranking.get(target)
+            if rank is not None:
+                return f"{name} #{rank}"
 
         return None

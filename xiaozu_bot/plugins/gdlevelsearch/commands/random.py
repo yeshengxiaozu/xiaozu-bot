@@ -57,7 +57,7 @@ async def handle_gdrandom(bot: Bot, event: Event, arg: Message = CommandArg()) -
     except GDAPIUnavailable:
         await gdrandom.finish("GD 关卡服务器暂时无法访问，请稍后重试")
     if level:
-        await send_result(bot, event, level)
+        await send_result(bot, event, level.level_id)
     else:
         await gdrandom.finish("发生未知错误。相关id: " + str(result.ID))
     await gdrandom.finish()

@@ -2,12 +2,13 @@ import asyncio
 import io
 import os
 from pathlib import Path
+from typing import TypeVar
 
 from nonebot import logger
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from ..api.aredlapi import Aredl
-from ..api.gdapi import GDLevel
+from ..api.gdapi import get_level_by_id
 from ..api.gddlapi import Gddl
 from ..api.listsapi import Lists
 from ..api.nlwapi import Nlw
@@ -44,7 +45,8 @@ TIER_COLOR_MAP = {
 }
 DEFAULT_TIER_COLOR = "#ffffff"
 
-def select_tags(level:PlatInfo) -> list[str]:
+
+def select_tags(level: PlatInfo) -> list[str]:
     return level.tags
 
 # ----------------- 常量 -----------------
@@ -243,8 +245,12 @@ try:
 except (OSError, json.JSONDecodeError):
     logger.warning(f"NONG 索引读不了，歌名会退回 GD 自带的：{_nong_path}")
 
-def _optional_remote_result(value: object, source: str) -> object | None:
-    """Convert an optional remote-task exception into a missing value."""
+T = TypeVar("T")
+
+def _optional_remote_result(
+    value: T | BaseException,
+    source: str,
+) -> T | None:
     if isinstance(value, asyncio.CancelledError):
         raise value
     if isinstance(value, BaseException):
@@ -253,6 +259,7 @@ def _optional_remote_result(value: object, source: str) -> object | None:
         logger.warning(f"{source} lookup failed while rendering: {value}")
         return None
     return value
+
 # Keep the historical names importable from draw.py while the implementation
 # lives in the focused thumbnail module.
 THUMB_RETRIES = _thumbnail.THUMB_RETRIES
@@ -631,24 +638,24 @@ async def create_level_image(
 
     return img.convert("RGB")
 
-async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
+async def create_image_from_gdlevel(level_id: int) -> Image.Image:
     """根据传入的 `GDLevel` 自动查询 GDDL/AREDL/NLW/Plat 数据并生成图片。
 
     如果某来源不存在对应信息，则对应绘图字段留空。
     """
-    level_id = gdlevel.level_id
-
     # 三个外部请求彼此不依赖，一起发。
     # 以前是串着来的：GDDL 详情 -> GDDL tags -> 缩略图，实测一张图 3.5-5.4 秒，
     # 而且几乎全是在等网络（PIL 那部分可以忽略不计）。
     # 并发之后总耗时约等于最慢的那一个。
     thumbnail_id = _thumbnail_id_for(level_id)
-    gddl_info, gddl_tags, thumb_bytes = await asyncio.gather(
+    gdlevel, gddl_info, gddl_tags, thumb_bytes = await asyncio.gather(
+        asyncio.to_thread(get_level_by_id, level_id),
         asyncio.to_thread(Gddl.getlevelbyid, level_id, False),
         asyncio.to_thread(Gddl.getleveltags, level_id),
         _fetch_thumbnail(thumbnail_id) if thumbnail_id else _none(),
         return_exceptions=True,
     )
+    gdlevel = _optional_remote_result(gdlevel, "GD level")
     gddl_info = _optional_remote_result(gddl_info, "GDDL level")
     gddl_tags = _optional_remote_result(gddl_tags, "GDDL tags")
     thumb_bytes = _optional_remote_result(thumb_bytes, "thumbnail")
@@ -661,16 +668,33 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
     plat_info = Platapi.getlevelbyid(level_id)
 
     # level_line / creator_line
-    level_line = getattr(gdlevel, "level_name", "") or ""
+    display_level_id = (
+        getattr(gdlevel, "level_id", None)
+        or getattr(gddl_info, "ID", None)
+        or level_id
+    )
+    gddl_meta = gddl_info.Meta if gddl_info else None
+    level_line = (
+        getattr(gdlevel, "level_name", "")
+        or getattr(gddl_meta, "Name", "")
+        or ""
+    )
     creator = getattr(gdlevel, "creator_name", None)
     if not creator and nlw_info and getattr(nlw_info, "creator", None):
         creator = nlw_info.creator
     creator_line = f"By {creator}" if creator else ""
 
     # id_line
-    length_text = f"({nlw_info.length})" if nlw_info and nlw_info.length \
-        else f"({['Tiny','Short','Medium','Long','XL',''][gdlevel.length]})" if gdlevel.length != 5 else ""
-    id_line = f"Level ID: {level_id} {length_text}" if level_id is not None else ""
+    length_text = f"({nlw_info.length})" if nlw_info and nlw_info.length else ""
+    if not length_text:
+        length = getattr(gdlevel, "length", None)
+        if length is None and gddl_meta is not None:
+            length = getattr(gddl_meta, "Length", None)
+            if length is not None:
+                length = int(length) - 1
+        if length is not None and length != 5 and 0 <= length < 5:
+            length_text = f"({['Tiny', 'Short', 'Medium', 'Long', 'XL'][length]})"
+    id_line = f"Level ID: {display_level_id} {length_text}" if display_level_id is not None else ""
 
     # rank_line: 集成 AREDL / GDDL 等排行信息
     rank_parts = []
@@ -721,10 +745,15 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
     skillset_line = f"Skillset: {nlw_info.skillset}" if nlw_info and getattr(nlw_info, "skillset", None) else ""
 
     # song info
-    if str(gdlevel.level_id) in nong_index:
-        song_name = nong_index[str(gdlevel.level_id)]["name"]
-        song_artist = nong_index[str(gdlevel.level_id)]["artist"]
+    if str(display_level_id) in nong_index:
+        song_name = nong_index[str(display_level_id)]["name"]
+        song_artist = nong_index[str(display_level_id)]["artist"]
         song_id = "NONG"
+    elif gdlevel is None and gddl_meta is not None:
+        gddl_song = getattr(gddl_meta, "Song", None)
+        song_name = getattr(gddl_song, "Name", "") or ""
+        song_artist = getattr(gddl_song, "Author", "") or ""
+        song_id = getattr(gddl_song, "ID", "") or ""
     else:
         song_name = getattr(gdlevel, "song_name", "") or ""
         song_artist = getattr(gdlevel, "song_author", "") or ""
@@ -733,9 +762,24 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
     # diff icon mapping
     diff_icon_path = RES_DIR/"diffIcon/diffIcon_0.png"
     try:
-        if getattr(gdlevel, "is_demon", False):
+        if gdlevel is None and gddl_meta is not None:
+            gddl_difficulty = getattr(gddl_meta, "Difficulty", "")
+            demon_difficulty = {
+                "Official": 0,
+                "Unknown": 0,
+                "Easy": 1,
+                "Medium": 2,
+                "Hard": 3,
+                "Insane": 4,
+                "Extreme": 5,
+            }.get(gddl_difficulty)
+            if demon_difficulty is None:
+                diff_icon_path = RES_DIR/"diffIcon/diffIcon_10.png"
+            else:
+                diff_icon_path = RES_DIR/f"diffIcon/diffIcon_1{demon_difficulty}.png"
+        elif getattr(gdlevel, "is_demon", False):
             # check readable difficulty label for mapping
-            demon_difficulty = "3001245"[gdlevel.demon_difficulty]
+            demon_difficulty = "3001245"[gdlevel.demon_difficulty] # type: ignore
             diff_icon_path = RES_DIR/f"diffIcon/diffIcon_1{demon_difficulty}.png"
         else:
             stars = int(getattr(gdlevel, "stars", 0) or 0)
@@ -746,7 +790,10 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
 
     # tier icon: use rounded gddl rating if present
     tier_icon_path = RES_DIR/"tiers/tier_0.png"
-    if gdlevel.is_plat():
+    if (
+        (gdlevel is not None and gdlevel.is_plat())
+        or (gdlevel is None and gddl_meta is not None and gddl_meta.is_pemon())
+    ):
         tier_icon_path = RES_DIR/"moon.png"
     elif gddl_info and (gddl_info.Rating or gddl_info.DefaultRating) is not None:
         tier_icon_path =  RES_DIR/f"tiers/tier_{int(gddl_info.Rating+0.5) if gddl_info.Rating else gddl_info.DefaultRating}.png"
@@ -768,14 +815,19 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
     elif gddl_info:
         title_text = "GDDL"
         rating = round(gddl_info.Rating, 2) if gddl_info and gddl_info.Rating else "N/A"
-        if gdlevel.is_two_player and gddl_info.TwoPlayerRating:
+        is_two_player = (
+            getattr(gdlevel, "is_two_player", False)
+            if gdlevel is not None
+            else getattr(gddl_meta, "IsTwoPlayer", False)
+        )
+        if is_two_player and gddl_info.TwoPlayerRating:
             rating_count = f"/{round(gddl_info.TwoPlayerRating, 2)}(2p)"
         else:
             rating_count = f"({gddl_info.RatingCount})" if gddl_info and gddl_info.RatingCount else ""
         line1 = f"Tier: {rating}{rating_count}"
 
         enj = round(gddl_info.Enjoyment, 2) if gddl_info and gddl_info.Enjoyment else "N/A"
-        if gdlevel.is_two_player and gddl_info.TwoPlayerEnjoyment:
+        if is_two_player and gddl_info.TwoPlayerEnjoyment:
             enj_count = f"/{round(gddl_info.TwoPlayerEnjoyment, 2)}(2p)"
         else:
             enj_count = f"({gddl_info.EnjoymentCount})" if gddl_info and gddl_info.EnjoymentCount else ""
@@ -787,7 +839,10 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
 
     #detail text
     detail_text = ""
-    detail_text += f"Description: {gdlevel.description}"
+    description = getattr(gdlevel, "description", None) if gdlevel else None
+    if description is None and gddl_meta is not None:
+        description = getattr(gddl_meta, "Description", None)
+    detail_text += f"Description: {description or ''}"
     if plat_info and plat_info.tags:
         detail_text += f"\n\nDifficulty Chart Tags: {', '.join(plat_info.tags)}"
     if nlw_info and nlw_info.description:
@@ -796,7 +851,11 @@ async def create_image_from_gdlevel(gdlevel: GDLevel) -> Image.Image:
         detail_text += f"\n\nAREDL Description: {aredl_info.description}"
 
     # featured fx -x try from aredl tags or leave empty
-    featured_level = gdlevel.epic + 1 if gdlevel.epic else 1 if gdlevel.feature_score else 0
+    if gdlevel is not None:
+        featured_level = gdlevel.epic + 1 if gdlevel.epic else 1 if gdlevel.feature_score else 0
+    else:
+        rarity = getattr(gddl_meta, "Rarity", 0) if gddl_meta is not None else 0
+        featured_level = rarity if isinstance(rarity, int) and 1 <= rarity <= 4 else 0
     featured_fx = RES_DIR/f"diffIcon/featured_{featured_level}.png" if featured_level else Path()
 
     # thumbnail id - use level id

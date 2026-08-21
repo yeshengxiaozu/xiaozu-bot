@@ -1384,7 +1384,7 @@ class TestIdlFetch:
     ) -> None:
         # 故意倒序给，验证 fetch 内部按 position 重排
         levels = [(f"Level {i}", i, f"Creator{i}") for i in range(2, 151)]
-        levels.append((" Level 1 ", 1, "Creator1"))
+        levels.append(("⠀Level 1 ", 1, "Creator1"))
         levels.reverse()
         monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
         stub_requests.get(
