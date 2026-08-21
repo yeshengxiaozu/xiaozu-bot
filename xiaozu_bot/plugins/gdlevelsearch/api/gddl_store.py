@@ -6,6 +6,7 @@ import json
 import os
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,8 @@ from ..paths import DATA_DIR
 DATA_FILE = DATA_DIR / "gddl_levels.json"
 
 PAGE_SIZE = 25
-FETCH_INTERVAL = 0.3
+FETCH_INTERVAL = 5
+FETCH_WORKERS = 5
 RETRY_WAIT = 60
 MIN_COMPLETE_RATIO = 0.95
 TIER_MIN = 1.0
@@ -53,18 +55,15 @@ def _number(value: Any) -> float | None:
 
 
 def _matches(level: dict[str, Any], filters: dict[str, Any]) -> bool:
-    meta = level.get("Meta") or {}
-    name = filters.get("name")
-    if name is not None and str(meta.get("Name") or "").strip().lower() != str(name).strip().lower():
+    name = filters.get("Name")
+    if name is not None and str(level.get("name") or "").strip().lower() != str(name).strip().lower():
         return False
 
-    rating = _number(level.get("Rating"))
-    enjoyment = _number(level.get("Enjoyment"))
-    submission_count = _number(level.get("SubmissionCount"))
+    rating = _number(level.get("rating"))
+    enjoyment = _number(level.get("enjoyment"))
     bounds = (
         (rating, "minRating", "maxRating"),
         (enjoyment, "minEnjoyment", "maxEnjoyment"),
-        (submission_count, "minSubmissionCount", None),
     )
     for value, minimum, maximum in bounds:
         if filters.get(minimum) is not None:
@@ -104,7 +103,7 @@ def search_levels(
     if sort.lower() == "random":
         random.shuffle(result)
     elif sort.lower() == "id":
-        result.sort(key=lambda level: int(level.get("ID", 0)), reverse=direction == "desc")
+        result.sort(key=lambda level: int(level.get("id", 0)), reverse=direction == "desc")
     else:
         return None
 
@@ -129,10 +128,10 @@ def pick_random(
     high_exact = min(high + 0.5, TIER_MAX)
     pool: list[dict[str, Any]] = []
     for level in levels:
-        rating = _number(level.get("Rating"))
+        rating = _number(level.get("rating"))
         if rating is None or not low_exact <= rating <= high_exact:
             continue
-        enjoyment = _number(level.get("Enjoyment"))
+        enjoyment = _number(level.get("enjoyment"))
         if enjoyment_min is not None and (
             enjoyment is None or enjoyment < enjoyment_min
         ):
@@ -152,13 +151,13 @@ def _rebuild_indexes(new_levels: list[dict[str, Any]], stamp: str | None) -> Non
     _by_name.clear()
     for level in new_levels:
         try:
-            level_id = int(level["ID"])
+            level_id = int(level["id"])
         except (KeyError, TypeError, ValueError):
             continue
-        level["ID"] = level_id
+        level["id"] = level_id
         levels.append(level)
         by_id[level_id] = level
-        name = str((level.get("Meta") or {}).get("Name") or "").strip().lower()
+        name = str(level.get("name") or "").strip().lower()
         if name:
             _by_name.setdefault(name, []).append(level)
     fetched_at = stamp
@@ -180,7 +179,7 @@ def reload(path: Path | None = None) -> None:
     usable_levels = []
     for level in valid_levels:
         try:
-            int(level["ID"])
+            int(level["id"])
         except (KeyError, TypeError, ValueError):
             continue
         usable_levels.append(level)
@@ -215,32 +214,45 @@ def fetch_all_levels() -> list[dict[str, Any]] | None:
             page=number, limit=PAGE_SIZE, sort="ID", sort_direction="asc"
         )
 
-    first = page(0)
-    if not first or not first.get("levels"):
-        logger.warning("[gddl_store] first page was empty; abandoning scan")
-        return None
-    total = int(first.get("total") or 0)
-    pages = max(1, -(-total // PAGE_SIZE))
-    seen: dict[int, dict[str, Any]] = {}
-    for level in first.get("levels") or []:
-        if isinstance(level, dict) and "ID" in level:
-            seen[int(level["ID"])] = level
-
-    for number in range(1, pages):
-        time.sleep(FETCH_INTERVAL)
+    def fetch_with_retry(number: int) -> dict[str, Any] | None:
         payload = page(number)
         if payload is None:
             logger.warning(f"[gddl_store] page {number} failed; retrying once")
             time.sleep(RETRY_WAIT)
             payload = page(number)
-        if payload is None:
-            logger.error(f"[gddl_store] page {number} failed twice; abandoning scan")
+        return payload
+
+    with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as executor:
+        first = executor.submit(page, 0).result()
+        if not first or not first.get("data"):
+            logger.warning("[gddl_store] first page was empty; abandoning scan")
             return None
-        for level in payload.get("levels") or []:
-            if isinstance(level, dict) and "ID" in level:
-                seen[int(level["ID"])] = level
-        if number % 50 == 0:
-            logger.info(f"[gddl_store] page {number} fetched")
+        total = int(first.get("total") or 0)
+        pages = max(1, -(-total // PAGE_SIZE))
+        seen: dict[int, dict[str, Any]] = {}
+        for level in first.get("data") or []:
+            if isinstance(level, dict) and "id" in level:
+                seen[int(level["id"])] = level
+
+        for batch_start in range(1, pages, FETCH_WORKERS):
+            time.sleep(FETCH_INTERVAL)
+            batch = range(batch_start, min(batch_start + FETCH_WORKERS, pages))
+            futures = {
+                executor.submit(fetch_with_retry, number): number for number in batch
+            }
+            for future in as_completed(futures):
+                number = futures[future]
+                payload = future.result()
+                if payload is None:
+                    logger.error(
+                        f"[gddl_store] page {number} failed twice; abandoning scan"
+                    )
+                    return None
+                for level in payload.get("data") or []:
+                    if isinstance(level, dict) and "id" in level:
+                        seen[int(level["id"])] = level
+                if number % 50 == 0:
+                    logger.info(f"[gddl_store] page {number} fetched")
 
     if total and len(seen) < total * MIN_COMPLETE_RATIO:
         logger.error(f"[gddl_store] only fetched {len(seen)}/{total} levels")

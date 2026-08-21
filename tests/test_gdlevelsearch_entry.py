@@ -30,7 +30,7 @@ from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
     GDLevel,
     GDUser,
 )
-from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import GDDLLevel
+from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import GDDLSearchEntry
 from xiaozu_bot.plugins.gdlevelsearch.api.nlwapi import Level as NlwLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.platapi import PlatInfo
 from xiaozu_bot.plugins.gdlevelsearch.commands import (
@@ -68,34 +68,18 @@ def gddl_level(
     rating: float | None = None,
     difficulty: str = "Extreme",
     rarity: int = 0,
-    length: int = 3,
-) -> GDDLLevel:
-    """真的 GDDLLevel —— 构造函数是硬取 jsondict[...]，字段一个都不能少"""
-    return GDDLLevel(
+) -> GDDLSearchEntry:
+    """搜索接口返回的精简 GDDL 条目。"""
+    return GDDLSearchEntry(
         {
-            "ID": level_id,
-            "Rating": rating,
-            "Enjoyment": None,
-            "Deviation": None,
-            "RatingCount": 0,
-            "EnjoymentCount": 0,
-            "SubmissionCount": 0,
-            "TwoPlayerRating": None,
-            "TwoPlayerEnjoyment": None,
-            "TwoPlayerDeviation": None,
-            "DefaultRating": None,
-            "Showcase": None,
-            "Meta": {
-                "ID": level_id,
-                "Name": name,
-                "Description": None,
-                "SongID": -1,
-                "Length": length,  # 6 = plat，触发 is_pemon()
-                "IsTwoPlayer": False,
-                "Difficulty": difficulty,
-                "Rarity": rarity,
-                "Song": {"ID": -1, "Name": "Stereo Madness", "Author": "Foreverbound"},
-            },
+            "id": level_id,
+            "rating": rating,
+            "enjoyment": None,
+            "name": name,
+            "difficulty": difficulty,
+            "rarity": rarity,
+            "publisherName": "OniLink",
+            "songName": "Stereo Madness",
         }
     )
 
@@ -136,13 +120,13 @@ def gd_level(**attrs: Any) -> GDLevel:
 class FakeGddl:
     """替掉模块级的 Gddl 门面。只实现 search_by_name / gdrandom 真会调的两个方法。"""
 
-    def __init__(self, levels: list[GDDLLevel] | None = None) -> None:
+    def __init__(self, levels: list[GDDLSearchEntry] | None = None) -> None:
         self.levels = levels
         self.names: list[str] = []
         self.random_calls: list[tuple] = []
         self.random_result: Any = None
 
-    def getlevelsbyname(self, name: str) -> list[GDDLLevel] | None:
+    def getlevelsbyname(self, name: str) -> list[GDDLSearchEntry] | None:
         self.names.append(name)
         return self.levels
 
@@ -375,7 +359,7 @@ def sources(monkeypatch: pytest.MonkeyPatch) -> Any:
     """一次把三个数据源门面都换掉，返回它们方便断言"""
 
     def _install(
-        gddl: list[GDDLLevel] | None = None,
+        gddl: list[GDDLSearchEntry] | None = None,
         nlw: list[NlwLevel] | None = None,
         plat: PlatInfo | None = None,
     ) -> tuple[FakeGddl, FakeNlw, FakePlatapi]:
@@ -486,19 +470,18 @@ class TestSearchByName:
         assert gdlevelsearch.search_by_name("X")[0].tier is None
 
     def test_classic_difficulty_gets_a_demon_suffix(self, sources: Any) -> None:
-        sources(gddl=[gddl_level(1, "X", difficulty="Insane", length=3)])
+        sources(gddl=[gddl_level(1, "X", difficulty="Insane")])
         assert gdlevelsearch.search_by_name("X")[0].difficulty == "Insane Demon"
 
-    def test_plat_length_gets_a_pemon_suffix(self, sources: Any) -> None:
-        """Length == 6 是 platformer，后缀改成 Pemon"""
-        sources(gddl=[gddl_level(1, "X", difficulty="Extreme", length=6)])
-        assert gdlevelsearch.search_by_name("X")[0].difficulty == "Extreme Pemon"
+    def test_search_entry_does_not_infer_platformer_length(
+        self, sources: Any
+    ) -> None:
+        """搜索 DTO 没有 Length，因此 is_pemon() 固定返回 False。"""
+        sources(gddl=[gddl_level(1, "X", difficulty="Extreme")])
+        assert gdlevelsearch.search_by_name("X")[0].difficulty == "Extreme Demon"
 
-    def test_gddl_entry_without_meta_is_skipped(self, sources: Any) -> None:
-        """`if not level or not getattr(level, "Meta", None): continue`"""
-        broken = gddl_level(1, "X")
-        broken.Meta = None  # type: ignore[assignment]
-        sources(gddl=[broken, None])  # type: ignore[list-item]
+    def test_non_search_entries_are_skipped(self, sources: Any) -> None:
+        sources(gddl=[object(), None])  # type: ignore[list-item]
         assert gdlevelsearch.search_by_name("X") == []
 
     def test_nlw_results_are_included(self, sources: Any) -> None:
@@ -533,7 +516,9 @@ class TestSearchByName:
     def test_same_level_from_three_sources_is_merged_once(self, sources: Any) -> None:
         """去重的键是 id：GDDL 给难度和 tier，NLW 补作者，plat 不再覆盖"""
         sources(
-            gddl=[gddl_level(500, "Tidal Wave", rating=35.0, difficulty="Extreme")],
+            gddl=[
+                gddl_level(500, "Tidal Wave", rating=35.0, difficulty="Extreme")
+            ],
             nlw=[nlw_level("500", "Tidal Wave", creator="OniLink")],
             plat=plat_info("500", "Tidal Wave", creator="SomeoneElse", tier="1 - BEGINNER"),
         )
@@ -911,7 +896,7 @@ class TestHandleGdsearch:
 
     async def test_five_digit_input_goes_down_the_id_path(
         self, fake_bot: FakeBot, make_group_event: Any,
-        monkeypatch: pytest.MonkeyPatch, stub_image: list[GDLevel],
+        monkeypatch: pytest.MonkeyPatch, stub_image: list[int],
     ) -> None:
         seen = stub_image
         monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: gd_level(name="By ID"))
@@ -1461,35 +1446,34 @@ class TestHandleDailyDemon:
         assert sent_texts(fake_bot) == [error]
         assert image_segments(fake_bot) == []
 
-    async def test_detail_lookup_failure_still_names_the_level(
-        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    async def test_picker_returns_an_id_to_the_renderer(
+        self,
+        fake_bot: FakeBot,
+        make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_image: list[int],
     ) -> None:
         monkeypatch.setattr(
             cmd_dailydemon, "get_daily_demon",
-            lambda: (gddl_level(777, "Daily One"), 42, ""),
+            lambda: (777, 42, ""),
         )
-        monkeypatch.setattr(cmd_dailydemon, "getlevelinfo", lambda _i: None)
 
         await run_handler(
             gdlevelsearch.dailydemon, fake_bot, make_group_event("*dailydemon")
         )
         # 详细信息拿不到时也得把关卡名和 id 说出来（用例名说的就是这件事），
         # 具体怎么组句不算行为
-        texts = sent_texts(fake_bot)
-        assert len(texts) == 1
-        assert "Daily One" in texts[0] and "777" in texts[0]
-        assert image_segments(fake_bot) == []
+        assert stub_image == [777]
+        assert len(image_segments(fake_bot)) == 1
 
-    async def test_happy_path_sends_a_caption_then_the_image(
+    async def test_happy_path_sends_the_image_without_a_caption(
         self, fake_bot: FakeBot, make_group_event: Any,
-        monkeypatch: pytest.MonkeyPatch, stub_image: list[GDLevel],
+        monkeypatch: pytest.MonkeyPatch, stub_image: list[int],
     ) -> None:
         monkeypatch.setattr(
             cmd_dailydemon, "get_daily_demon",
-            lambda: (gddl_level(777, "Daily One"), 42, ""),
+            lambda: (777, 42, ""),
         )
-        monkeypatch.setattr(cmd_dailydemon, "getlevelinfo", lambda _i: gd_level(name="D"))
-        monkeypatch.setattr(cmd_dailydemon, "describe_conditions", lambda: "tier 20-25")
 
         await run_handler(
             gdlevelsearch.dailydemon, fake_bot, make_group_event("*dailydemon")
@@ -1497,8 +1481,8 @@ class TestHandleDailyDemon:
 
         # 说明文字里要带上 describe_conditions() 的原文和候选关卡数，
         # 这两样是真信息；剩下的措辞不是
-        caption = sent_texts(fake_bot)[0]
-        assert "tier 20-25" in caption and "42" in caption
+        assert stub_image == [777]
+        assert sent_texts(fake_bot) == [""]
         assert len(image_segments(fake_bot)) == 1
 
 

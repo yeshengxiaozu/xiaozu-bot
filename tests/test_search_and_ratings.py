@@ -31,6 +31,7 @@ from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import (
     SORT_DIRECTIONS,
     SUBMISSION_SORTS,
     GDDLLevel,
+    GDDLSearchEntry,
     Submission,
     SubmissionPage,
 )
@@ -69,12 +70,30 @@ def _gd_level(**attrs: Any) -> GDLevel:
     return level
 
 
-def _gddl_level(level_id: int, name: str, rating: float | None = None) -> GDDLLevel:
-    """造一个真的 GDDLLevel（字段一个都不能少，构造函数是硬取的）。"""
+def _gddl_level(
+    level_id: int, name: str, rating: float | None = None
+) -> GDDLSearchEntry:
+    """造一个搜索接口返回的精简 GDDL 条目。"""
+    return GDDLSearchEntry(
+        {
+            "id": level_id,
+            "rating": rating,
+            "enjoyment": None,
+            "name": name,
+            "difficulty": "Extreme",
+            "rarity": 0,
+            "publisherName": "Publisher",
+            "songName": "Stereo Madness",
+        }
+    )
+
+
+def _gddl_detail(level_id: int, name: str) -> GDDLLevel:
+    """The detail endpoint still returns the full, nested DTO."""
     return GDDLLevel(
         {
             "ID": level_id,
-            "Rating": rating,
+            "Rating": None,
             "Enjoyment": None,
             "Deviation": None,
             "RatingCount": 0,
@@ -93,6 +112,7 @@ def _gddl_level(level_id: int, name: str, rating: float | None = None) -> GDDLLe
                 "Length": 3,
                 "IsTwoPlayer": False,
                 "Difficulty": "Extreme",
+                "Rarity": 0,
                 "Song": {"ID": -1, "Name": "Stereo Madness", "Author": "Foreverbound"},
             },
         }
@@ -128,7 +148,7 @@ def _sub_page(
     page: int = 0,
 ) -> SubmissionPage:
     return SubmissionPage(
-        {"total": total, "limit": limit, "page": page, "submissions": subs}
+        {"total": total, "limit": limit, "page": page, "data": subs}
     )
 
 
@@ -467,7 +487,7 @@ class TestResolveLevel:
     def test_pure_digits_longer_than_min_go_to_id_lookup(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        fake = FakeGddl(by_id=_gddl_level(10565740, "Bloodbath"))
+        fake = FakeGddl(by_id=_gddl_detail(10565740, "Bloodbath"))
         monkeypatch.setattr(ratings, "Gddl", fake)
 
         level_id, name, err = ratings.resolve_level("10565740")
@@ -1045,14 +1065,14 @@ class TestRatingsAgainstStubbedHttp:
     """走真的 gddlapi + requests（被 stub_requests 拦住），确认参数名没写错"""
 
     def test_api_kwargs_reach_the_wire_as_query_params(self, stub_requests) -> None:
-        url = "https://gdladder.com/api/level/10565740/submissions"
+        url = "https://gdladder.com/api/levels/10565740/submissions"
         stub_requests.get(
             url,
             json_data={
                 "total": 12,
                 "limit": 10,
                 "page": 0,
-                "submissions": [
+                "data": [
                     {"ID": 1, "Rating": 21, "Enjoyment": 8, "User": {"Name": "Riot"}}
                 ],
             },
@@ -1084,7 +1104,7 @@ class TestRatingsAgainstStubbedHttp:
     def test_http_error_becomes_a_failed_fetch(self, stub_requests) -> None:
         """接口 500 时 gddlapi 返回 None，会话保持原样"""
         stub_requests.get(
-            "https://gdladder.com/api/level/1/submissions", status_code=500, text="boom"
+            "https://gdladder.com/api/levels/1/submissions", status_code=500, text="boom"
         )
         session = ratings.RatingsSession(
             query=ratings.RatingsQuery(target="1"), level_id=1

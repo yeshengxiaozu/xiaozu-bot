@@ -1,4 +1,4 @@
-"""*gdsearchhelp 与 *gdsearch_update。"""
+"""*gdsearchhelp, *gdsearch_update, and *gdsearch_store_update."""
 
 import asyncio
 
@@ -38,6 +38,9 @@ async def handle_gdsearchhelp() -> None:
 
 
 update_cmd = on_command("gdsearch_update", permission=SUPERUSER, priority=1, block=True)
+gdsearch_store_update = on_command(
+    "gdsearch_store_update", permission=SUPERUSER, priority=1, block=True
+)
 
 
 @update_cmd.handle()
@@ -53,3 +56,13 @@ async def _handle(event: Event):
         # 抓完立刻重载，这样不用重启就能查到新数据
         await asyncio.to_thread(reload_all)
         await update_cmd.finish(f"✅ 更新完成，缓存已重载\n{result}")
+
+
+@gdsearch_store_update.handle()
+async def _handle_store_update() -> None:
+    from ..updater import gddl_store_update_job
+
+    await gdsearch_store_update.send("🚀 开始更新 GDDL store...")
+    if await gddl_store_update_job():
+        await gdsearch_store_update.finish("✅ GDDL store 更新完成，缓存已重载")
+    await gdsearch_store_update.finish("❌ GDDL store 更新失败，或已有更新正在进行")

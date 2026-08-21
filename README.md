@@ -158,6 +158,7 @@ pytest 的 `tmp_path`，干净 checkout 上照样全绿。
 
 - 每天凌晨 3 点自动跑一次（`updater/__init__.py` 里注册的定时任务）
 - 超级用户可以发 `*gdsearch_update` 手动触发
+- 超级用户可以发 `*gdsearch_store_update` 立即更新 GDDL 本地缓存
 - GDDL 快照写入 `data/gddl_levels.json`；它是 best-effort 任务，远端失败会保留旧快照，不阻塞其他数据源发布
 
 两条路径跑完都会调 `reload_all()` 把新数据读进内存，**不需要重启 bot**。
@@ -231,4 +232,3 @@ GDDL 不在这个流水线里：它作为独立后台任务与主更新同时启
 ## 贡献与反馈
 
 欢迎通过 Issue 或 Pull Request 提交改进建议。提交前请运行测试和 `ruff check .`，并确认工作区没有生成的缓存、运行时数据或敏感信息。
-

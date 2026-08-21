@@ -49,6 +49,7 @@ from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import (
     GDDL_SUBMISSION_LIMIT,
     Gddl,
     GDDLLevel,
+    GDDLSearchEntry,
     LevelMeta,
     SongInfo,
     Submission,
@@ -70,8 +71,8 @@ dailydemon = import_module("xiaozu_bot.plugins.gdlevelsearch.commands.dailydemon
 # 造数据的小工具
 # ==========================================================================
 
-GDDL_LEVEL_URL = "https://gdladder.com/api/level/"
-GDDL_SEARCH_URL = "https://gdladder.com/api/level/search"
+GDDL_LEVEL_URL = "https://gdladder.com/api/levels/"
+GDDL_SEARCH_URL = "https://gdladder.com/api/levels"
 
 
 def make_song_payload(**over: Any) -> dict[str, Any]:
@@ -127,6 +128,22 @@ def make_level_payload(**over: Any) -> dict[str, Any]:
     return payload
 
 
+def make_search_payload(**over: Any) -> dict[str, Any]:
+    """The compact, lowercase DTO returned by the levels search endpoint."""
+    payload = {
+        "id": 1000,
+        "rating": 20.5,
+        "enjoyment": 7.5,
+        "name": "Test Level",
+        "difficulty": "Extreme",
+        "rarity": 0,
+        "publisherName": "Test Publisher",
+        "songName": "Stereo Madness",
+    }
+    payload.update(over)
+    return payload
+
+
 def make_submission_payload(**over: Any) -> dict[str, Any]:
     """SubmissionDTO。上游改字段名时只改这一处，用例不用一条条跟着改。"""
     payload = {
@@ -173,7 +190,7 @@ def make_submission_page_payload(
         "total": len(ids),
         "limit": GDDL_SUBMISSION_LIMIT,
         "page": 0,
-        "submissions": [make_submission_payload(ID=i) for i in ids],
+        "data": [make_submission_payload(ID=i) for i in ids],
     }
     payload.update(over)
     return payload
@@ -326,9 +343,11 @@ class TestGddlModels:
             "IsTwoPlayer",
             "Difficulty",
             "Rarity",
+            "seconds",
             "Song",
         }
         assert meta.UploadedAt is None
+        assert meta.seconds is None
         assert not hasattr(meta, "PublisherID")
 
     def test_level_meta_preserves_rarity(self) -> None:
@@ -369,6 +388,24 @@ class TestGddlModels:
             del payload[missing]
             with pytest.raises(KeyError):
                 GDDLLevel(payload)
+
+    def test_search_entry_uses_the_compact_search_dto(self) -> None:
+        entry = GDDLSearchEntry(make_search_payload(id=42, name="Compact"))
+        assert entry.ID == 42
+        assert entry.Name == "Compact"
+        assert entry.Rating == 20.5
+        assert entry.Enjoyment == 7.5
+        assert entry.Difficulty == "Extreme"
+        assert entry.Rarity == 0
+        assert entry.PublisherName == "Test Publisher"
+        assert entry.SongName == "Stereo Madness"
+        assert entry.is_pemon() is False
+
+    def test_search_entry_requires_lowercase_api_keys(self) -> None:
+        payload = make_search_payload()
+        del payload["name"]
+        with pytest.raises(KeyError, match="name"):
+            GDDLSearchEntry(payload)
 
 
 class TestSubmission:
@@ -457,7 +494,7 @@ class TestSubmissionPage:
 class TestGddlGetSubmissions:
     def test_happy_path(self, stub_requests: Any, make_response: Any) -> None:
         stub_requests.get(
-            "https://gdladder.com/api/level/1000/submissions",
+            "https://gdladder.com/api/levels/1000/submissions",
             make_response(json_data=make_submission_page_payload(ids=(1, 2))),
         )
         page = Gddl.getsubmissions(1000)
@@ -465,7 +502,7 @@ class TestGddlGetSubmissions:
         assert page.total == 2
         assert [s.id for s in page.submissions] == [1, 2]
         call = stub_requests.calls[-1]
-        assert call["url"] == "https://gdladder.com/api/level/1000/submissions"
+        assert call["url"] == "https://gdladder.com/api/levels/1000/submissions"
         assert call["params"] == {"page": 0, "limit": GDDL_SUBMISSION_LIMIT}
         assert call["timeout"] == 15
         assert call["headers"]["Authorization"] == f"Bearer {gddlapi.apikey}"
@@ -580,7 +617,7 @@ class TestGddlSpreadAndTags:
         stub_requests.get("/submissions/spread", make_response(json_data=payload))
         assert Gddl.getspread(1000) == payload
         assert stub_requests.urls[-1] == (
-            "https://gdladder.com/api/level/1000/submissions/spread"
+            "https://gdladder.com/api/levels/1000/submissions/spread"
         )
 
     def test_spread_non_200_returns_none(
@@ -603,34 +640,14 @@ class TestGddlSpreadAndTags:
             "/tags",
             make_response(
                 json_data=[
-                    {
-                        "TagID": 1,
-                        "ReactCount": 9,
-                        "HasVoted": 0,
-                        "Tag": {
-                            "ID": 1,
-                            "Name": "Timings",
-                            "Description": "",
-                            "Ordering": 1,
-                        },
-                    },
-                    {
-                        "TagID": 2,
-                        "ReactCount": 0,
-                        "HasVoted": 1,
-                        "Tag": {
-                            "ID": 2,
-                            "Name": "Memory",
-                            "Description": "",
-                            "Ordering": 2,
-                        },
-                    },
+                    {"TagID": 1, "ReactCount": 9},
+                    {"TagID": 2, "ReactCount": 0},
                 ]
             ),
         )
         assert Gddl.getleveltags(500) == [
-            {"Name": "Timings", "Count": 9},
-            {"Name": "Memory", "Count": 0},
+            {"Name": "Cube", "Count": 9},
+            {"Name": "Ship", "Count": 0},
         ]
 
     def test_tags_empty_list(self, stub_requests: Any, make_response: Any) -> None:
@@ -667,15 +684,17 @@ class TestGddlLevelLookup:
             GDDL_SEARCH_URL,
             make_response(
                 json_data={
-                    "levels": [
-                        make_level_payload(ID=1),
-                        make_level_payload(ID=2),
+                    "data": [
+                        make_search_payload(id=1),
+                        make_search_payload(id=2),
                     ]
                 }
             ),
         )
         levels = Gddl.getlevelsbyname("Test Level")
         assert [lv.ID for lv in levels] == [1, 2]
+        assert all(isinstance(level, GDDLSearchEntry) for level in levels)
+        assert [lv.Name for lv in levels] == ["Test Level", "Test Level"]
         assert stub_requests.calls[-1]["params"] == {"name": "Test Level"}
 
     def test_getlevelsbyname_non_200(
@@ -709,21 +728,21 @@ class TestGddlLevelLookup:
         # /tags 必须先登记：路由是子串匹配，
         # ".../123" 也能匹配 ".../123/tags"
         stub_requests.get(
-            "/api/level/123/tags",
+            "/api/levels/123/tags",
             make_response(
                 json_data=[
-                    {"ReactCount": 4, "Tag": {"Name": "Precision"}},
+                    {"TagID": 1, "ReactCount": 4},
                 ]
             ),
         )
         stub_requests.get(
-            "/api/level/123",
+            "/api/levels/123",
             make_response(json_data=make_level_payload(ID=123)),
         )
         level = Gddl.getlevelbyid(123)
         assert level is not None
         assert level.ID == 123
-        assert level.Tags == [{"Name": "Precision", "Count": 4}]
+        assert level.Tags == [{"Name": "Cube", "Count": 4}]
         assert len(stub_requests.calls) == 2
 
     def test_getlevelbyid_without_tags_is_one_round_trip(
@@ -731,7 +750,7 @@ class TestGddlLevelLookup:
     ) -> None:
         """with_tags=False 时不该顺带去拉 tags，Tags 留空"""
         stub_requests.get(
-            "/api/level/123",
+            "/api/levels/123",
             make_response(json_data=make_level_payload(ID=123)),
         )
         level = Gddl.getlevelbyid(123, with_tags=False)
@@ -747,7 +766,7 @@ class TestGddlLevelLookup:
     ) -> None:
         unknown_id = 999999999
         stub_requests.get(
-            f"/api/level/{unknown_id}",
+            f"/api/levels/{unknown_id}",
             make_response(404, json_data={}),
         )
         assert Gddl.getlevelbyid(unknown_id) is None
@@ -761,48 +780,34 @@ class TestGddlLevelLookup:
 
         unknown_id = 999999999
         stub_requests.get(
-            f"/api/level/{unknown_id}",
+            f"/api/levels/{unknown_id}",
             _requests.Timeout("t"),
         )
         assert Gddl.getlevelbyid(unknown_id) is None
 
 
 class TestGddlLocalFallback:
-    def test_id_lookup_uses_snapshot_after_remote_failure(
-        self, gddl_snapshot: None, stub_requests: Any
-    ) -> None:
-        import requests as _requests
-
-        stub_requests.get("/api/level/123", _requests.Timeout("t"))
-        level = Gddl.getlevelbyid(123, with_tags=False)
-        assert level is not None
-        assert level.Meta.Name == "Cached Level"
 
     def test_name_lookup_uses_snapshot_after_remote_failure(
-        self, gddl_snapshot: None, stub_requests: Any
+        self,
+        gddl_snapshot: None,
+        stub_requests: Any,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import requests as _requests
 
         stub_requests.get(
             GDDL_SEARCH_URL,
             _requests.ConnectionError("offline"),
+        )
+        monkeypatch.setattr(
+            gddl_store,
+            "get_by_name",
+            lambda _name: [make_search_payload(id=123, name="Cached Level")],
         )
         levels = Gddl.getlevelsbyname("cached level")
         assert [level.ID for level in levels] == [123]
-
-    def test_search_lookup_applies_local_filters_and_paging(
-        self, gddl_snapshot: None, stub_requests: Any
-    ) -> None:
-        import requests as _requests
-
-        stub_requests.get(
-            GDDL_SEARCH_URL,
-            _requests.ConnectionError("offline"),
-        )
-        payload = Gddl.searchlevels(page=0, limit=1, minRating=20)
-        assert payload is not None
-        assert payload["total"] == 2
-        assert [level["ID"] for level in payload["levels"]] == [123]
+        assert levels[0].Name == "Cached Level"
 
 
 class TestGddlSearch:
@@ -811,7 +816,7 @@ class TestGddlSearch:
     ) -> None:
         stub_requests.get(
             GDDL_SEARCH_URL,
-            make_response(json_data={"total": 0, "levels": []}),
+            make_response(json_data={"total": 0, "data": []}),
         )
         Gddl.searchlevels(
             page=2,
@@ -875,7 +880,7 @@ class TestGddlSearch:
             make_response(
                 json_data={
                     "total": 500,
-                    "levels": [make_level_payload(ID=777)],
+                    "data": [make_search_payload(id=777)],
                 }
             ),
         )
@@ -906,8 +911,8 @@ class TestGddlSearch:
         "payload",
         [
             {},
-            {"levels": []},
-            {"total": 3, "levels": []},
+            {"data": []},
+            {"total": 3, "data": []},
         ],
     )
     def test_getlevelbyindex_empty_levels(
@@ -950,7 +955,7 @@ class TestGddlSearch:
             make_response(
                 json_data={
                     "total": 1,
-                    "levels": [make_level_payload(ID=9)],
+                    "data": [make_search_payload(id=9)],
                 }
             ),
         )
@@ -970,7 +975,7 @@ class TestGddlSearch:
             make_response(
                 json_data={
                     "total": 1,
-                    "levels": [make_level_payload()],
+                    "data": [make_search_payload()],
                 }
             ),
         )
@@ -991,7 +996,7 @@ class TestGddlSearch:
             make_response(
                 json_data={
                     "total": 1,
-                    "levels": [make_level_payload()],
+                    "data": [make_search_payload()],
                 }
             ),
         )
@@ -1005,7 +1010,7 @@ class TestGddlSearch:
     ) -> None:
         stub_requests.get(
             GDDL_SEARCH_URL,
-            make_response(json_data={"total": 0, "levels": []}),
+            make_response(json_data={"total": 0, "data": []}),
         )
         assert Gddl.getrandomlevelbytier(20) is None
 
@@ -1514,7 +1519,7 @@ class TestPlatInfoFromDict:
 
     def test_values_are_stringified_and_stripped(self) -> None:
         info = PlatInfo.from_dict(
-            make_plat_row(level_id=222, name="  Spaced  ", weight=100)
+            make_plat_row(level_id="222", name="  Spaced  ", weight=100)
         )
         assert info.id == "222"
         assert info.name == "Spaced"
@@ -1998,13 +2003,8 @@ class FakeGddl:
 def make_gddl_level(
     level_id: int,
     name: str = "Daily",
-) -> GDDLLevel:
-    return GDDLLevel(
-        make_level_payload(
-            ID=level_id,
-            meta={"ID": level_id, "Name": name},
-        )
-    )
+) -> GDDLSearchEntry:
+    return GDDLSearchEntry(make_search_payload(id=level_id, name=name))
 
 
 class TestDailyDemonPure:
@@ -2238,8 +2238,7 @@ class TestDailyDemonFlow:
                 "dailydemon_2026-07-26": "555"
             },
         )
-        level = make_gddl_level(555)
-        fake = FakeGddl(by_id=level)
+        fake = FakeGddl()
         monkeypatch.setattr(
             dailydemon,
             "Gddl",
@@ -2247,13 +2246,13 @@ class TestDailyDemonFlow:
         )
 
         got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
-        assert got is level
+        assert got == 555
         assert total == 0
         assert err == ""
-        assert fake.id_calls == [555]
+        assert fake.id_calls == []
         assert fake.search_calls == []
 
-    def test_cached_level_gone_falls_through_to_a_new_pick(
+    def test_cached_day_does_not_requery_the_level(
         self,
         patch_storage: Any,
         monkeypatch: pytest.MonkeyPatch,
@@ -2264,12 +2263,7 @@ class TestDailyDemonFlow:
                 "dailydemon_2026-07-26": "555"
             },
         )
-        picked = make_gddl_level(777)
-        fake = FakeGddl(
-            search_payload={"total": 100},
-            by_index=picked,
-            by_id=None,
-        )
+        fake = FakeGddl(search_payload={"total": 100})
         monkeypatch.setattr(
             dailydemon,
             "Gddl",
@@ -2277,13 +2271,12 @@ class TestDailyDemonFlow:
         )
 
         got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
-        assert got is picked
-        assert total == 100
+        assert got == 555
+        assert total == 0
         assert err == ""
-        assert (
-            r.get("dailydemon_2026-07-26")
-            == "777"
-        )
+        assert r.get("dailydemon_2026-07-26") == "555"
+        assert fake.search_calls == []
+        assert fake.index_calls == []
 
     def test_search_failure(
         self,
@@ -2360,7 +2353,7 @@ class TestDailyDemonFlow:
             ),
         )
         got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
-        assert got is level
+        assert got == level.ID
         assert (total, err) == (500, "")
         assert (
             r.get("dailydemon_2026-07-26")
@@ -2405,7 +2398,7 @@ class TestDailyDemonFlow:
         fresh = make_gddl_level(200)
         calls = {"n": 0}
 
-        def _by_index(_index: int) -> GDDLLevel:
+        def _by_index(_index: int) -> GDDLSearchEntry:
             calls["n"] += 1
             return (
                 make_gddl_level(100)
@@ -2423,7 +2416,7 @@ class TestDailyDemonFlow:
             fake,
         )
         got, _total, err = dailydemon.get_daily_demon(FIXED_DAY)
-        assert got is fresh
+        assert got == fresh.ID
         assert err == ""
         assert len(fake.index_calls) == 2
 
@@ -2449,7 +2442,7 @@ class TestDailyDemonFlow:
             fake,
         )
         got, _total, err = dailydemon.get_daily_demon(FIXED_DAY)
-        assert got is repeated
+        assert got == repeated.ID
         assert err == ""
         assert len(fake.index_calls) == dailydemon.MAX_REROLL
         assert fake.index_calls == [
@@ -2535,7 +2528,7 @@ class TestDailyDemonFlow:
         a, _t1, _e1 = dailydemon.get_daily_demon(FIXED_DAY)
         fake.search_payload = {"total": 999}
         b, total_b, _e2 = dailydemon.get_daily_demon(FIXED_DAY)
-        assert a is b
+        assert a == b
         assert total_b == 0
         assert len(fake.search_calls) == 1
 

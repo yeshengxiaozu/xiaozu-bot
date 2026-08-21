@@ -19,7 +19,7 @@ from nonebot.internal.adapter import Bot, Event
 from xiaozu_bot.utils.json_storage import JsonRedis
 
 from ..api.gdapi import GDAPIUnavailable
-from ..api.gddlapi import Gddl, GDDLLevel
+from ..api.gddlapi import Gddl, GDDLSearchEntry
 from ..services.search import getlevelinfo, send_result
 
 # 挑关卡的条件
@@ -100,7 +100,7 @@ def get_cached_id(today: datetime.date | None = None) -> int | None:
 
 def get_daily_demon(
     today: datetime.date | None = None,
-) -> tuple[GDDLLevel | None, int, str]:
+) -> tuple[int | None, int, str]:
     """取今天这一关。
 
     返回 (关卡, 符合条件的总数, 出错时的提示)。
@@ -111,12 +111,7 @@ def get_daily_demon(
     # 今天已经挑过了就直接用，别再受 GDDL 数据变动的影响
     cached_id = get_cached_id(day)
     if cached_id is not None:
-        level = Gddl.getlevelbyid(cached_id)
-        if level is not None:
-            logger.debug(f"[dailydemon] {day} 用已存的关卡 {cached_id}")
-            return level, 0, ""
-        # 存的 id 现在查不到了（被删了之类），当没挑过重来一次
-        logger.warning(f"[dailydemon] 存的关卡 {cached_id} 查不到了，重新挑一个")
+        return cached_id, 0, ""
 
     head = Gddl.searchlevels(page=0, limit=1, sort="ID", **FILTERS)
     if head is None:
@@ -149,8 +144,8 @@ def get_daily_demon(
 
     r.set(_key(day), str(level.ID), ex=KEEP_SECONDS)
     remember(level.ID)
-    logger.info(f"[dailydemon] {day} 定为 {level.Meta.Name}（ID {level.ID}），已存下")
-    return level, total, ""
+    logger.info(f"[dailydemon] {day} 定为 {level.Name}（ID {level.ID}），已存下")
+    return level.ID, total, ""
 
 
 def describe_conditions() -> str:
@@ -168,12 +163,8 @@ dailydemon = on_command("dailydemon")
 
 @dailydemon.handle()
 async def handle_dailydemon(bot: Bot, event: Event) -> None:
-    level_info, total, err = await asyncio.to_thread(get_daily_demon)
-    if level_info is None:
+    level_id, total, err = await asyncio.to_thread(get_daily_demon)
+    if level_id is None:
         await dailydemon.finish(err)
-    await bot.send(
-        event,
-        f"今日关卡（{describe_conditions()}，候选 {total} 关）：",
-    )
-    await send_result(bot, event, level_info.ID)
+    await send_result(bot, event, level_id)
     await dailydemon.finish()

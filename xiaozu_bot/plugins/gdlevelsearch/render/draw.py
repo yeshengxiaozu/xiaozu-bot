@@ -9,7 +9,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from ..api.aredlapi import Aredl
 from ..api.gdapi import get_level_by_id
-from ..api.gddlapi import Gddl
+from ..api.gddlapi import Gddl, GDDLLevel, GDDLSearchEntry
+from ..api.gddl_store import get_by_id
 from ..api.listsapi import Lists
 from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi, PlatInfo
@@ -658,11 +659,12 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
     gddl_info = _optional_remote_result(gddl_info, "GDDL level")
     thumb_bytes = _optional_remote_result(thumb_bytes, "thumbnail")
     gddl_tags = None
-    if gddl_info is not None:
+    if isinstance(gddl_info, GDDLLevel):
         gddl_tags = _optional_remote_result(
             await asyncio.to_thread(Gddl.getleveltags, level_id),
             "GDDL tags",
         )
+    
     if gddl_info is not None and gddl_tags:
         gddl_info.Tags = gddl_tags
 
@@ -670,6 +672,10 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
     aredl_info = Aredl.getlevelbyid(level_id)
     nlw_info = Nlw.getlevelbyid(level_id)
     plat_info = Platapi.getlevelbyid(level_id)
+    if gddl_info == None:
+        gddl_info = get_by_id(level_id)
+        if gddl_info is not None:
+            gddl_info = GDDLSearchEntry(gddl_info)
 
     # level_line / creator_line
     display_level_id = (
@@ -677,7 +683,7 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
         or getattr(gddl_info, "ID", None)
         or level_id
     )
-    gddl_meta = gddl_info.Meta if gddl_info else None
+    gddl_meta = gddl_info.Meta if isinstance(gddl_info, GDDLLevel) else None
     level_line = (
         getattr(gdlevel, "level_name", "")
         or getattr(gddl_meta, "Name", "")
@@ -689,8 +695,12 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
     creator_line = f"By {creator}" if creator else ""
 
     # id_line
-    length_text = f"({nlw_info.length})" if nlw_info and nlw_info.length else ""
-    if not length_text:
+    length_text = ""
+    if nlw_info and nlw_info.length:
+        length_text = f"({nlw_info.length})"
+    elif gddl_meta and gddl_meta.seconds:
+        length_text = f"({int(gddl_meta.seconds//60)}:{int(gddl_meta.seconds)%60})"
+    else:
         length = getattr(gdlevel, "length", None)
         if length is None and gddl_meta is not None:
             length = getattr(gddl_meta, "Length", None)
@@ -799,12 +809,12 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
         or (gdlevel is None and gddl_meta is not None and gddl_meta.is_pemon())
     ):
         tier_icon_path = RES_DIR/"moon.png"
-    elif gddl_info and (gddl_info.Rating or gddl_info.DefaultRating) is not None:
-        tier_icon_path =  RES_DIR/f"tiers/tier_{int(gddl_info.Rating+0.5) if gddl_info.Rating else gddl_info.DefaultRating}.png"
+    elif gddl_info and (gddl_info.Rating or getattr(gddl_info,"DefaultRating",None)) is not None:
+        tier_icon_path =  RES_DIR/f"tiers/tier_{int(gddl_info.Rating+0.5) if gddl_info.Rating else getattr(gddl_info,'DefaultRating',0)}.png"
 
     # skill icons from gddl tags
     skill_icons = []
-    if gddl_info and getattr(gddl_info, "Tags", None):
+    if gddl_info and isinstance(gddl_info,GDDLLevel) and getattr(gddl_info, "Tags", None):
         for tag in (gddl_info.Tags or [])[:3]:
             name = tag.get("Name") if isinstance(tag, dict) else None
             if not name:
@@ -824,17 +834,23 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
             if gdlevel is not None
             else getattr(gddl_meta, "IsTwoPlayer", False)
         )
-        if is_two_player and gddl_info.TwoPlayerRating:
-            rating_count = f"/{round(gddl_info.TwoPlayerRating, 2)}(2p)"
+        if isinstance(gddl_info, GDDLLevel):
+            if is_two_player and gddl_info.TwoPlayerRating:
+                rating_count = f"/{round(gddl_info.TwoPlayerRating, 2)}(2p)"
+            else:
+                rating_count = f"({gddl_info.RatingCount})" if gddl_info.RatingCount else ""
         else:
-            rating_count = f"({gddl_info.RatingCount})" if gddl_info and gddl_info.RatingCount else ""
+            rating_count = ""
         line1 = f"Tier: {rating}{rating_count}"
 
         enj = round(gddl_info.Enjoyment, 2) if gddl_info and gddl_info.Enjoyment else "N/A"
-        if is_two_player and gddl_info.TwoPlayerEnjoyment:
-            enj_count = f"/{round(gddl_info.TwoPlayerEnjoyment, 2)}(2p)"
+        if isinstance(gddl_info, GDDLLevel):
+            if is_two_player and gddl_info.TwoPlayerEnjoyment:
+                enj_count = f"/{round(gddl_info.TwoPlayerEnjoyment, 2)}(2p)"
+            else:
+                enj_count = f"({gddl_info.EnjoymentCount})" if gddl_info and gddl_info.EnjoymentCount else ""
         else:
-            enj_count = f"({gddl_info.EnjoymentCount})" if gddl_info and gddl_info.EnjoymentCount else ""
+            enj_count = ""
         line2 = f"Enj: {enj}{enj_count}"
     else:
         title_text = "No info"

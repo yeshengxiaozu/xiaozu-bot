@@ -131,20 +131,19 @@ def resolve_level(target: str) -> tuple[int | None, str | None, str]:
     normalized = target.strip().lower()
     exact = [
         lv for lv in candidates
-        if lv and getattr(lv, "Meta", None)
-        and getattr(lv.Meta, "Name", "").strip().lower() == normalized
+        if lv and getattr(lv, "Name", "").strip().lower() == normalized
     ]
-    pool = exact or [lv for lv in candidates if lv and getattr(lv, "Meta", None)]
+    pool = exact or [lv for lv in candidates if lv and getattr(lv, "Name", "")]
 
     if not pool:
         return None, None, f"GDDL 上没有找到「{target}」这个关卡"
     if len(pool) == 1:
-        return int(pool[0].ID), pool[0].Meta.Name, ""
+        return int(pool[0].ID), pool[0].Name, ""
 
     lines = [f"「{target}」在 GDDL 上匹配到 {len(pool)} 个关卡，请用 id 重新查："]
     for lv in pool[:10]:
         tier = f" t{round(lv.Rating, 2)}" if lv.Rating else ""
-        lines.append(f"  {lv.Meta.Name}{tier} (ID: {lv.ID})")
+        lines.append(f"  {lv.Name}{tier} (ID: {lv.ID})")
     if len(pool) > 10:
         lines.append(f"  ...还有 {len(pool) - 10} 个")
     return None, None, "\n".join(lines)

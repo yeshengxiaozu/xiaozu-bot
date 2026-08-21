@@ -112,6 +112,37 @@ async def gddl_update_job() -> None:
         logger.info("[GDDL] 更新完成")
 
 
+async def gddl_store_update_job() -> bool:
+    """Refresh the published GDDL store immediately and reload its indexes."""
+    if _gddl_lock.locked():
+        logger.warning("[GDDL] store update skipped because another update is running")
+        return False
+
+    async with _gddl_lock:
+        try:
+            from ..api import gddl_store
+
+            if not await asyncio.to_thread(gddl_store.refresh):
+                raise RuntimeError("GDDL snapshot refresh failed")
+        except Exception as e:
+            logger.exception("[GDDL] store update failed")
+
+            from .notify import report_error
+
+            try:
+                await report_error(
+                    title="GDDL store 更新失败",
+                    err=e,
+                    context={"job": "gddl_store", "stage": "gddl_store"},
+                )
+            except Exception:
+                logger.exception("[GDDL] store update error notification failed")
+            return False
+
+        logger.info("[GDDL] store update completed")
+        return True
+
+
 async def daily_update_job() -> None:
     """
     每日自动更新入口。

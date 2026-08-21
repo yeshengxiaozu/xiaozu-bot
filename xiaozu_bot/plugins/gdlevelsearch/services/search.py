@@ -11,7 +11,7 @@ from nonebot.internal.adapter import Bot, Event
 from xiaozu_bot.utils.adapter_compat import send_image
 
 from ..api.gdapi import GDLevel, get_level_by_id
-from ..api.gddlapi import Gddl
+from ..api.gddlapi import Gddl, GDDLSearchEntry
 from ..api.http import request as http_request
 from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi
@@ -147,21 +147,22 @@ def search_by_name(name: str) -> list[SearchResult]:
     # one provider must not hide matches available in the other providers.
     gddl_candidates = source_values.get("gddl") or []
     for level in gddl_candidates:
-        if not level or not getattr(level, "Meta", None):
+        if not level:
+            continue
+        if not isinstance(level, GDDLSearchEntry):
+            logger.error(f"level isnt search entry:{getattr(level,'id','None')}")
             continue
         source_id = _coerce_level_id(getattr(level, "ID", None))
         if source_id is None:
-            source_id = _coerce_level_id(getattr(level.Meta, "ID", None))
-        if source_id is None:
             continue
-        if getattr(level.Meta, "Name", "").strip().lower() == normalized:
+        if getattr(level, "Name", "").strip().lower() == normalized:
             _add_search_result(
                 results,
                 source_id,
-                level.Meta.Name,
-                None,
+                level.Name,
+                level.PublisherName,
                 str(round(level.Rating, 2)) if level.Rating else None,
-                level.Meta.Difficulty + (" Pemon" if level.is_pemon() else " Demon"),
+                level.Difficulty + (" Pemon" if level.is_pemon() else " Demon"),
             )
             logger.info(
                 f"Find a result in GDDL: tier {getattr(level, 'Rating', None) or 'Na'}"

@@ -30,6 +30,29 @@ SUBMISSION_SORTS = frozenset(
 SORT_DIRECTIONS = frozenset({"asc", "desc"})
 PROGRESS_FILTERS = frozenset({"all", "victors", "incomplete"})
 
+TAG_NAMES = { #apparenly they are no longer with the /tags response so time to have a lists
+    1:"Cube",
+    2:"Ship",
+    3:"Ball",
+    4:"UFO",
+    5:"Wave",
+    6:"Robot",
+    7:"Spider",
+    20:"Swing",
+    8:"Nerve Control",
+    9:"Memory",
+    10:"Learny",
+    11:"Duals",
+    12:"Chokepoints",
+    13:"High CPS",
+    14:"Timings",
+    15:"Flow",
+    16:"Overall",
+    17:"Gimmicky",
+    18:"Fast-Paced",
+    19:"Slow-Paced",
+}
+
 """
 SongDTO{
 ID*	integer
@@ -77,6 +100,7 @@ class LevelMeta:
     IsTwoPlayer: bool
     Difficulty: str #[Official, Easy, Medium, Hard, Insane, Extreme]
     Rarity: int #[0, 1, 2, 3, 4] for star-rate, featured, epic, legendary, mythic
+    seconds: float | None = None
     PublisherID: int
     UploadedAt: str | None = None
     Song: SongInfo
@@ -90,6 +114,7 @@ class LevelMeta:
         self.IsTwoPlayer = jsondict["IsTwoPlayer"]
         self.Difficulty = jsondict["Difficulty"]
         self.Rarity = jsondict["Rarity"]
+        self.seconds = jsondict.get("seconds")
         self.Song = SongInfo(jsondict["Song"])
 
     def is_pemon(self) -> bool:
@@ -153,21 +178,29 @@ class GDDLLevel:
     def is_pemon(self) -> bool:
         return self.Meta.is_pemon()
 
-"""
-[
-GetLevelTagsResponseDTO{
-TagID*	integer
-ReactCount*	integer
-HasVoted*	integer in [0,1]
-Tag*	TagDTO{
-        ID*	integer
-        Name*	string
-        Description*	string
-        Ordering*	integer
-        }
-}
-]
-"""
+class GDDLSearchEntry:
+    """The simplified level data return from search endpoint ONLY"""
+    ID: int
+    Rating: float | None
+    Enjoyment: float | None
+    Name: str
+    Difficulty: str
+    Rarity: int
+    PublisherName: str
+    SongName: str
+    def __init__(self, jsondict: dict[str, Any], _tags: list[dict[str, str]] | None = None) -> None:
+        self.ID = jsondict["id"]
+        self.Rating = jsondict["rating"]
+        self.Enjoyment = jsondict["enjoyment"]
+        self.Name = jsondict["name"]
+        self.Difficulty = jsondict["difficulty"]
+        self.Rarity = jsondict["rarity"]
+        self.PublisherName = jsondict["publisherName"]
+        self.SongName = jsondict["songName"]
+
+    def is_pemon(self) -> bool:
+        return False # we cant do this now but we believe we will later, like after plat tier
+
 class Submission:
     """GDDL 上某个人对某关卡提交的一条评分。
 
@@ -204,7 +237,7 @@ class SubmissionPage:
         self.limit: int = jsondict.get("limit", GDDL_SUBMISSION_LIMIT)
         self.page: int = jsondict.get("page", 0)
         self.submissions: list[Submission] = [
-            Submission(s) for s in jsondict.get("submissions", [])
+            Submission(s) for s in jsondict.get("data", [])
         ]
 
     @property
@@ -233,7 +266,7 @@ class Gddl:
         非法的值这里直接丢掉不传，免得整个请求被打回来。
         请求失败返回 None（和「没有提交」区分开）。
         """
-        url = f"https://gdladder.com/api/level/{level_id}/submissions"
+        url = f"https://gdladder.com/api/levels/{level_id}/submissions"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
@@ -274,7 +307,7 @@ class Gddl:
     @staticmethod
     def getspread(level_id: str | int) -> dict[str, Any] | None:
         """拿某关卡的 tier / enjoyment 分布直方图"""
-        url = f"https://gdladder.com/api/level/{level_id}/submissions/spread"
+        url = f"https://gdladder.com/api/levels/{level_id}/submissions/spread"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
@@ -292,7 +325,7 @@ class Gddl:
     @staticmethod
     def getleveltags(level_id: str | int) -> list[dict[str, Any]]:
         """??????gddl api?????????????????????tag"""
-        url = f"https://gdladder.com/api/level/{level_id}/tags"
+        url = f"https://gdladder.com/api/levels/{level_id}/tags"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
@@ -306,15 +339,14 @@ class Gddl:
         if response.status_code == HTTP_OK:
             data = response.json()
             return [
-                {"Name": tag["Tag"]["Name"], "Count": tag["ReactCount"]} for tag in data
+                {"Name": TAG_NAMES[int(tag["TagID"])], "Count": tag["ReactCount"]} for tag in data
             ]
         logger.error(f"Error fetching level tags by ID: {level_id}")
         return []
 
     @staticmethod
-    def getlevelsbyname(name: str) -> list[GDDLLevel]:
-        """??????gddl api????????????????????????????????????????????????"""
-        url = "https://gdladder.com/api/level/search"
+    def getlevelsbyname(name: str) -> list[GDDLSearchEntry]:
+        url = "https://gdladder.com/api/levels"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
@@ -326,7 +358,7 @@ class Gddl:
             response = http_request("GET", url, headers=headers, params=data, timeout=GDDL_TIMEOUT)
             if response.status_code == HTTP_OK:
                 data = response.json()
-                result = [GDDLLevel(level_data) for level_data in data["levels"]]
+                result = [GDDLSearchEntry(level_data) for level_data in data["data"]]
                 remote_failed = False
                 return result
             logger.info(f"[gddl] networl error: HTTP {response.status_code}")
@@ -337,7 +369,7 @@ class Gddl:
             cached = []
             for level in gddl_store.get_by_name(name):
                 try:
-                    cached.append(GDDLLevel(level))
+                    cached.append(GDDLSearchEntry(level))
                 except (KeyError, TypeError, ValueError):
                     logger.warning("[gddl] skipping malformed local level")
             if cached:
@@ -351,7 +383,7 @@ class Gddl:
         with_tags: bool = True,
     ) -> GDDLLevel | None:
         """??????gddl api????????????id????????????????????????"""
-        url = f"https://gdladder.com/api/level/{level_id}"
+        url = f"https://gdladder.com/api/levels/{level_id}"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
@@ -369,13 +401,7 @@ class Gddl:
             logger.error(f"Error fetching level by ID: {e}")
         cached = gddl_store.get_by_id(level_id)
         if cached is not None:
-            try:
-                result = GDDLLevel(cached)
-            except (KeyError, TypeError, ValueError):
-                logger.warning(f"[gddl] malformed local level for ID {level_id}")
-            else:
-                logger.info(f"[gddl] ID lookup fell back to local snapshot: {level_id}")
-                return result
+            return None #we cant use local thing since its different type now
         return None
 
     @staticmethod
@@ -386,7 +412,7 @@ class Gddl:
         sort_direction: str | None = None,
         **filters: Any,
     ) -> dict[str, Any] | None:
-        url = "https://gdladder.com/api/level/search"
+        url = "https://gdladder.com/api/levels"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
             "Content-Type": "application/json",
@@ -409,7 +435,7 @@ class Gddl:
         except (ValueError, TypeError):
             logger.error("[gddl] 搜索接口返回了无法解析的 JSON")
             return None
-        if not isinstance(payload, dict) or "levels" not in payload:
+        if not isinstance(payload, dict) or "data" not in payload:
             logger.error("[gddl] 搜索接口返回了无效的 payload")
             return None
         return payload
@@ -442,16 +468,16 @@ class Gddl:
         )
 
     @staticmethod
-    def getlevelbyindex(index: int, **filters: Any) -> GDDLLevel | None:
+    def getlevelbyindex(index: int, **filters: Any) -> GDDLSearchEntry | None:
         """按 ID 升序取符合条件的第 index 个关卡（从 0 开始）。
 
         用 sort=ID 而不是 sort=random，这样同样的 index 每次拿到的都是同一关，
         *dailydemon 就是靠这个做到一天之内结果不变的。
         """
         payload = Gddl.searchlevels(page=index, limit=1, sort="ID", **filters)
-        if not payload or not payload.get("levels"):
+        if not payload or not payload.get("data"):
             return None
-        return GDDLLevel(payload["levels"][0])
+        return GDDLSearchEntry(payload["data"][0])
 
     @staticmethod
     def getrandomlevelbytier(
@@ -459,7 +485,7 @@ class Gddl:
         high: int = -1,
         enjoyment_min: float | None = None,
         enjoyment_max: float | None = None,
-    ) -> GDDLLevel | None:
+    ) -> GDDLSearchEntry | None:
         """在指定 tier 区间里随机取一关，可以再按 enjoyment 卡一道。
 
         tier 用 ±0.5 展开成区间，这样传 20 能把 19.5-20.5 的都算进去。
@@ -481,11 +507,11 @@ class Gddl:
         )
         if not payload:
             return None
-        levels = payload.get("levels") or []
+        levels = payload.get("data") or []
         logger.debug(
             f"[gddl] 随机推关命中 {payload.get('total')} 条，本次取 "
-            + ",".join(lv["Meta"]["Name"] for lv in levels)
+            + ",".join(lv["name"] for lv in levels)
         )
         if not levels:
             return None
-        return GDDLLevel(levels[0])
+        return GDDLSearchEntry(levels[0])
