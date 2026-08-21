@@ -329,9 +329,11 @@ class Gddl:
                 result = [GDDLLevel(level_data) for level_data in data["levels"]]
                 remote_failed = False
                 return result
+            logger.info(f"[gddl] networl error: HTTP {response.status_code}")
         except (requests.RequestException, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error fetching levels: {e}")
         if remote_failed:
+            logger.info(f"[gddl] remote failed, try to use local snapshot: {name}")
             cached = []
             for level in gddl_store.get_by_name(name):
                 try:
