@@ -171,20 +171,9 @@ async def handle_dailydemon(bot: Bot, event: Event) -> None:
     level_info, total, err = await asyncio.to_thread(get_daily_demon)
     if level_info is None:
         await dailydemon.finish(err)
-
-    try:
-        level = await asyncio.to_thread(getlevelinfo, level_info.ID)
-    except GDAPIUnavailable:
-        await dailydemon.finish("GD 关卡服务器暂时无法访问，请稍后重试")
-    if not level:
-        await dailydemon.finish(
-            f"今日关卡是 {level_info.Meta.Name}（ID {level_info.ID}），"
-            "渲染图片的时候发生未知错误。"
-        )
-
     await bot.send(
         event,
         f"今日关卡（{describe_conditions()}，候选 {total} 关）：",
     )
-    await send_result(bot, event, level.level_id)
+    await send_result(bot, event, level_info.ID)
     await dailydemon.finish()

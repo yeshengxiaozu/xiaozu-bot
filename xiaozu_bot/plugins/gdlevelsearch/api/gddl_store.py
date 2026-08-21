@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from nonebot import logger
+from ..paths import DATA_DIR
 
-PLUGIN_DIR = Path(__file__).resolve().parent.parent
-DATA_FILE = PLUGIN_DIR / "data" / "gddl_levels.json"
+DATA_FILE = DATA_DIR / "gddl_levels.json"
 
 PAGE_SIZE = 25
 FETCH_INTERVAL = 0.3

@@ -167,8 +167,8 @@ async def _process_input(event: Event, text: str) -> str | None:
     if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
         index = int(parts[0])
         level_id = int(parts[1])
-        if level_id <= 0:
-            return "关卡 id 得是正整数"
+        if level_id < 0:
+            return "关卡 id 应该是非负整数"
         page = manage_sessions.get(session_id, {}).get("page", 1)
         start = (page - 1) * PAGE_SIZE
         if index < 1 or index > PAGE_SIZE or start + index > len(entries):

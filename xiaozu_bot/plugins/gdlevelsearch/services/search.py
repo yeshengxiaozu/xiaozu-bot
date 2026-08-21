@@ -21,7 +21,7 @@ from ..render.draw import create_image_from_gdlevel
 
 # fallback function since I should already get it using gdapi if this get called we f*cked up
 def get_creator(level_id: int) -> str | None:
-    """??GDhistory API?????????????api????????????"""
+    """try to ge the creator name from a backup source"""
     logger.warning("get_creator got called: " + str(level_id))
     try:
         data = http_request(
@@ -36,7 +36,7 @@ def get_creator(level_id: int) -> str | None:
 
 # nice little function that extract exactly what i need
 def get_difficulty(level_id: int) -> str | None:
-    """??GD API??????????????api???????????"""
+    """directly fetch level difficulty from gdapi"""
     logger.info("get_difficulty got called: " + str(level_id))
     try:
         data = get_level_by_id(level_id)
@@ -47,8 +47,6 @@ def get_difficulty(level_id: int) -> str | None:
 
 @dataclass
 class SearchResult:
-    """??????????????????????"""
-
     id: int
     name: str
     creator: str | None = None
@@ -73,7 +71,7 @@ def _add_search_result(
     tier: str | None = None,
     difficulty: str | None = None,
 ):
-    """?results???????????"""
+    """add results to the lists"""
     level_id = _coerce_level_id(level_id)
     if level_id is None:
         return
@@ -83,9 +81,6 @@ def _add_search_result(
             item.creator = creator
         if not item.tier and tier:
             item.tier = tier
-        # difficulty ?????????????????GDDL????????
-        # ???????????????? difficulty ????? *gdsearch
-        # ????? gdapi?
         if not item.difficulty and difficulty:
             item.difficulty = difficulty
         return
@@ -143,7 +138,6 @@ def _lookup_sources(name: str) -> dict[str, object | None]:
 
 
 def search_by_name(name: str) -> list[SearchResult]:
-    """???????????????????????"""
     normalized = name.strip().lower()
     results: dict[int, SearchResult] = {}
 
@@ -172,7 +166,7 @@ def search_by_name(name: str) -> list[SearchResult]:
             logger.info(
                 f"Find a result in GDDL: tier {getattr(level, 'Rating', None) or 'Na'}"
             )
-    # ???? AREDL????? rated demon ??????? GDDL ??
+    # 2) everything in AREDL is included in GDDL so nah
 
     # 3) NLW exact match
     nlw_candidates = source_values.get("nlw") or []
@@ -187,8 +181,6 @@ def search_by_name(name: str) -> list[SearchResult]:
             getattr(level, "creator", None),
             None,
         )
-        # ??? "..." + str(tier) or "Unknown" + " Tier"?+ ? or ?????
-        # ???????or ????????tier ????????? "None"
         logger.info(f"Find a result in {level.source}: {level.tier or 'Unknown'} Tier")
 
     # 4) Platdata exact match
@@ -204,19 +196,17 @@ def search_by_name(name: str) -> list[SearchResult]:
             None,
         )
 
-    # ?? gdapi ????????????????? gdsearch bot ?
     return list(results.values())
 
 
 def getlevelinfo(level_id: int) -> GDLevel | None:
-    """??gdapi???????????"""
+    """query gdapi"""
     gdlevel = get_level_by_id(level_id)
     if not gdlevel:
         return None
     return gdlevel
 
 
-# ????????pemon / demon / non-demon ???????????????????????
 async def send_result(bot: Bot, event: Event, level_id: int) -> None:
     image = await create_image_from_gdlevel(level_id)
     buffer = BytesIO()
@@ -225,10 +215,6 @@ async def send_result(bot: Bot, event: Event, level_id: int) -> None:
 
 
 def _clear_all_sessions(event: Event) -> None:
-    """??????????????? on_message ??????
-
-    ?????? import ?????????????????????????
-    """
     from ..commands.fullsearch import _drop_fullsearch
     from ..commands.ratings import _drop_ratings
     from ..commands.search import search_cache, timeout_tasks
