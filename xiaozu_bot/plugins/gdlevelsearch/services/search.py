@@ -56,6 +56,15 @@ class SearchResult:
     difficulty: str | None = None
 
 
+def _coerce_level_id(value: object) -> int | None:
+    """Return a usable source ID without letting malformed rows stop search."""
+    try:
+        level_id = int(value) if value is not None else 0
+    except (TypeError, ValueError):
+        return None
+    return level_id if level_id > 0 else None
+
+
 def _add_search_result(
     results: dict[int, SearchResult],
     level_id: int,
@@ -65,7 +74,8 @@ def _add_search_result(
     difficulty: str | None = None,
 ):
     """?results???????????"""
-    if level_id is None or level_id <= 0:
+    level_id = _coerce_level_id(level_id)
+    if level_id is None:
         return
     if level_id in results:
         item = results[level_id]
@@ -145,10 +155,15 @@ def search_by_name(name: str) -> list[SearchResult]:
     for level in gddl_candidates:
         if not level or not getattr(level, "Meta", None):
             continue
+        source_id = _coerce_level_id(getattr(level, "ID", None))
+        if source_id is None:
+            source_id = _coerce_level_id(getattr(level.Meta, "ID", None))
+        if source_id is None:
+            continue
         if getattr(level.Meta, "Name", "").strip().lower() == normalized:
             _add_search_result(
                 results,
-                int(level.ID),
+                source_id,
                 level.Meta.Name,
                 None,
                 str(round(level.Rating, 2)) if level.Rating else None,
@@ -162,11 +177,12 @@ def search_by_name(name: str) -> list[SearchResult]:
     # 3) NLW exact match
     nlw_candidates = source_values.get("nlw") or []
     for level in nlw_candidates:
-        if not level.id:
+        source_id = _coerce_level_id(getattr(level, "id", None))
+        if source_id is None:
             continue
         _add_search_result(
             results,
-            int(level.id or 0),
+            source_id,
             level.name,
             getattr(level, "creator", None),
             None,
@@ -177,10 +193,11 @@ def search_by_name(name: str) -> list[SearchResult]:
 
     # 4) Platdata exact match
     plat_info = source_values.get("plat")
-    if plat_info and plat_info.id:
+    plat_id = _coerce_level_id(getattr(plat_info, "id", None)) if plat_info else None
+    if plat_info and plat_id is not None:
         _add_search_result(
             results,
-            int(plat_info.id),
+            plat_id,
             plat_info.name,
             plat_info.creator,
             plat_info.tier,

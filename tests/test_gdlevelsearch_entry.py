@@ -914,6 +914,7 @@ class TestHandleGdsearch:
         monkeypatch: pytest.MonkeyPatch, stub_image: list[GDLevel],
     ) -> None:
         seen = stub_image
+        monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: gd_level(name="By ID"))
         monkeypatch.setattr(
             cmd_search, "search_by_name",
             lambda n: pytest.fail("id 分支不该再去搜名字"),
@@ -927,18 +928,24 @@ class TestHandleGdsearch:
 
     async def test_unknown_id_says_so(
         self, fake_bot: FakeBot, make_group_event: Any,
-        stub_image: list[int],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: None)
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
         )
         # 行为是「查不到就回一句话，不出图」
-        assert stub_image == [12345]
-        assert len(image_segments(fake_bot)) == 1
+        assert len(sent_texts(fake_bot)) == 1
+        assert image_segments(fake_bot) == []
 
     async def test_gdapi_network_failure_gets_a_retryable_message(
-        self, fake_bot: FakeBot, make_group_event: Any, stub_image: list[int],
+        self, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch, stub_image: list[int],
     ) -> None:
+        def _unavailable(_id: int) -> Any:
+            raise GDAPIUnavailable("offline")
+
+        monkeypatch.setattr(cmd_search, "getlevelinfo", _unavailable)
         await run_handler(
             gdlevelsearch.gdsearch,
             fake_bot,

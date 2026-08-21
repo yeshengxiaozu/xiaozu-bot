@@ -7,9 +7,11 @@ from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
+from ..api.gdapi import GDAPIUnavailable
 from ..services.search import (
     _clear_all_sessions,
     get_difficulty,
+    getlevelinfo,
     search_by_name,
     send_result,
 )
@@ -53,7 +55,15 @@ async def handle_gdsearch(
 
     # ID 搜索
     if len(name) > 4 and name.isdigit():
-        await send_result(bot, event, int(name))
+        level_id = int(name)
+        try:
+            gdlevel = await asyncio.to_thread(getlevelinfo, level_id)
+        except GDAPIUnavailable:
+            gdlevel = None
+        else:
+            if gdlevel is None:
+                await gdsearch.finish("不存在符合这个id的demon关卡")
+        await send_result(bot, event, level_id)
         return
 
     # 名称搜索（要打 GDDL，别堵事件循环）

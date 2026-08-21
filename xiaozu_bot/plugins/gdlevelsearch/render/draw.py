@@ -648,17 +648,21 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
     # 而且几乎全是在等网络（PIL 那部分可以忽略不计）。
     # 并发之后总耗时约等于最慢的那一个。
     thumbnail_id = _thumbnail_id_for(level_id)
-    gdlevel, gddl_info, gddl_tags, thumb_bytes = await asyncio.gather(
+    gdlevel, gddl_info, thumb_bytes = await asyncio.gather(
         asyncio.to_thread(get_level_by_id, level_id),
         asyncio.to_thread(Gddl.getlevelbyid, level_id, False),
-        asyncio.to_thread(Gddl.getleveltags, level_id),
         _fetch_thumbnail(thumbnail_id) if thumbnail_id else _none(),
         return_exceptions=True,
     )
     gdlevel = _optional_remote_result(gdlevel, "GD level")
     gddl_info = _optional_remote_result(gddl_info, "GDDL level")
-    gddl_tags = _optional_remote_result(gddl_tags, "GDDL tags")
     thumb_bytes = _optional_remote_result(thumb_bytes, "thumbnail")
+    gddl_tags = None
+    if gddl_info is not None:
+        gddl_tags = _optional_remote_result(
+            await asyncio.to_thread(Gddl.getleveltags, level_id),
+            "GDDL tags",
+        )
     if gddl_info is not None and gddl_tags:
         gddl_info.Tags = gddl_tags
 
@@ -779,7 +783,7 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
                 diff_icon_path = RES_DIR/f"diffIcon/diffIcon_1{demon_difficulty}.png"
         elif getattr(gdlevel, "is_demon", False):
             # check readable difficulty label for mapping
-            demon_difficulty = "3001245"[gdlevel.demon_difficulty] # type: ignore
+            demon_difficulty = "3001245"[gdlevel.demon_difficulty]
             diff_icon_path = RES_DIR/f"diffIcon/diffIcon_1{demon_difficulty}.png"
         else:
             stars = int(getattr(gdlevel, "stars", 0) or 0)
