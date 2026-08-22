@@ -476,6 +476,29 @@ def stub_requests(monkeypatch: pytest.MonkeyPatch, no_network: None) -> Requests
         monkeypatch.setattr(requests.Session, name, _session_method(name))
     monkeypatch.setattr(requests, "request", _request)
     monkeypatch.setattr(requests.Session, "request", _session_request)
+
+    def _httpx_request(
+        self: Any, method: str, url: Any, **kwargs: Any
+    ) -> httpx.Response:
+        try:
+            response = router._dispatch(method, str(url), **kwargs)
+        except requests.Timeout as exc:
+            raise httpx.TimeoutException(str(exc)) from exc
+        except requests.ConnectionError as exc:
+            raise httpx.ConnectError(str(exc)) from exc
+        except requests.RequestException as exc:
+            raise httpx.HTTPError(str(exc)) from exc
+        if isinstance(response, FakeResponse):
+            request = httpx.Request(method, str(url))
+            return httpx.Response(
+                response.status_code,
+                headers=response.headers,
+                content=response.content,
+                request=request,
+            )
+        return response
+
+    monkeypatch.setattr(httpx.Client, "request", _httpx_request)
     return router
 
 

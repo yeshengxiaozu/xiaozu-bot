@@ -8,6 +8,7 @@ from nonebot import logger, on_command
 from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 
+from xiaozu_bot.plugins.gdlevelsearch.api.http import async_request
 from xiaozu_bot.utils.adapter_compat import (
     get_context_id,
     get_group_id,
@@ -153,21 +154,22 @@ async def handle_ai(
 
         # ===== 请求 API =====
         try:
-            async with httpx.AsyncClient(timeout=(180 if delegated else 60)) as client:
-                resp = await client.post(
-                    api_url,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "messages": messages,
-                        "temperature": 0.7,
-                        "presence_penalty": 1.5,
-                        "frequency_penalty": 1,
-                    },
-                )
+            resp = await async_request(
+                "POST",
+                api_url,
+                timeout=(180 if delegated else 60),
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "presence_penalty": 1.5,
+                    "frequency_penalty": 1,
+                },
+            )
 
             resp.raise_for_status()
             try:

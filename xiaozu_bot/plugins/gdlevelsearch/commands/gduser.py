@@ -31,11 +31,10 @@ async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
         else ""
     )
     user_demon = (
-        f"\nClassic Demons: {user.demons_breakdown[0]} / {user.demons_breakdown[1]} / {user.demons_breakdown[2]} / {user.demons_breakdown[3]} / {user.demons_breakdown[4]};\n{user.demons_breakdown[10]} Weekly; {user.demons_breakdown[11]} Gauntlet\nPlatformer Demons: {user.demons_breakdown[5]} / {user.demons_breakdown[6]} / {user.demons_breakdown[7]} / {user.demons_breakdown[8]} / {user.demons_breakdown[9]}"
+        f"\nClassic Demons: {user.demons_breakdown[0]} / {user.demons_breakdown[1]} / {user.demons_breakdown[2]} / {user.demons_breakdown[3]} / {user.demons_breakdown[4]};\n{user.demons_breakdown[10]} Weekly; {user.demons_breakdown[11]} Gauntlet\n"
+        + f"Platformer Demons: {user.demons_breakdown[5]} / {user.demons_breakdown[6]} / {user.demons_breakdown[7]} / {user.demons_breakdown[8]} / {user.demons_breakdown[9]}"
         if user.demons_breakdown
         else ""
     )
-    user_info = (
-        user_basic_info + user_classic_nondemon + user_plat_nondemon + user_demon
-    )
+    user_info = user_basic_info + user_classic_nondemon + user_plat_nondemon + user_demon
     await gduser.finish(user_info)

@@ -859,7 +859,7 @@ class TestSearchLevelsRequest:
         call = stub_requests.calls[0]
         assert call["method"] == "POST"
         assert call["url"] == GD_LEVELS_URL
-        assert call["headers"] == {"User-Agent": ""}
+        assert call["headers"] == {"User-Agent": gdapi.USER_AGENT}
         assert call["timeout"] == gdapi.GD_TIMEOUT
         assert call["data"] == {
             "secret": GD_SECRET,
@@ -1352,7 +1352,7 @@ class TestGetUserInfo:
         call = stub_requests.calls[0]
         assert call["url"] == GD_USERINFO_URL
         assert call["data"] == {"secret": GD_SECRET, "targetAccountID": "503085"}
-        assert call["headers"] == {"User-Agent": ""}
+        assert call["headers"] == {"User-Agent": gdapi.USER_AGENT}
         assert call["timeout"] == gdapi.GD_TIMEOUT
 
     def test_only_first_section_is_parsed(self, stub_requests: Any) -> None:

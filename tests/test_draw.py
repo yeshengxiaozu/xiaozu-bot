@@ -27,21 +27,27 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from xiaozu_bot.plugins.gdlevelsearch import draw
+from xiaozu_bot.plugins.gdlevelsearch.api import http as http_transport
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import GDLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import GDDLLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.platapi import PlatInfo
+from xiaozu_bot.plugins.gdlevelsearch.api.thumbnail import (
+    THUMB_BACKOFF,
+    THUMB_RETRIES,
+    _fetch_thumbnail,
+    _none,
+    _thumbnail_id_for,
+)
 from xiaozu_bot.plugins.gdlevelsearch.constants import (
     HTTP_NOT_FOUND,
     HTTP_OK,
     HTTP_SERVER_ERROR,
+    USER_AGENT,
 )
 from xiaozu_bot.plugins.gdlevelsearch.render.draw import (
     LevelRenderData,
-    _fetch_thumbnail,
     _load_font,
-    _none,
     _optional_remote_result,
-    _thumbnail_id_for,
     create_image_from_gdlevel,
     create_vertical_gradient,
     rounded_image,
@@ -429,8 +435,8 @@ class TestMisc:
         assert bad == []
 
     def test_retry_constants(self) -> None:
-        assert draw.THUMB_RETRIES == 3
-        assert draw.THUMB_BACKOFF == 0.6
+        assert THUMB_RETRIES == 3
+        assert THUMB_BACKOFF == 0.6
         assert (HTTP_OK, HTTP_NOT_FOUND, HTTP_SERVER_ERROR) == (
             200, 404, 500,
         )
@@ -449,7 +455,7 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
         sleeps.append(delay)
         return await real_sleep(0)
 
-    monkeypatch.setattr(draw.asyncio, "sleep", _fake)
+    monkeypatch.setattr(http_transport.asyncio, "sleep", _fake)
     return sleeps
 
 
@@ -477,7 +483,7 @@ class TestFetchThumbnail:
         assert str(req.url) == (
             "https://levelthumbs.prevter.me/thumbnail/26681070/medium"
         )
-        assert req.headers["user-agent"] == "Mozilla/5.0"
+        assert req.headers["user-agent"] == USER_AGENT
         assert req.headers["accept"] == "image/webp,image/*;q=0.8"
 
     async def test_404_returns_none_without_retrying(
@@ -603,7 +609,7 @@ class TestCreateImageFromGdlevelRemoteFailures:
         async def _broken_thumb(*_args: Any, **_kwargs: Any) -> bytes | None:
             raise RuntimeError("temporary thumbnail failure")
 
-        monkeypatch.setattr(draw, "_fetch_thumbnail", _broken_thumb)
+        monkeypatch.setattr(draw, "fetch_thumbnail", _broken_thumb)
         monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: None)
         monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
         monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
@@ -673,7 +679,7 @@ class TestCreateImageFromGdlevelRemoteFailures:
         monkeypatch.setattr(draw, "get_level_by_id", lambda _id: None)
         monkeypatch.setattr(draw.Gddl, "getlevelbyid", lambda *_args: gddl)
         monkeypatch.setattr(draw.Gddl, "getleveltags", lambda _id: [])
-        monkeypatch.setattr(draw, "_fetch_thumbnail", lambda *_args: _none())
+        monkeypatch.setattr(draw, "fetch_thumbnail", lambda *_args: _none())
         monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: None)
         monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
         monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
@@ -691,9 +697,8 @@ class TestCreateImageFromGdlevelRemoteFailures:
 
         assert image.size == (1, 1)
         assert rendered["level_line"] == "GDDL Level"
-        assert rendered["song_name"] == "GDDL Song"
-        assert rendered["song_artist"] == "GDDL Artist"
-        assert rendered["song_id"] == "456"
+        assert rendered["song_line1"] == "Song: GDDL Song"
+        assert rendered["song_line2"] == "Artist: GDDL Artist  ID: 456"
         assert rendered["detail_text"] == "Description: GDDL description"
         assert rendered["diff_icon_path"].name == icon_name
         assert rendered["featured_fx_path"].name == "featured_4.png"
@@ -733,7 +738,7 @@ class TestCreateImageFromGdlevelRemoteFailures:
         monkeypatch.setattr(draw, "get_level_by_id", lambda _id: None)
         monkeypatch.setattr(draw.Gddl, "getlevelbyid", lambda *_args: gddl)
         monkeypatch.setattr(draw.Gddl, "getleveltags", lambda _id: [])
-        monkeypatch.setattr(draw, "_fetch_thumbnail", lambda *_args: _none())
+        monkeypatch.setattr(draw, "fetch_thumbnail", lambda *_args: _none())
         monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: None)
         monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
         monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
@@ -754,7 +759,6 @@ class TestCreateImageFromGdlevelRemoteFailures:
 
         await create_image_from_gdlevel(123)
 
-        assert rendered["song_name"] == "NONG Song"
-        assert rendered["song_artist"] == "NONG Artist"
-        assert rendered["song_id"] == "NONG"
+        assert rendered["song_line1"] == "Song: NONG Song"
+        assert rendered["song_line2"] == "Artist: NONG Artist  ID: NONG"
         assert rendered["featured_fx_path"] == Path()

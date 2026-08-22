@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import Any
@@ -9,6 +11,23 @@ from ..paths import DATA_DIR
 
 class PlatInfo:
     """Represents one level entry from plat_combined.json."""
+
+    __slots__ = (
+        "creator",
+        "derived_from",
+        "derived_levels",
+        "enjoyment",
+        "id",
+        "is_main",
+        "name",
+        "pemonlist",
+        "section",
+        "tags",
+        "tier",
+        "tpl",
+        "video",
+        "weight",
+    )
 
     def __init__(
         self,
@@ -68,17 +87,21 @@ class PlatInfo:
                 enjoyment = float(enjoyment)
             except (TypeError, ValueError):
                 enjoyment = None
-        if data.get("tpl") == "-":
-            data["tpl"] = None
-        if data.get("pemonlist") == "-":
-            data["pemonlist"] = None
+
+        tpl = to_str(data.get("tpl"))
+        if tpl == "-":
+            tpl = None
+
+        pemonlist = to_str(data.get("pemonlist"))
+        if pemonlist == "-":
+            pemonlist = None
 
         return cls(
             level_id=to_str(data.get("id", "")) or "",
             name=to_str(data.get("name", "")) or "",
             tier=to_str(data.get("tier")),
-            tpl=to_str(data.get("tpl")),
-            pemonlist=to_str(data.get("pemonlist")),
+            tpl=tpl,
+            pemonlist=pemonlist,
             creator=to_str(data.get("creator")),
             tags=tags,
             enjoyment=enjoyment,
@@ -110,10 +133,8 @@ class PlatInfo:
 class PlatData:
     """Loads plat_combined.json and exposes lookup helpers."""
 
-    def __init__(self, cache_file: str | None = None) -> None:
-        self.cache_file = cache_file or (
-            DATA_DIR / "plat_combined.json"
-        )
+    def __init__(self, cache_file: str | Path | None = None) -> None:
+        self.cache_file = Path(cache_file) if cache_file else (DATA_DIR / "plat_combined.json")
         self.entries: list[PlatInfo] = []
         self.main_entries: list[PlatInfo] = []
         self.derived_entries: list[PlatInfo] = []
@@ -127,20 +148,22 @@ class PlatData:
         self.derived_entries = [entry for entry in self.entries if not entry.is_main]
 
         self.by_id = {}
-        for entry in self.main_entries:
-            if entry.id and entry.id not in self.by_id:
+        self.by_name = {}
+
+        # 只需要遍历一次，同时构建两个索引
+        for entry in self.entries:
+            if entry.is_main and entry.id and entry.id not in self.by_id:
                 self.by_id[entry.id] = entry
 
-        self.by_name = {}
-        for entry in self.entries:
-            if entry.name and entry.name not in self.by_name:
-                self.by_name[entry.name] = entry
-                self.by_name[entry.name.strip().lower()] = entry
+            if entry.name:
+                key = entry.name.strip().lower()
+                if key not in self.by_name:
+                    self.by_name[key] = entry
 
         return self.entries
 
     def _fetch(self) -> list[PlatInfo]:
-        payload = self._load_json(Path(self.cache_file))
+        payload = self._load_json(self.cache_file)
         if not payload:
             return []
 
@@ -156,7 +179,7 @@ class PlatData:
 
     def _load_json(self, filepath: Path) -> dict[str, Any] | None:
         try:
-            with Path.open(filepath, "r", encoding="utf-8") as f:
+            with filepath.open("r", encoding="utf-8") as f:
                 return json.load(f)
         except FileNotFoundError:
             return None
@@ -167,10 +190,15 @@ class PlatData:
         return self.by_id.get(str(level_id).strip())
 
     def getlevelbyname(self, name: str) -> PlatInfo | None:
+        if not name:
+            return None
         return self.by_name.get(name.strip().lower())
 
     def to_dict(self) -> dict[str, Any]:
-        return self.__dict__.copy()
+        # 原来 self.__dict__.copy() 会把所有索引也复制进去。
+        # 如果只是导出关卡数据，这样更轻量；如果不需要 to_dict，也可以直接删掉。
+        return {"entries": [entry.to_dict() for entry in self.entries]}
+
 
 platdata = PlatData()
 platdata_entries: list[PlatInfo] = platdata.entries
@@ -180,11 +208,11 @@ platdata_by_id: dict[str, PlatInfo] = platdata.by_id
 platdata_by_name: dict[str, PlatInfo] = platdata.by_name
 
 
-def fetch(cache_file: str | None = None) -> list[PlatInfo]:
+def fetch(cache_file: str | Path | None = None) -> list[PlatInfo]:
     """Reload plat data from JSON and return PlatInfo entries."""
-    # platdata_by_name 之前漏在这里没重新赋值，导致 fetch 之后
-    # getderivedlevels 用的还是旧表
-    global platdata, platdata_entries, platdata_main_entries, platdata_derived_entries, platdata_by_id, platdata_by_name
+    global platdata, platdata_entries, platdata_main_entries, platdata_derived_entries
+    global platdata_by_id, platdata_by_name
+
     platdata = PlatData(cache_file=cache_file) if cache_file else PlatData()
     platdata_entries = platdata.entries
     platdata_main_entries = platdata.main_entries
@@ -199,6 +227,7 @@ def reload() -> None:
     fetch()
     logger.info(f"[platapi] 已加载 {len(platdata_entries)} 条 plat 关卡")
 
+
 class Platapi:
     @staticmethod
     def getlevelbyid(level_id: str | int | None) -> PlatInfo | None:
@@ -210,9 +239,16 @@ class Platapi:
     @staticmethod
     def getlevelbyname(name: str) -> PlatInfo | None:
         """Get a main PlatInfo entry by its name."""
+        if not name:
+            return None
         return platdata.getlevelbyname(name)
 
     @staticmethod
     def getderivedlevels(level: PlatInfo) -> list[PlatInfo]:
         """Get all derived entry from one PlatInfo entry"""
-        return [platdata_by_name[derived_name] for derived_name in level.derived_levels]
+        derived: list[PlatInfo] = []
+        for derived_name in level.derived_levels:
+            info = platdata_by_name.get(derived_name.strip().lower())
+            if info is not None:
+                derived.append(info)
+        return derived

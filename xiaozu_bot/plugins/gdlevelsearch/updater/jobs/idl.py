@@ -3,9 +3,10 @@ from __future__ import annotations
 import re
 import time
 
-import requests
-
 from xiaozu_bot.utils.json_storage import write_json_atomic
+
+from ...api.http import request as http_request
+from ...constants import USER_AGENT
 
 try:
     from ..paths import staged
@@ -30,18 +31,13 @@ def fetch() -> None:
         creator
     """
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/151.0.0.0 Safari/537.36"
-        )
-    }
+    headers = {"User-Agent": USER_AGENT}
 
     levels: list[dict[str, str]] = []
 
     for url in (MAIN_URL, EXTENDED_URL):
-        response = requests.get(
+        response = http_request(
+            "GET",
             url,
             headers=headers,
             timeout=20,

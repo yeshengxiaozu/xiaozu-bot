@@ -1592,11 +1592,11 @@ class TestPlatInfoFromDict:
             )
             assert getattr(info, field) is None, field
 
-    def test_dash_placeholder_mutates_the_input_dict(self) -> None:
+    def test_dash_placeholder_does_not_mutate_the_input_dict(self) -> None:
         row = make_plat_row(tpl="-", pemonlist="-")
         PlatInfo.from_dict(row)
-        assert row["tpl"] is None
-        assert row["pemonlist"] is None
+        assert row["tpl"] == "-"
+        assert row["pemonlist"] == "-"
 
     def test_derived_entry_is_not_main(self) -> None:
         info = PlatInfo.from_dict(
@@ -1652,14 +1652,14 @@ class TestPlatData:
         assert data.getlevelbyid("1").name == "First"
         assert data.getlevelbyname("dup").id == "2"
 
-    def test_name_registered_under_both_exact_and_lowercase(
+    def test_name_registered_under_lowercase_key(
         self, write_plat: Any
     ) -> None:
         path = write_plat([make_plat_row("1", "MiXeD")])
         data = PlatData(cache_file=str(path))
-        assert set(data.by_name) == {"MiXeD", "mixed"}
+        assert set(data.by_name) == {"mixed"}
 
-    def test_lowercase_collision_shadows_later_entry(
+    def test_lowercase_collision_keeps_first_entry(
         self, write_plat: Any
     ) -> None:
         path = write_plat(
@@ -1670,7 +1670,7 @@ class TestPlatData:
         )
         data = PlatData(cache_file=str(path))
         assert data.getlevelbyname("abc").id == "1"
-        assert set(data.by_name) == {"ABC", "abc"}
+        assert set(data.by_name) == {"abc"}
 
     def test_bad_rows_are_dropped(self, write_plat: Any) -> None:
         path = write_plat(
@@ -1836,7 +1836,7 @@ class TestPlatapiFacade:
             == []
         )
 
-    def test_getderivedlevels_raises_on_unknown_name(
+    def test_getderivedlevels_skips_unknown_name(
         self,
         plat_globals: None,
         write_plat: Any,
@@ -1851,10 +1851,7 @@ class TestPlatapiFacade:
             ]
         )
         platapi.fetch(cache_file=str(path))
-        with pytest.raises(KeyError):
-            Platapi.getderivedlevels(
-                Platapi.getlevelbyid("1")
-            )
+        assert Platapi.getderivedlevels(Platapi.getlevelbyid("1")) == []
 
     def test_getderivedlevels_matches_lowercased_name(
         self,

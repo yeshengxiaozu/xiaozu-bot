@@ -4,13 +4,12 @@
 """
 
 import json
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
 
-import requests
+import httpx
 import urllib3
 from nonebot import logger
 
@@ -35,19 +34,18 @@ except ImportError:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ---------- 配置 ----------
-os.environ['NO_PROXY'] = 'history.geometrydash.eu,geometrydash.eu'
 GD_HISTORY_API = "https://history.geometrydash.eu/api/v1/search/level/advanced/"
 CACHE_FILENAME = "metadata.json"
 UNMATCHED_FILENAME = "metadata_unmatched.json"
 # 并发控制
-MAX_CONCURRENT = 5          # 建议不超过 5，减少 API 压力
+MAX_CONCURRENT = 3          # Geometry Dash History API 的并发上限
 REQUEST_INTERVAL = 0.5      # 秒
 
 # ---------- HTTP 会话（统一走插件共享的重试策略） ----------
-http = RequestSession()
-
 # 默认 verify 参数：优先使用 certifi，否则关闭验证（不推荐）
 DEFAULT_VERIFY = CA_BUNDLE or False
+
+http = RequestSession(verify=DEFAULT_VERIFY, trust_env=False)
 
 # ---------- 辅助函数 ----------
 def normalize_creator_name(name: str) -> str:
@@ -127,19 +125,19 @@ def fetch_level_data(name: str, creator: str) -> dict | None:
     }
 
     try:
-        resp = http.get(GD_HISTORY_API, params=params, timeout=10, verify=DEFAULT_VERIFY)
+        resp = http.get(GD_HISTORY_API, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-    except requests.exceptions.Timeout as e:
+    except httpx.TimeoutException as e:
         # 原来这里没写 as e，日志却引用了 e —— 真超时的时候会在 except 里
         # 再抛一个 NameError，把超时伪装成别的错
         logger.error(f"Request timed out for '{name}' by '{creator}': {e}")
         return None
-    except requests.exceptions.HTTPError as e:
+    except httpx.HTTPStatusError as e:
         status_code = getattr(e.response, 'status_code', 0) if hasattr(e, 'response') else 0
         logger.error(f"HTTP error {status_code} for '{name}' by '{creator}': {e}")
         return None
-    except requests.exceptions.ConnectionError as e:
+    except httpx.ConnectError as e:
         logger.error(f"Connection failed for '{name}' by '{creator}': {e}")
         return None
     except json.JSONDecodeError as e:
@@ -237,6 +235,12 @@ def enrich_levels_with_ids(
     levels: 列表，每个元素应包含 'name' 和 'creator' 键。
     cache_dir: 缓存目录，会在此目录下读写 metadata.json。
     """
+    effective_workers = min(max(1, max_workers), MAX_CONCURRENT)
+    logger.info(
+        f"Metadata fetch concurrency: requested={max_workers}, "
+        f"effective={effective_workers}"
+    )
+
     # 加载现有缓存
     cache = load_metadata_cache(cache_dir)
     # 建立快速查找： (name, normalized_creator) -> id
@@ -344,7 +348,7 @@ def enrich_levels_with_ids(
             fetch_one(level,name,creator_raw, creator_norm)
     else:
         # 使用线程池并发
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             futures = [
                 executor.submit(fetch_one, level, name, creator_raw, creator_norm)
                 for level, name, creator_raw, creator_norm in to_fetch

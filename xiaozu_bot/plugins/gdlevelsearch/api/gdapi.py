@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 from urllib.parse import unquote
 
-import requests
 from nonebot import logger
 
 from ..constants import HTTP_RETRY_ATTEMPTS, HTTP_RETRY_BACKOFF
@@ -14,10 +13,11 @@ DEMON_STARS = 10
 LENGTH_PLAT = 5
 
 # boomlings 是 RobTop 自己的服务器，经常半死不活。
-# requests 默认是不超时的，一个卡住的连接能让调用方等到天荒地老。
+# 网络请求必须带超时，一个卡住的连接能让调用方等到天荒地老。
 GD_TIMEOUT = 15
 GD_RETRIES = HTTP_RETRY_ATTEMPTS
 GD_RETRY_BACKOFF = HTTP_RETRY_BACKOFF
+USER_AGENT = "" #似乎对于这个网站空ua更不容易被拦截
 
 # GD 服务器一页固定给 10 条
 GD_PAGE_SIZE = 10
@@ -297,6 +297,10 @@ class GDLevel:
             return f"{['Hard', 'Unknown', 'Unknown', 'Easy', 'Medium', 'Insane', 'Extreme'][self.demon_difficulty]} {'Pemon' if self.is_pemon() else 'Demon'}"
             # bro what is rubtap doing it dont make sense
         return "10⭐demon"
+
+    @property
+    def rarity(self) -> int:
+        return self.epic + 1 if self.epic else 1 if self.feature_score else 0
 
     def __repr__(self) -> str:
         return f"<GDLevel {self.level_name!r} (ID:{self.level_id})>"
@@ -592,7 +596,7 @@ def _search_levels(
 ) -> SearchPage:
     """i dumped every param so it looks like this lol"""
     url = "http://www.boomlings.com/database/getGJLevels21.php"
-    headers = {"User-Agent": ""}
+    headers = {"User-Agent": USER_AGENT}
 
     data = {
         "secret": "Wmfd2893gb7",
@@ -645,6 +649,7 @@ def _search_levels(
             data=data,
             headers=headers,
             timeout=GD_TIMEOUT,
+            allow_retry=True,
         )
     except ServiceUnavailable as e:
         logger.error(f"[gdapi] search request exhausted: {e}")
@@ -652,9 +657,6 @@ def _search_levels(
             raise GDAPIUnavailable(
                 "Geometry Dash level service is temporarily unavailable"
             ) from e
-        return SearchPage(page=page)
-    except requests.RequestException as e:
-        logger.error(f"[gdapi] 搜索请求失败: {e}")
         return SearchPage(page=page)
     text = resp.text.strip()
     # -1 有两种意思：搜不到东西，或者页码翻过头了。这里都当成空页返回，
@@ -763,7 +765,7 @@ def get_user_info(
     user_id: int
 ) -> GDUser | None:
     url = "http://www.boomlings.com/database/getGJUserInfo20.php"
-    headers = {"User-Agent": ""}
+    headers = {"User-Agent": USER_AGENT}
 
     data = {
         "secret": "Wmfd2893gb7",
@@ -776,8 +778,9 @@ def get_user_info(
             data=data,
             headers=headers,
             timeout=GD_TIMEOUT,
+            allow_retry=True,
         )
-    except requests.RequestException as e:
+    except ServiceUnavailable as e:
         logger.error(f"[gdapi] get_user_info({user_id}) 请求失败: {e}")
         return None
     text = resp.text.strip()
@@ -790,7 +793,7 @@ def search_user(
     name: str
 ) -> GDUser | None:
     url = "http://www.boomlings.com/database/getGJUsers20.php"
-    headers = {"User-Agent": ""}
+    headers = {"User-Agent": USER_AGENT}
 
     data = {
         "secret": "Wmfd2893gb7",
@@ -803,8 +806,9 @@ def search_user(
             data=data,
             headers=headers,
             timeout=GD_TIMEOUT,
+            allow_retry=True,
         )
-    except requests.RequestException as e:
+    except ServiceUnavailable as e:
         logger.error(f"[gdapi] search_user({name}) 请求失败: {e}")
         return None
     text = resp.text.strip()

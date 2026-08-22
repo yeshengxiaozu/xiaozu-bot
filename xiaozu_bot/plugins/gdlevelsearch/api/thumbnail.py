@@ -10,6 +10,7 @@ from ..constants import (
     HTTP_OK,
     HTTP_RETRY_ATTEMPTS,
     HTTP_TIMEOUT,
+    USER_AGENT,
 )
 
 THUMB_RETRIES = HTTP_RETRY_ATTEMPTS
@@ -33,7 +34,7 @@ def _thumbnail_id_for(level_id: int | None) -> str:
 async def _fetch_thumbnail(thumbnail_id: str) -> bytes | None:
     """Fetch a thumbnail with bounded retries and a 404 fast path."""
     url = f"https://levelthumbs.prevter.me/thumbnail/{thumbnail_id}/medium"
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "image/webp,image/*;q=0.8"}
+    headers = {"User-Agent": USER_AGENT, "Accept": "image/webp,image/*;q=0.8"}
 
     try:
         response = await async_request(
@@ -60,3 +61,6 @@ async def _fetch_thumbnail(thumbnail_id: str) -> bytes | None:
         f"using placeholder: {thumbnail_id}"
     )
     return None
+
+async def fetch_thumbnail(level_id: int|str) -> bytes | None:
+    return await _fetch_thumbnail(_thumbnail_id_for(int(level_id)))

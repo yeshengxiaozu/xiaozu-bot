@@ -3,6 +3,7 @@ from nonebot import logger
 from xiaozu_bot.utils.json_storage import write_json_atomic
 
 from ...api.http import request as http_request
+from ...constants import USER_AGENT
 
 try:
     from ..paths import staged
@@ -66,6 +67,7 @@ def fetch():
     url = "https://pemonlist.com/api/list?limit=1000"
     headers = {
         "Content-Type": "application/json",
+        "User-Agent": USER_AGENT,
     }
 
     try:

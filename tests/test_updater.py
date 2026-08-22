@@ -22,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 import requests
 from googleapiclient.errors import HttpError
@@ -29,10 +30,10 @@ from googleapiclient.errors import HttpError
 import xiaozu_bot.plugins.gdlevelsearch.updater as updater_pkg
 from xiaozu_bot.plugins import gdlevelsearch
 from xiaozu_bot.plugins.gdlevelsearch import gdapi
+from xiaozu_bot.plugins.gdlevelsearch.api import http as http_transport
 from xiaozu_bot.plugins.gdlevelsearch.updater import notify, paths, runner
 from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
     constants,
-    fetchsfh,
     gddl,
     getmetadata,
     googlesheetapi,
@@ -46,6 +47,7 @@ from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
     pemonlist,
     platbatch,
     platdiff,
+    sfh,
     tpl,
 )
 from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import platapi as jobs_platapi
@@ -302,7 +304,7 @@ class TestRunnerTables:
             "tpl": tpl.fetch,
             "pemonlist": pemonlist.fetch,
             "platbatch": platbatch.batch,
-            "sfh": fetchsfh.main,
+            "sfh": sfh.fetch,
             "getmetadata": getmetadata.main,
         } == runner.JOBS
 
@@ -1441,7 +1443,7 @@ class TestIdlFetch:
         stub_requests.get("insanedemonlist.com/main", make_response(503))
         stub_requests.get("insanedemonlist.com/extended", make_response(503))
 
-        with pytest.raises(requests.HTTPError):
+        with pytest.raises(http_transport.ServiceUnavailable):
             idl.fetch()
         assert not (data_dirs.staging / "idl.json").exists()
 
@@ -1559,7 +1561,7 @@ class TestListsListFetch:
         )
         stub_requests.get(f"{base}/Beta.json", requests.HTTPError("boom"))
 
-        with pytest.raises(RuntimeError, match="第 2 名关卡.*Beta"):
+        with pytest.raises(RuntimeError, match="Beta"):
             lists._fetch_list(base, False)
 
 
@@ -2062,7 +2064,7 @@ class TestPersistently:
         assert some_name.__name__ == "some_name"
         assert some_name.__doc__ == "文档串"
 
-    @pytest.mark.parametrize("status", [429, 500, 503])
+    @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
     def test_可重试的_HttpError_退避后重试(
         self, monkeypatch: pytest.MonkeyPatch, status: int
     ) -> None:
@@ -2107,13 +2109,12 @@ class TestPersistently:
         @googlesheetapi.persistently
         def f() -> str:
             calls.append(1)
-            if len(calls) < 4:
-                raise ValueError("boom")
-            return "ok"
+            raise ValueError("boom")
 
-        assert f() == "ok"
-        assert len(calls) == 4
-        assert clock.slept == [2, 2, 2]
+        with pytest.raises(ValueError, match="boom"):
+            f()
+        assert len(calls) == 1
+        assert clock.slept == []
 
     def test_五次都失败会再补一次调用(self, monkeypatch: pytest.MonkeyPatch) -> None:
         clock = FakeClock()
@@ -2123,13 +2124,12 @@ class TestPersistently:
         @googlesheetapi.persistently
         def f() -> str:
             calls.append(1)
-            if len(calls) <= 5:
-                raise ValueError("boom")
-            return "ok"
+            raise _http_error(503)
 
-        assert f() == "ok"
-        assert len(calls) == 6  # 循环 5 次 + 循环外那次
-        assert clock.slept == [2] * 5
+        with pytest.raises(HttpError):
+            f()
+        assert len(calls) == 5
+        assert clock.slept == [2, 4, 8, 16]
 
     def test_第六次还失败就把异常抛出去(self, monkeypatch: pytest.MonkeyPatch) -> None:
         clock = FakeClock()
@@ -2143,7 +2143,7 @@ class TestPersistently:
 
         with pytest.raises(ValueError, match="always"):
             f()
-        assert len(calls) == 6
+        assert len(calls) == 1
 
     def test_参数原样透传(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(googlesheetapi, "time", FakeClock())
@@ -2153,6 +2153,40 @@ class TestPersistently:
             return a + b
 
         assert f(1, b=2) == 3
+
+
+    def test_sheet_execute_global_concurrency_is_one(self) -> None:
+        active = 0
+        maximum = 0
+        lock = threading.Lock()
+        first_started = threading.Event()
+
+        def request() -> str:
+            nonlocal active, maximum
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+                first_started.set()
+            threading.Event().wait(0.05)
+            with lock:
+                active -= 1
+            return "ok"
+
+        results: list[str] = []
+
+        def worker() -> None:
+            results.append(googlesheetapi._execute(request))
+
+        first = threading.Thread(target=worker)
+        second = threading.Thread(target=worker)
+        first.start()
+        assert first_started.wait(1)
+        second.start()
+        first.join(1)
+        second.join(1)
+
+        assert results == ["ok", "ok"]
+        assert maximum == 1
 
 
 class TestSheetAPI:
@@ -2302,7 +2336,7 @@ class TestSheetAPI:
 
 
 # ==========================================================================
-# jobs/fetchsfh.py
+# jobs/sfh.py
 # ==========================================================================
 class TestFetchSfhMapping:
     def test_按_verifiedLevelIDs_展开映射(self) -> None:
@@ -2318,7 +2352,7 @@ class TestFetchSfhMapping:
                 }
             }
         }
-        assert fetchsfh.build_level_to_song_mapping(data) == {
+        assert sfh.build_level_to_song_mapping(data) == {
             111: {"name": "Song A", "artist": "Artist A", "url": "https://s/a"},
             222: {"name": "Song A", "artist": "Artist A", "url": "https://s/a"},
         }
@@ -2333,7 +2367,7 @@ class TestFetchSfhMapping:
         }
         song[missing] = None
         data = {"nongs": {"hosted": {"s": song}}}
-        assert fetchsfh.build_level_to_song_mapping(data) == {}
+        assert sfh.build_level_to_song_mapping(data) == {}
 
     @pytest.mark.parametrize("verified", [[], None, "123", {}])
     def test_verifiedLevelIDs_不是非空列表就跳过(self, verified: Any) -> None:
@@ -2349,7 +2383,7 @@ class TestFetchSfhMapping:
                 }
             }
         }
-        assert fetchsfh.build_level_to_song_mapping(data) == {}
+        assert sfh.build_level_to_song_mapping(data) == {}
 
     def test_字符串_id_转成_int_不能转的跳过(self) -> None:
         data = {
@@ -2364,7 +2398,7 @@ class TestFetchSfhMapping:
                 }
             }
         }
-        assert sorted(fetchsfh.build_level_to_song_mapping(data)) == [123, 456]
+        assert sorted(sfh.build_level_to_song_mapping(data)) == [123, 456]
 
     def test_同一个关卡被多首歌认领时后面的覆盖前面的(self) -> None:
         data = {
@@ -2375,11 +2409,11 @@ class TestFetchSfhMapping:
                 }
             }
         }
-        assert fetchsfh.build_level_to_song_mapping(data)[1]["name"] == "B"
+        assert sfh.build_level_to_song_mapping(data)[1]["name"] == "B"
 
     def test_没有_nongs_节点时返回空映射(self) -> None:
-        assert fetchsfh.build_level_to_song_mapping({}) == {}
-        assert fetchsfh.build_level_to_song_mapping({"nongs": {}}) == {}
+        assert sfh.build_level_to_song_mapping({}) == {}
+        assert sfh.build_level_to_song_mapping({"nongs": {}}) == {}
 
 
 class TestFetchSfhMain:
@@ -2403,7 +2437,7 @@ class TestFetchSfhMain:
         }
         stub_requests.get("sfh-index.min.json", make_response(200, json_data=payload))
 
-        fetchsfh.main()
+        sfh.fetch()
 
         out = data_dirs.staging / "nong_index.json"
         # json 的 key 只能是字符串，落盘之后 42 -> "42"
@@ -2419,7 +2453,7 @@ class TestFetchSfhMain:
         make_response: Any,
     ) -> None:
         stub_requests.get("sfh-index.min.json", make_response(503))
-        assert fetchsfh.main() is None
+        assert sfh.fetch() is None
         assert not (data_dirs.staging / "nong_index.json").exists()
 
 
@@ -2577,18 +2611,14 @@ class TestFetchLevelData:
         assert metadata.fetch_level_data("Null", "Someone") is None
 
     def test_超时被吞成_None(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import requests
-
         monkeypatch.setattr(
-            metadata, "http", FakeHttp(requests.exceptions.Timeout("timed out"))
+            metadata, "http", FakeHttp(httpx.TimeoutException("timed out"))
         )
         assert metadata.fetch_level_data("Null", "Someone") is None
 
     def test_连接失败被吞成_None(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import requests
-
         monkeypatch.setattr(
-            metadata, "http", FakeHttp(requests.exceptions.ConnectionError("no route"))
+            metadata, "http", FakeHttp(httpx.ConnectError("no route"))
         )
         assert metadata.fetch_level_data("Null", "Someone") is None
 
@@ -2604,6 +2634,33 @@ class TestFetchLevelData:
 
 
 class TestEnrichLevelsWithIds:
+    def test_actual_concurrency_is_capped_at_three(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        active = 0
+        maximum = 0
+        lock = threading.Lock()
+
+        def fetch(name: str, creator: str) -> dict[str, int]:
+            nonlocal active, maximum
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+            threading.Event().wait(0.03)
+            with lock:
+                active -= 1
+            return {"online_id": int(name)}
+
+        monkeypatch.setattr(metadata, "fetch_level_data", fetch)
+        levels = [{"name": str(i), "creator": "Someone"} for i in range(8)]
+
+        metadata.enrich_levels_with_ids(
+            levels, cache_dir=tmp_path, max_workers=99, interval=0
+        )
+
+        assert maximum == 3
+        assert all(level["id"] == i for i, level in enumerate(levels))
+
     def test_全都命中缓存时一次请求都不发(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

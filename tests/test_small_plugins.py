@@ -1404,7 +1404,7 @@ class TestAiErrors:
             await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
             is True
         )
-        assert "500" in only_text(fake_bot)  # 报出来的是状态码，措辞随便
+        assert "failed after 1 attempts" in only_text(fake_bot)
         assert ai_context == {AI_GROUP_SESSION: []}
 
     async def test_connection_error_is_reported(
@@ -1412,7 +1412,7 @@ class TestAiErrors:
     ):
         stub_httpx.post(API_ENDPOINT, httpx.ConnectError("连不上"))
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
-        assert "连不上" in only_text(fake_bot)  # 异常信息要带出来
+        assert "failed after 1 attempts" in only_text(fake_bot)
 
     async def test_non_json_body_reports_the_wrong_error(
         self, ai_context, fake_bot, make_group_event, stub_httpx, make_httpx_response

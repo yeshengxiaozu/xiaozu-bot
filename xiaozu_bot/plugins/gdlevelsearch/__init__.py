@@ -22,9 +22,17 @@ from .api import (  # noqa: F401
     nlwapi,
     platapi,
 )
+from .api.http import close_async_clients, close_sync_client
 from .render import draw, iconrender, icons  # noqa: F401
 
 require("nonebot_plugin_apscheduler")
+
+
+@get_driver().on_shutdown
+async def _close_http_clients() -> None:
+    """Release shared HTTP connection pools when NoneBot stops."""
+    close_sync_client()
+    await close_async_clients()
 
 
 def reload_all() -> None:

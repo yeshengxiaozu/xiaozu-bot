@@ -8,15 +8,16 @@ from typing import Any, TypeVar, cast
 from nonebot import logger
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from ..api.aredlapi import Aredl
+from ..api.aredlapi import Aredl, AREDLLevel
 from ..api.gdapi import GDLevel, get_level_by_id
 from ..api.gddl_store import get_by_id
 from ..api.gddlapi import Gddl, GDDLLevel, GDDLSearchEntry
 from ..api.listsapi import Lists
+from ..api.nlwapi import Level as NLWLevel
 from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi, PlatInfo
+from ..api.thumbnail import fetch_thumbnail
 from ..paths import PLUGIN_DIR, RES_DIR
-from . import thumbnail as _thumbnail
 
 # Tier 颜色表
 TIER_COLOR_MAP = {
@@ -109,7 +110,6 @@ THUMB_SHADOW_BLUR = 6
 
 
 SIDEBAR_X_OFFSET = 20
-## 已统一圆角半径，删除SIDEBAR_RADIUS，全部用PANEL_RADIUS
 SIDEBAR_ALPHA = 230
 SIDEBAR_TEXT_LEFT = 18
 SIDEBAR_TEXT_RIGHT_MARGIN = 8
@@ -240,12 +240,12 @@ import json
 # NONG 歌曲索引。读不到就当空的用 —— 这只影响歌名显示，
 # 不该因为一个缓存文件坏了就让整个插件加载失败。
 nong_index: dict = {}
-_nong_path = PLUGIN_DIR / "data" / "nong_index.json"
+NONG_PATH = PLUGIN_DIR / "data" / "nong_index.json"
 try:
-    with _nong_path.open(encoding="utf-8") as f:
+    with NONG_PATH.open(encoding="utf-8") as f:
         nong_index = json.load(f)
 except (OSError, json.JSONDecodeError):
-    logger.warning(f"NONG 索引读不了，歌名会退回 GD 自带的：{_nong_path}")
+    logger.warning(f"NONG index not available: {NONG_PATH}")
 
 T = TypeVar("T")
 
@@ -262,15 +262,6 @@ def _optional_remote_result(
         return None
     return value
 
-# Keep the historical names importable from draw.py while the implementation
-# lives in the focused thumbnail module.
-THUMB_RETRIES = _thumbnail.THUMB_RETRIES
-THUMB_BACKOFF = _thumbnail.THUMB_BACKOFF
-_none = _thumbnail._none
-_thumbnail_id_for = _thumbnail._thumbnail_id_for
-_fetch_thumbnail = _thumbnail._fetch_thumbnail
-
-
 
 
 @dataclass(slots=True)
@@ -279,25 +270,24 @@ class LevelRenderData:
     creator_line: str = ""
     id_line: str = ""
     rank_line: str = ""
+    tier_prefix: str = ""
     tier_category_line: str = ""
+    tier_color: str = ""
     skillset_line: str = ""
-    song_name: str = ""
-    song_artist: str = ""
-    song_id: str = ""
+    song_line1: str = ""
+    song_line2: str = ""
     diff_icon_path: Path = field(
         default_factory=lambda: RES_DIR / "diffIcon/diffIcon_0.png"
     )
     featured_fx_path: Path = field(default_factory=Path)
     line1: str = ""
     line2: str = ""
-    tier_value: str = ""
     tier_icon_path: Path = field(default_factory=lambda: RES_DIR / "tiers/tier_0.png")
     skill_icons: list[Path] = field(default_factory=list)
     detail_text: str = ""
     thumb_bytes: bytes | None = None
     derived_suffix: str = ""
     derived_difficulty: str = ""
-    tier_prefix: str = ""
     title_text: str = "GDDL"
     pusab_font_path: Path = field(default_factory=lambda: RES_DIR / "PUSAB.TTF")
     sans_font_path: Path = field(default_factory=lambda: RES_DIR / "ARIAL.TTF")
@@ -312,10 +302,11 @@ class FetchedData:
     gddl_info: GDDLLevel | GDDLSearchEntry | None = None
     gddl_tags: list[dict[str, Any]] | None = None
     thumb_bytes: bytes | None = None
-    aredl_info: Any | None = None
-    nlw_info: Any | None = None
+    aredl_info: AREDLLevel | None = None
+    nlw_info: NLWLevel | None = None
     plat_info: PlatInfo | None = None
     list_rank: str | None = None
+    nong_song: dict | None = None
 
 
 def _panel_rect() -> tuple[int, int, int, int]:
@@ -349,7 +340,7 @@ def _draw_background(data: LevelRenderData) -> Image.Image:
         left_bg_layer.paste(left_bg, (0, 0), left_bg)
         ImageDraw.Draw(left_bg_layer)
     except Exception as e:
-        logger.error("鏃犳硶鍔犺浇宸︿晶鑳屾櫙鍥? %s", e)
+        logger.error("[gdlevelsearch.draw] ERROR: %s", e)
     left_bg_masked = Image.composite(left_bg_layer, Image.new("RGBA", (W, H), (0, 0, 0, 0)), panel_mask)
 
     right_bg_layer = create_vertical_gradient((W, H), (255, 255, 255), (255, 255, 255)).convert("RGBA")
@@ -410,16 +401,15 @@ def _draw_main_panel(img: Image.Image, data: LevelRenderData) -> Image.Image:
         prefix_w = draw.textbbox((0, 0), data.tier_prefix, font=font_sub)[2]
     else:
         prefix_w = 0
-    tier_color = TIER_COLOR_MAP.get(data.tier_value, DEFAULT_TIER_COLOR)
-    draw_outlined_text(draw, (x + prefix_w, y), data.tier_category_line, font_sub, fill=tier_color, outline="black", outline_width=OUTLINE_SUB)
+    draw_outlined_text(draw, (x + prefix_w, y), data.tier_category_line, font_sub, fill=data.tier_color, outline="black", outline_width=OUTLINE_SUB)
     y += SPACING_TIER_ROW
 
     skillset_outline_width = 3
     draw_outlined_text(draw, (x, y), data.skillset_line, font_small, fill="black", outline="white", outline_width=skillset_outline_width)
     y += draw.textbbox((0, 0), data.skillset_line, font=font_small)[3] + SPACING_SMALL
-    draw_outlined_text(draw, (x, y), f"Song: {data.song_name}", font_small, fill="black", outline="white", outline_width=skillset_outline_width)
+    draw_outlined_text(draw, (x, y), data.song_line1, font_small, fill="black", outline="white", outline_width=skillset_outline_width)
     y += SPACING_SONG_LINE
-    draw_outlined_text(draw, (x, y), f"Artist: {data.song_artist}  ID: {data.song_id}", font_small, fill="black", outline="white", outline_width=skillset_outline_width)
+    draw_outlined_text(draw, (x, y), data.song_line2, font_small, fill="black", outline="white", outline_width=skillset_outline_width)
 
     diff_icon_img = None
     try:
@@ -522,7 +512,7 @@ def _draw_sidebar(img: Image.Image, data: LevelRenderData) -> Image.Image:
                 img.paste(cropped, (sb_rect[0], bg_y_top), cropped)
             ImageDraw.Draw(img)
         except Exception as e:
-            logger.error("鏃犳硶鍔犺浇鍙充晶鑳屾櫙鍥? %s", e)
+            logger.error("[gdlevelsearch.draw] ERROR: %s", e)
 
     draw = ImageDraw.Draw(img)
     y_text = sb_rect[1] + 10
@@ -617,12 +607,11 @@ def create_level_image(data: LevelRenderData) -> Image.Image:
 
 
 async def _fetch_all_data(level_id: int) -> FetchedData:
-    thumbnail_id = _thumbnail_id_for(level_id)
     gdlevel, gddl_info, gddl_tags, thumb_bytes = await asyncio.gather(
         asyncio.to_thread(get_level_by_id, level_id),
         asyncio.to_thread(Gddl.getlevelbyid, level_id, False),
         asyncio.to_thread(Gddl.getleveltags, level_id),
-        _fetch_thumbnail(thumbnail_id) if thumbnail_id else _none(),
+        fetch_thumbnail(level_id),
         return_exceptions=True,
     )
     gdlevel = _optional_remote_result(gdlevel, "GD level")
@@ -643,6 +632,8 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
     list_rank = None
     if aredl_info is None and plat_info is None:
         list_rank = Lists.search_level(level_id)
+    nong_song = nong_index.get(str(level_id))
+
     return FetchedData(
         level_id=level_id,
         gdlevel=gdlevel,
@@ -653,6 +644,7 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
         nlw_info=nlw_info,
         plat_info=plat_info,
         list_rank=list_rank,
+        nong_song=nong_song
     )
 
 
@@ -669,31 +661,20 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
     nlw_info = data.nlw_info
     plat_info = data.plat_info
     aredl_info = data.aredl_info
+    nong_song = data.nong_song
 
-    display_level_id = next(
-        value for value in (
-            _valid_id(getattr(gdlevel, "level_id", None)),
-            _valid_id(getattr(gddl_info, "ID", None)),
-            _valid_id(getattr(nlw_info, "id", None)),
-            _valid_id(getattr(plat_info, "id", None)),
-            _valid_id(getattr(aredl_info, "level_id", None)),
-            data.level_id,
-        )
-        if value is not None
-    )
-
-    gddl_name = getattr(gddl_meta, "Name", "") or ""
+    # basic info (name, creator, length)
     level_line = (
         getattr(gdlevel, "level_name", "")
-        or gddl_name
+        or getattr(gddl_meta, "Name", "")
         or getattr(nlw_info, "name", "")
         or getattr(plat_info, "name", "")
         or getattr(aredl_info, "name", "")
         or getattr(gddl_info, "Name", "")
         or ""
     )
-    creator = getattr(gdlevel, "creator_name", None)
-    creator = creator or getattr(nlw_info, "creator", None) or getattr(plat_info, "creator", None)
+    creator = getattr(nlw_info, "creator", None) or getattr(plat_info, "creator", None)
+    creator = creator or getattr(gdlevel, "creator_name", None)
     creator = creator or getattr(gddl_info, "PublisherName", None)
     creator_line = f"By {creator}" if creator else ""
 
@@ -710,14 +691,17 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
                 length = int(length) - 1
         if length is not None and length != 5 and 0 <= length < 5:
             length_text = f"({['Tiny', 'Short', 'Medium', 'Long', 'XL'][length]})"
-    id_line = f"Level ID: {display_level_id} {length_text}"
+    id_line = f"Level ID: {data.level_id} {length_text}"
 
+    # advanced info (rank, tier)
     rank_parts = []
     if plat_info:
         if plat_info.tpl:
             rank_parts.append(f"{plat_info.tpl}(TPL)")
         if plat_info.pemonlist:
             rank_parts.append(f"{plat_info.pemonlist}(Pemonlist)")
+        elif aredl_info:
+            rank_parts.append(f"{aredl_info.position}(AREDL)")
     elif aredl_info:
         if getattr(aredl_info, "status", False) == "Legacy":
             rank_parts.append("AREDL #Legacy")
@@ -745,7 +729,9 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
         tier_prefix = "Plat "
         tier_category_line = str(plat_info.tier)
         tier_value = str(plat_info.tier)
+    tier_color = TIER_COLOR_MAP.get(tier_value,"#FFFFFF")
 
+    # derived things for derived info
     derived_suffix = ""
     derived_difficulty = ""
     if plat_info and plat_info.derived_levels:
@@ -755,32 +741,35 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
             derived_suffix = derived_level.name.removeprefix(plat_info.name).strip()
             derived_difficulty = str(derived_level.tier or "")
 
+    # additional info (skillset, nong)
     skillset = getattr(nlw_info, "skillset", None)
     skillset_line = f"Skillset: {skillset}" if skillset else ""
 
-    nong_song = nong_index.get(str(display_level_id))
     if nong_song:
-        song_name = nong_song.get("name", "") or ""
-        song_artist = nong_song.get("artist", "") or ""
+        song_name = nong_song.get("name", "")
+        song_artist = nong_song.get("artist", "")
         song_id = "NONG"
     elif gdlevel is None and gddl_meta is not None:
         gddl_song = getattr(gddl_meta, "Song", None)
-        song_name = getattr(gddl_song, "Name", "") or ""
-        song_artist = getattr(gddl_song, "Author", "") or ""
-        song_id = getattr(gddl_song, "ID", "") or ""
+        song_name = getattr(gddl_song, "Name", "")
+        song_artist = getattr(gddl_song, "Author", "")
+        song_id = getattr(gddl_song, "ID", "")
     else:
-        song_name = getattr(gdlevel, "song_name", "") or ""
-        song_artist = getattr(gdlevel, "song_author", "") or ""
-        song_id = getattr(gdlevel, "song_id", "") or ""
+        song_name = getattr(gdlevel, "song_name", "")
+        song_artist = getattr(gdlevel, "song_author", "")
+        song_id = getattr(gdlevel, "song_id", "")
+    song_line1 = f"Song: {song_name}"
+    song_line2 = f"Artist: {song_artist}  ID: {song_id}"
 
+    # icons (face/fire, gddl tier/skillset, plat)
     diff_icon_path = RES_DIR / "diffIcon/diffIcon_0.png"
     try:
         if gdlevel is None and gddl_meta is not None:
             demon_difficulty = {
-                "Official": 0, "Unknown": 0, "Easy": 1, "Medium": 2,
+                "Official": 0, "Easy": 1, "Medium": 2,
                 "Hard": 3, "Insane": 4, "Extreme": 5,
-            }.get(getattr(gddl_meta, "Difficulty", ""))
-            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{10 if demon_difficulty is None else f'1{demon_difficulty}'}.png"
+            }.get(getattr(gddl_meta, "Difficulty", ""),0)
+            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{f'1{demon_difficulty}'}.png"
         elif getattr(gdlevel, "is_demon", False):
             demon_difficulty = "3001245"[getattr(gdlevel, "demon_difficulty", 0)]
             diff_icon_path = RES_DIR / f"diffIcon/diffIcon_1{demon_difficulty}.png"
@@ -790,6 +779,11 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
     except (IndexError, TypeError, ValueError):
         pass
 
+    rarity = gdlevel.rarity if gdlevel is not None else gddl_meta.Rarity if gddl_meta is not None else 0
+    featured_fx = RES_DIR / f"diffIcon/featured_{rarity}.png" if rarity else Path()
+
+    # to do: change everything below to 2 main branch for classic and
+    # and figure out how to compose gddl info and plat info at the same pic (another card?)
     tier_icon_path = RES_DIR / "tiers/tier_0.png"
     is_plat = False
     if gdlevel is not None:
@@ -823,40 +817,31 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
     elif gddl_info:
         title_text = "GDDL"
         rating = getattr(gddl_info, "Rating", None)
-        line1_rating = round(rating, 2) if rating else "N/A"
-        is_two_player = getattr(gdlevel, "is_two_player", False) if gdlevel is not None else getattr(gddl_meta, "IsTwoPlayer", False)
-        if isinstance(gddl_info, GDDLLevel):
-            rating_count = f"/{round(gddl_info.TwoPlayerRating, 2)}(2p)" if is_two_player and gddl_info.TwoPlayerRating else f"({gddl_info.RatingCount})" if gddl_info.RatingCount else ""
-            enj_count = f"/{round(gddl_info.TwoPlayerEnjoyment, 2)}(2p)" if is_two_player and gddl_info.TwoPlayerEnjoyment else f"({gddl_info.EnjoymentCount})" if gddl_info.EnjoymentCount else ""
-        else:
-            rating_count = ""
-            enj_count = ""
         enjoyment = getattr(gddl_info, "Enjoyment", None)
-        line1 = f"Tier: {line1_rating}{rating_count}"
-        line2 = f"Enj: {round(enjoyment, 2) if enjoyment else 'N/A'}{enj_count}"
+        is_two_player = getattr(gdlevel, "is_two_player", False) or getattr(gddl_meta, "IsTwoPlayer", False)
+        if isinstance(gddl_info, GDDLLevel):
+            # this logic is to prevent nine circles display 2p ratings
+            rating_suffix = f"/{round(gddl_info.TwoPlayerRating, 2)}(2p)" if is_two_player and gddl_info.TwoPlayerRating else f"({gddl_info.RatingCount})" if gddl_info.RatingCount else ""
+            enj_suffix = f"/{round(gddl_info.TwoPlayerEnjoyment, 2)}(2p)" if is_two_player and gddl_info.TwoPlayerEnjoyment else f"({gddl_info.EnjoymentCount})" if gddl_info.EnjoymentCount else ""
+        else:
+            rating_suffix = ""
+            enj_suffix = ""
+        line1 = f"Tier: {round(rating, 2) if rating else 'N/A'}{rating_suffix}"
+        line2 = f"Enj: {round(enjoyment, 2) if enjoyment else 'N/A'}{enj_suffix}"
     else:
         title_text = "No info"
         line1 = "sorry :("
         line2 = ""
 
-    description = getattr(gdlevel, "description", None) if gdlevel else None
-    description = description if description is not None else getattr(gddl_meta, "Description", None)
-    detail_text = f"Description: {description or ''}"
+    description = getattr(gdlevel, "description", "") or getattr(gddl_meta, "Description", "")
+    detail_text = f"Description: {description}" if description else ""
     if plat_info and plat_info.tags:
+        plat_info.tags = list(set(plat_info.tags) - {"On TPL", "On Pemonlist"})
         detail_text += f"\n\nDifficulty Chart Tags: {', '.join(plat_info.tags)}"
     if nlw_info and getattr(nlw_info, "description", None):
         detail_text += f"\n\n{nlw_info.source} Description: {nlw_info.description}"
     if aredl_info and getattr(aredl_info, "description", None):
         detail_text += f"\n\nAREDL Description: {aredl_info.description}"
-
-    if gdlevel is not None:
-        epic = getattr(gdlevel, "epic", 0)
-        feature_score = getattr(gdlevel, "feature_score", 0)
-        featured_level = epic + 1 if epic else 1 if feature_score else 0
-    else:
-        rarity = getattr(gddl_meta, "Rarity", 0) if gddl_meta is not None else 0
-        featured_level = rarity if isinstance(rarity, int) and 1 <= rarity <= 4 else 0
-    featured_fx = RES_DIR / f"diffIcon/featured_{featured_level}.png" if featured_level else Path()
 
     return LevelRenderData(
         level_line=level_line,
@@ -865,14 +850,13 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
         rank_line=rank_line,
         tier_category_line=tier_category_line,
         skillset_line=skillset_line,
-        song_name=song_name,
-        song_artist=song_artist,
-        song_id=str(song_id),
+        song_line1=song_line1,
+        song_line2=song_line2,
         diff_icon_path=diff_icon_path,
         featured_fx_path=featured_fx,
         line1=line1,
         line2=line2,
-        tier_value=tier_value,
+        tier_color=tier_color,
         tier_icon_path=tier_icon_path,
         skill_icons=skill_icons,
         detail_text=detail_text,

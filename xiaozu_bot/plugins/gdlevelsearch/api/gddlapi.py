@@ -1,17 +1,22 @@
 from typing import Any
 
-import requests
 from nonebot import logger
 
 try:
-    from ..constants import HTTP_OK
+    from ..constants import HTTP_OK, USER_AGENT
     from . import gddl_store
+    from .http import ServiceUnavailable
     from .http import request as http_request
 except ImportError:  # standalone updater script mode
     import gddl_store
-    from constants import HTTP_OK
+    from constants import HTTP_OK, USER_AGENT
 
-    from xiaozu_bot.plugins.gdlevelsearch.api.http import request as http_request
+    from xiaozu_bot.plugins.gdlevelsearch.api.http import (
+        ServiceUnavailable,
+    )
+    from xiaozu_bot.plugins.gdlevelsearch.api.http import (
+        request as http_request,
+    )
 
 apikey = "3244ce47ed4cf932ec348d68cdf72496de68ee48a2846044db906baa28a7cf7d"
 GDDL_PLAT_LENGTH = 6
@@ -268,7 +273,7 @@ class Gddl:
         """
         url = f"https://gdladder.com/api/levels/{level_id}/submissions"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+            "User-Agent": USER_AGENT,
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
@@ -294,7 +299,7 @@ class Gddl:
                 logger.warning(f"[gddl] 不认识的进度过滤 {progress_filter!r}，忽略")
         try:
             response = http_request("GET", url, headers=headers, params=params, timeout=15)
-        except requests.RequestException as e:
+        except ServiceUnavailable as e:
             logger.error(f"[gddl] 拉取提交评分失败 level={level_id}: {e}")
             return None
         if response.status_code != HTTP_OK:
@@ -309,13 +314,13 @@ class Gddl:
         """拿某关卡的 tier / enjoyment 分布直方图"""
         url = f"https://gdladder.com/api/levels/{level_id}/submissions/spread"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+            "User-Agent": USER_AGENT,
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
         try:
             response = http_request("GET", url, headers=headers, timeout=15)
-        except requests.RequestException as e:
+        except ServiceUnavailable as e:
             logger.error(f"[gddl] 拉取分布失败 level={level_id}: {e}")
             return None
         if response.status_code != HTTP_OK:
@@ -327,13 +332,13 @@ class Gddl:
         """Fetch the tags associated with a level from the GDDL API."""
         url = f"https://gdladder.com/api/levels/{level_id}/tags"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+            "User-Agent": USER_AGENT,
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
         try:
             response = http_request("GET", url, headers=headers, timeout=GDDL_TIMEOUT)
-        except requests.RequestException as e:
+        except ServiceUnavailable as e:
             logger.error(f"[gddl] 拉 tags 失败 level={level_id}: {e}")
             return []
         if response.status_code == HTTP_OK:
@@ -348,7 +353,7 @@ class Gddl:
     def getlevelsbyname(name: str) -> list[GDDLSearchEntry]:
         url = "https://gdladder.com/api/levels"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+            "User-Agent": USER_AGENT,
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
@@ -362,7 +367,7 @@ class Gddl:
                 remote_failed = False
                 return result
             logger.info(f"[gddl] networl error: HTTP {response.status_code}")
-        except (requests.RequestException, ValueError, KeyError, TypeError) as e:
+        except (ServiceUnavailable, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error fetching levels: {e}")
         if remote_failed:
             logger.info(f"[gddl] remote failed, try to use local snapshot: {name}")
@@ -385,7 +390,7 @@ class Gddl:
         """Fetch a GDDL level by ID, optionally including a second tag request."""
         url = f"https://gdladder.com/api/levels/{level_id}"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+            "User-Agent": USER_AGENT,
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
@@ -397,7 +402,7 @@ class Gddl:
                 # 调用方想并发的话可以自己单独调 getleveltags
                 tags = Gddl.getleveltags(level_id) if with_tags else None
                 return GDDLLevel(data, tags)
-        except (requests.RequestException, ValueError, KeyError, TypeError) as e:
+        except (ServiceUnavailable, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error fetching level by ID: {e}")
         cached = gddl_store.get_by_id(level_id)
         if cached is not None:
@@ -414,7 +419,7 @@ class Gddl:
     ) -> dict[str, Any] | None:
         url = "https://gdladder.com/api/levels"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+            "User-Agent": USER_AGENT,
             "Content-Type": "application/json",
             "Authorization": f"Bearer {apikey}",
         }
@@ -424,7 +429,7 @@ class Gddl:
         params.update({k: v for k, v in filters.items() if v is not None})
         try:
             response = http_request("GET", url, headers=headers, params=params, timeout=GDDL_TIMEOUT)
-        except (requests.RequestException, ValueError) as e:
+        except (ServiceUnavailable, ValueError) as e:
             logger.error(f"[gddl] 搜索失败: {e}")
             return None
         if response.status_code != HTTP_OK:

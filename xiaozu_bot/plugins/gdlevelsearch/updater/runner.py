@@ -6,7 +6,6 @@ from collections.abc import Callable
 from nonebot import logger
 
 from .jobs import (
-    fetchsfh,
     getmetadata,
     hds,
     idl,
@@ -17,6 +16,7 @@ from .jobs import (
     pemonlist,
     platbatch,
     platdiff,
+    sfh,
     tpl,
 )
 from .paths import clear_staging, ensure_dirs, publish
@@ -35,7 +35,7 @@ JOBS: dict[str, Callable[[], None]] = {
     "tpl": tpl.fetch,
     "pemonlist": pemonlist.fetch,
     "platbatch": platbatch.batch,
-    "sfh": fetchsfh.main,
+    "sfh": sfh.fetch,
     "getmetadata": getmetadata.main,
 }
 
