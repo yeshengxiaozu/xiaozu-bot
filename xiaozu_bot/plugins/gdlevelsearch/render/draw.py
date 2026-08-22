@@ -681,7 +681,7 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
     length_text = ""
     if nlw_info and getattr(nlw_info, "length", None):
         length_text = f"({nlw_info.length})"
-    elif gddl_meta and (seconds := getattr(gddl_meta, "seconds", None)) is not None:
+    elif gddl_info and not gddl_info.is_pemon() and (seconds := getattr(gddl_meta, "seconds", None)) is not None:
         length_text = f"({int(seconds // 60)}:{int(seconds) % 60})"
     else:
         length = getattr(gdlevel, "length", None)
