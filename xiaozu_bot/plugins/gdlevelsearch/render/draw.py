@@ -1,16 +1,17 @@
 import asyncio
 import io
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 
 from nonebot import logger
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from ..api.aredlapi import Aredl
-from ..api.gdapi import get_level_by_id
-from ..api.gddlapi import Gddl, GDDLLevel, GDDLSearchEntry
+from ..api.gdapi import GDLevel, get_level_by_id
 from ..api.gddl_store import get_by_id
+from ..api.gddlapi import Gddl, GDDLLevel, GDDLSearchEntry
 from ..api.listsapi import Lists
 from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi, PlatInfo
@@ -65,9 +66,9 @@ def _load_font(path: Path, size: int) -> ImageFont.FreeTypeFont:
     except OSError:
         logger.error(f"字体加载失败，退回默认字体：{path}")
         try:
-            return ImageFont.load_default(size)
+            return cast("ImageFont.FreeTypeFont", ImageFont.load_default(size))
         except TypeError:  # Pillow < 10.1 的 load_default 不吃 size
-            return ImageFont.load_default()
+            return cast("ImageFont.FreeTypeFont", ImageFont.load_default())
 
 CANVAS_W = 1280
 CANVAS_H = 720
@@ -270,242 +271,230 @@ _thumbnail_id_for = _thumbnail._thumbnail_id_for
 _fetch_thumbnail = _thumbnail._fetch_thumbnail
 
 
-async def create_level_image(
-    level_line: str,
-    creator_line: str,
-    id_line: str,
-    rank_line: str,
-    tier_category_line: str,
-    skillset_line: str,
-    song_name: str,
-    song_artist: str,
-    song_id: str,
-    diff_icon_path: Path,
-    featured_fx_path: Path = Path(),
-    line1: str = "",
-    line2: str = "",
-    tier_value: str = "",
-    tier_icon_path: Path = Path(),
-    skill_icons: list[Path] | None = None,
-    detail_text: str = "",
-    thumb_bytes: bytes | None = None,
-    derived_suffix: str = "",
-    derived_difficulty: str = "",
-    tier_prefix: str = "",
-    title_text: str = "GDDL",
-    # 磁盘上的文件名是全大写的 PUSAB.TTF / ARIAL.TTF。
-    # macOS 和 Windows 的文件系统不区分大小写所以写小写也能跑，
-    # 但 Linux 上会直接 OSError，整条出图路径全灭。
-    pusab_font_path: Path = RES_DIR/"PUSAB.TTF",
-    sans_font_path: Path = RES_DIR/"ARIAL.TTF",
-    left_bg_path: Path = RES_DIR/"left_bg.png",
-    right_bg_path: Path = RES_DIR/"right_bg.png",
-) -> Image.Image:
+
+
+@dataclass(slots=True)
+class LevelRenderData:
+    level_line: str = ""
+    creator_line: str = ""
+    id_line: str = ""
+    rank_line: str = ""
+    tier_category_line: str = ""
+    skillset_line: str = ""
+    song_name: str = ""
+    song_artist: str = ""
+    song_id: str = ""
+    diff_icon_path: Path = field(
+        default_factory=lambda: RES_DIR / "diffIcon/diffIcon_0.png"
+    )
+    featured_fx_path: Path = field(default_factory=Path)
+    line1: str = ""
+    line2: str = ""
+    tier_value: str = ""
+    tier_icon_path: Path = field(default_factory=lambda: RES_DIR / "tiers/tier_0.png")
+    skill_icons: list[Path] = field(default_factory=list)
+    detail_text: str = ""
+    thumb_bytes: bytes | None = None
+    derived_suffix: str = ""
+    derived_difficulty: str = ""
+    tier_prefix: str = ""
+    title_text: str = "GDDL"
+    pusab_font_path: Path = field(default_factory=lambda: RES_DIR / "PUSAB.TTF")
+    sans_font_path: Path = field(default_factory=lambda: RES_DIR / "ARIAL.TTF")
+    left_bg_path: Path = field(default_factory=lambda: RES_DIR / "left_bg.png")
+    right_bg_path: Path = field(default_factory=lambda: RES_DIR / "right_bg.png")
+
+
+@dataclass(slots=True)
+class FetchedData:
+    level_id: int
+    gdlevel: GDLevel | None = None
+    gddl_info: GDDLLevel | GDDLSearchEntry | None = None
+    gddl_tags: list[dict[str, Any]] | None = None
+    thumb_bytes: bytes | None = None
+    aredl_info: Any | None = None
+    nlw_info: Any | None = None
+    plat_info: PlatInfo | None = None
+    list_rank: str | None = None
+
+
+def _panel_rect() -> tuple[int, int, int, int]:
+    return (
+        PANEL_MARGIN,
+        PANEL_MARGIN,
+        PANEL_MAIN_WIDTH - PANEL_RIGHT_OFFSET,
+        CANVAS_H - PANEL_BOTTOM_OFFSET,
+    )
+
+
+def _sidebar_rect() -> tuple[int, int, int, int]:
+    sidebar_x = PANEL_MAIN_WIDTH + SIDEBAR_X_OFFSET
+    return (sidebar_x, PANEL_MARGIN, CANVAS_W - PANEL_MARGIN, CANVAS_H - PANEL_BOTTOM_OFFSET)
+
+
+def _draw_background(data: LevelRenderData) -> Image.Image:
     W, H = CANVAS_W, CANVAS_H  # noqa: N806
-    # 1. 先绘制底色渐变（粉白配色，底部更白，顶部更粉）
     base = create_vertical_gradient((W, H), (255, 180, 220), (255, 240, 250)).convert("RGBA")
 
-    # 2. 生成主栏和侧边栏的蒙版
-    panel_rect = (PANEL_MARGIN, PANEL_MARGIN, PANEL_MAIN_WIDTH - PANEL_RIGHT_OFFSET, H - PANEL_BOTTOM_OFFSET)
-    sidebar_x = PANEL_MAIN_WIDTH + SIDEBAR_X_OFFSET
-    sidebar_rect = (sidebar_x, PANEL_MARGIN, W - PANEL_MARGIN, H - PANEL_BOTTOM_OFFSET)
-
-    # 主栏蒙版
     panel_mask = Image.new("L", (W, H), 0)
-    panel_draw = ImageDraw.Draw(panel_mask)
-    panel_draw.rounded_rectangle(panel_rect, radius=PANEL_RADIUS, fill=255)
-
-    # 侧边栏蒙版
+    ImageDraw.Draw(panel_mask).rounded_rectangle(_panel_rect(), radius=PANEL_RADIUS, fill=255)
     sidebar_mask = Image.new("L", (W, H), 0)
-    sidebar_draw = ImageDraw.Draw(sidebar_mask)
-    sidebar_draw.rounded_rectangle(sidebar_rect, radius=PANEL_RADIUS, fill=255)
+    ImageDraw.Draw(sidebar_mask).rounded_rectangle(_sidebar_rect(), radius=PANEL_RADIUS, fill=255)
 
-    # 3. 加载左背景图并用蒙版裁剪
     left_bg_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     try:
-        left_bg = Image.open(left_bg_path).convert("RGBA")
+        left_bg = Image.open(data.left_bg_path).convert("RGBA")
         if left_bg.size != (W, H):
             left_bg = left_bg.resize((W, H), Image.Resampling.LANCZOS)
         left_bg_layer.paste(left_bg, (0, 0), left_bg)
+        ImageDraw.Draw(left_bg_layer)
     except Exception as e:
-        logger.error("无法加载左侧背景图: %s", e)
-    left_bg_masked = Image.composite(left_bg_layer, Image.new("RGBA", (W, H), (0,0,0,0)), panel_mask)
+        logger.error("鏃犳硶鍔犺浇宸︿晶鑳屾櫙鍥? %s", e)
+    left_bg_masked = Image.composite(left_bg_layer, Image.new("RGBA", (W, H), (0, 0, 0, 0)), panel_mask)
 
-    # 右侧背景直接用上下白色渐变
-    right_bg_layer = create_vertical_gradient((W, H), (255,255,255), (255,255,255)).convert("RGBA")
-    right_bg_masked = Image.composite(right_bg_layer, Image.new("RGBA", (W, H), (0,0,0,0)), sidebar_mask)
-
-    # 4. 合成到底色上
+    right_bg_layer = create_vertical_gradient((W, H), (255, 255, 255), (255, 255, 255)).convert("RGBA")
+    right_bg_masked = Image.composite(right_bg_layer, Image.new("RGBA", (W, H), (0, 0, 0, 0)), sidebar_mask)
     base = Image.alpha_composite(base, left_bg_masked)
+    ImageDraw.Draw(base)
     base = Image.alpha_composite(base, right_bg_masked)
+    ImageDraw.Draw(base)
+    return base
 
-    # 5. 继续后续内容绘制
-    img = base.copy()
+
+def _draw_main_panel(img: Image.Image, data: LevelRenderData) -> Image.Image:
     draw = ImageDraw.Draw(img)
+    font_title = _load_font(data.pusab_font_path, FONT_PUSAB_TITLE)
+    font_sub = _load_font(data.pusab_font_path, FONT_PUSAB_SUB)
+    font_small = _load_font(data.sans_font_path, FONT_SANS_SMALL)
+    panel = _panel_rect()
+    x = panel[0] + PANEL_PAD
+    y = panel[1] + PANEL_PAD
 
-    # 字体
-    font_title = _load_font(pusab_font_path, FONT_PUSAB_TITLE)
-    font_sub = _load_font(pusab_font_path, FONT_PUSAB_SUB)
-    font_small = _load_font(sans_font_path, FONT_SANS_SMALL)
-
-    # 主面板区域坐标
-    panel = (PANEL_MARGIN, PANEL_MARGIN, PANEL_MAIN_WIDTH - PANEL_RIGHT_OFFSET, H - PANEL_BOTTOM_OFFSET)
-    panel_pad = PANEL_PAD
-    x = panel[0] + panel_pad
-    y = panel[1] + panel_pad
-
-    # 主标题
-    title = level_line
-    title_bbox = draw.textbbox((0, 0), title, font=font_title)
+    title_bbox = draw.textbbox((0, 0), data.level_line, font=font_title)
     title_h = int(title_bbox[3] - title_bbox[1])
-    draw_outlined_text(draw, (x, y), title, font_title, fill="white", outline="black", outline_width=OUTLINE_TITLE)
+    draw_outlined_text(draw, (x, y), data.level_line, font_title, fill="white", outline="black", outline_width=OUTLINE_TITLE)
     title_y = y
-    title_w = draw.textbbox((0, 0), title, font=font_title)[2]
+    title_w = draw.textbbox((0, 0), data.level_line, font=font_title)[2]
 
-    if derived_suffix or derived_difficulty:
+    if data.derived_suffix or data.derived_difficulty:
         derived_lines = []
-        if derived_suffix:
-            derived_lines.append((derived_suffix, (255, 255, 255)))
-        if derived_difficulty:
-            derived_lines.append((derived_difficulty, TIER_COLOR_MAP.get(derived_difficulty, DEFAULT_TIER_COLOR)))
-        if derived_lines:
-            derived_line_h = draw.textbbox((0, 0), "A", font=font_sub)[3]
-            max_line_w = max(draw.textbbox((0, 0), text, font=font_sub)[2] for text, _ in derived_lines)
-            card_w = max_line_w + 24
-            card_h = len(derived_lines) * derived_line_h + 24 + max(0, len(derived_lines) - 1) * SPACING_SMALL
-            card_x = panel[2] - panel_pad - card_w
-            card_y = title_y - 16
-            if title_w + card_w > PANEL_MAIN_WIDTH:
-                card_y += title_h
-            overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-            od = ImageDraw.Draw(overlay)
-            od.rectangle([card_x, card_y, card_x + card_w, card_y + card_h], fill=(0, 0, 0, 51))
-            img = Image.alpha_composite(img, overlay)
-            draw = ImageDraw.Draw(img)
-            text_x = card_x + 12
-            text_y = card_y + 16
-            for text, fill in derived_lines:
-                draw_outlined_text(draw, (text_x, text_y), text, fill=fill, font=font_sub, outline_width=OUTLINE_SUB)
-                text_y += derived_line_h + SPACING_SMALL
+        if data.derived_suffix:
+            derived_lines.append((data.derived_suffix, (255, 255, 255)))
+        if data.derived_difficulty:
+            derived_lines.append((data.derived_difficulty, TIER_COLOR_MAP.get(data.derived_difficulty, DEFAULT_TIER_COLOR)))
+        derived_line_h = draw.textbbox((0, 0), "A", font=font_sub)[3]
+        max_line_w = max(draw.textbbox((0, 0), text, font=font_sub)[2] for text, _ in derived_lines)
+        card_w = max_line_w + 24
+        card_h = len(derived_lines) * derived_line_h + 24 + max(0, len(derived_lines) - 1) * SPACING_SMALL
+        card_x = panel[2] - PANEL_PAD - card_w
+        card_y = title_y - 16
+        if title_w + card_w > PANEL_MAIN_WIDTH:
+            card_y += title_h
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(overlay).rectangle([card_x, card_y, card_x + card_w, card_y + card_h], fill=(0, 0, 0, 51))
+        img = Image.alpha_composite(img, overlay)
+        draw = ImageDraw.Draw(img)
+        text_x = card_x + 12
+        text_y = card_y + 16
+        for text, fill in derived_lines:
+            draw_outlined_text(draw, (text_x, text_y), text, fill=fill, font=font_sub, outline_width=OUTLINE_SUB)
+            text_y += derived_line_h + SPACING_SMALL
 
     y += title_h + SPACING_SMALL
+    for text in (data.creator_line, data.id_line, data.rank_line):
+        draw_outlined_text(draw, (x, y), text, font_sub, fill="white", outline="black", outline_width=OUTLINE_SUB)
+        y += draw.textbbox((0, 0), text, font=font_sub)[3] + SPACING_SMALL
 
-    # creator/ID/rank
-    draw_outlined_text(draw, (x, y), creator_line, font_sub, fill="white", outline="black", outline_width=OUTLINE_SUB)
-    y += draw.textbbox((0, 0), creator_line, font=font_sub)[3] + SPACING_SMALL
-    draw_outlined_text(draw, (x, y), id_line, font_sub, fill="white", outline="black", outline_width=OUTLINE_SUB)
-    y += draw.textbbox((0, 0), id_line, font=font_sub)[3] + SPACING_SMALL
-    draw_outlined_text(draw, (x, y), rank_line, font_sub, fill="white", outline="black", outline_width=OUTLINE_SUB)
-    y += draw.textbbox((0, 0), rank_line, font=font_sub)[3] + SPACING_SMALL
-
-    # Tier 行
-    if tier_prefix:
-        draw_outlined_text(draw, (x, y), tier_prefix, font_sub, fill="white", outline="black", outline_width=OUTLINE_SUB)
-        prefix_w = draw.textbbox((0, 0), tier_prefix, font=font_sub)[2]
+    if data.tier_prefix:
+        draw_outlined_text(draw, (x, y), data.tier_prefix, font_sub, fill="white", outline="black", outline_width=OUTLINE_SUB)
+        prefix_w = draw.textbbox((0, 0), data.tier_prefix, font=font_sub)[2]
     else:
         prefix_w = 0
-    tier_color = TIER_COLOR_MAP.get(tier_value, DEFAULT_TIER_COLOR)
-    draw_outlined_text(draw, (x + prefix_w, y), tier_category_line, font_sub, fill=tier_color, outline="black", outline_width=OUTLINE_SUB)
+    tier_color = TIER_COLOR_MAP.get(data.tier_value, DEFAULT_TIER_COLOR)
+    draw_outlined_text(draw, (x + prefix_w, y), data.tier_category_line, font_sub, fill=tier_color, outline="black", outline_width=OUTLINE_SUB)
     y += SPACING_TIER_ROW
 
-    # Skillset 行 — 改用白色描边（填充黑色，轮廓白色，宽度3）
     skillset_outline_width = 3
-    draw_outlined_text(draw, (x, y), skillset_line, font_small,
-                       fill="black", outline="white", outline_width=skillset_outline_width)
-    y += draw.textbbox((0, 0), skillset_line, font=font_small)[3] + SPACING_SMALL
-
-    # Song 信息 — 两行分别加白色描边
-    song_line1 = f"Song: {song_name}"
-    song_line2 = f"Artist: {song_artist}  ID: {song_id}"
-    draw_outlined_text(draw, (x, y), song_line1, font_small,
-                       fill="black", outline="white", outline_width=skillset_outline_width)
+    draw_outlined_text(draw, (x, y), data.skillset_line, font_small, fill="black", outline="white", outline_width=skillset_outline_width)
+    y += draw.textbbox((0, 0), data.skillset_line, font=font_small)[3] + SPACING_SMALL
+    draw_outlined_text(draw, (x, y), f"Song: {data.song_name}", font_small, fill="black", outline="white", outline_width=skillset_outline_width)
     y += SPACING_SONG_LINE
-    draw_outlined_text(draw, (x, y), song_line2, font_small,
-                       fill="black", outline="white", outline_width=skillset_outline_width)
+    draw_outlined_text(draw, (x, y), f"Artist: {data.song_artist}  ID: {data.song_id}", font_small, fill="black", outline="white", outline_width=skillset_outline_width)
 
-    # ---------- 难度图标 ----------
     diff_icon_img = None
-    diff_target_size = None
     try:
-        diff_icon_img = Image.open(diff_icon_path).convert("RGBA")
+        diff_icon_img = Image.open(data.diff_icon_path).convert("RGBA")
         orig_w, orig_h = diff_icon_img.size
-        target_w = max(1, int(orig_w * DIFF_SCALE))
-        target_h = max(1, int(orig_h * DIFF_SCALE))
-        diff_target_size = (target_w, target_h)
+        diff_target_size = (max(1, int(orig_w * DIFF_SCALE)), max(1, int(orig_h * DIFF_SCALE)))
     except Exception:
         diff_target_size = (max(1, int(320 * DIFF_SCALE)), max(1, int(280 * DIFF_SCALE)))
-        diff_icon_img = None
-
     diff_w, diff_h = diff_target_size
-    diff_x = panel[2] - panel_pad - diff_w
-    diff_y = panel[1] + panel_pad + title_h + DIFF_Y_EXTRA
+    diff_x = panel[2] - PANEL_PAD - diff_w
+    diff_y = panel[1] + PANEL_PAD + title_h + DIFF_Y_EXTRA
 
-    if featured_fx_path:
+    if data.featured_fx_path:
         try:
-            fx_img = Image.open(featured_fx_path).convert("RGBA")
-            fx_img = fx_img.resize(diff_target_size, Image.Resampling.LANCZOS)
+            fx_img = Image.open(data.featured_fx_path).convert("RGBA").resize(diff_target_size, Image.Resampling.LANCZOS)
             img.paste(fx_img, (diff_x, diff_y), fx_img)
+            draw = ImageDraw.Draw(img)
         except Exception:
             pass
-
     if diff_icon_img is not None:
         try:
             diff_icon_img = diff_icon_img.resize(diff_target_size, Image.Resampling.LANCZOS)
             img.paste(diff_icon_img, (diff_x, diff_y), diff_icon_img)
+            draw = ImageDraw.Draw(img)
         except Exception:
             diff_icon_img = None
-
     if diff_icon_img is None:
-        pd = ImageDraw.Draw(img)
-        pd.rounded_rectangle([diff_x, diff_y, diff_x + diff_w, diff_y + diff_h],
-                             radius=12, outline=(200, 60, 60), width=3)
-        draw_outlined_text(draw, (diff_x + 8, diff_y + diff_h // 2 - 24), "No\nImage",
-                           font_sub, fill="red", outline="white", outline_width=2)
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle([diff_x, diff_y, diff_x + diff_w, diff_y + diff_h], radius=12, outline=(200, 60, 60), width=3)
+        draw_outlined_text(draw, (diff_x + 8, diff_y + diff_h // 2 - 24), "No\nImage", font_sub, fill="red", outline="white", outline_width=2)
+    return img
 
-    # 左下角缩略图
+
+def _draw_thumbnail(img: Image.Image, data: LevelRenderData) -> Image.Image:
+    panel = _panel_rect()
     thumb_w, thumb_h = THUMB_W, THUMB_H
-    thumb_x = panel[0] + panel_pad
-    thumb_y = panel[3] - panel_pad - thumb_h
+    thumb_x = panel[0] + PANEL_PAD
+    thumb_y = panel[3] - PANEL_PAD - thumb_h
     thumb_img = None
-
-    # 缩略图由调用方提前并发取好再传进来，这里只负责解码
-    if thumb_bytes:
+    if data.thumb_bytes:
         try:
-            thumb_img = Image.open(io.BytesIO(thumb_bytes)).convert("RGBA")
-            thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+            thumb_img = Image.open(io.BytesIO(data.thumb_bytes)).convert("RGBA").resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
         except Exception:
-            logger.warning("缩略图拿到了但解不开，退回占位图")
-            thumb_img = None
-
+            logger.warning("缂╃暐鍥炬嬁鍒颁簡浣嗚В涓嶅紑锛岄€€鍥炲崰浣嶅浘")
     if thumb_img is None:
         try:
-            thumb_img = Image.open(RES_DIR/"noThumb.png").convert("RGBA")
-            thumb_img = thumb_img.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+            thumb_img = Image.open(RES_DIR / "noThumb.png").convert("RGBA").resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
         except Exception:
             thumb_img = Image.new("RGBA", (thumb_w, thumb_h), (220, 220, 220, 255))
 
     thumb_round = rounded_image(thumb_img, THUMB_RADIUS)
     tshadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    td = ImageDraw.Draw(tshadow)
-    td.rounded_rectangle([thumb_x + THUMB_SHADOW_OFFSET, thumb_y + THUMB_SHADOW_OFFSET,
-                          thumb_x + thumb_w + THUMB_SHADOW_OFFSET, thumb_y + thumb_h + THUMB_SHADOW_OFFSET],
-                         radius=THUMB_RADIUS, fill=(0, 0, 0, THUMB_SHADOW_ALPHA))
+    ImageDraw.Draw(tshadow).rounded_rectangle(
+        [thumb_x + THUMB_SHADOW_OFFSET, thumb_y + THUMB_SHADOW_OFFSET,
+         thumb_x + thumb_w + THUMB_SHADOW_OFFSET, thumb_y + thumb_h + THUMB_SHADOW_OFFSET],
+        radius=THUMB_RADIUS, fill=(0, 0, 0, THUMB_SHADOW_ALPHA),
+    )
     tshadow = tshadow.filter(ImageFilter.GaussianBlur(THUMB_SHADOW_BLUR))
     img = Image.alpha_composite(img, tshadow)
+    ImageDraw.Draw(img)
     img.paste(thumb_round, (thumb_x, thumb_y), thumb_round)
+    ImageDraw.Draw(img)
+    return img
 
-    # ---------- 右侧详情栏（去掉白色背景，保留背景图和文字，仍用侧边栏边框截断） ----------
-    SIDEBAR_X = PANEL_MAIN_WIDTH + SIDEBAR_X_OFFSET  # noqa: N806
-    sb_w = W - SIDEBAR_X - PANEL_MARGIN
-    sb_rect = (SIDEBAR_X, PANEL_MARGIN, SIDEBAR_X + sb_w, H - PANEL_BOTTOM_OFFSET)
 
-    # 计算文字高度
+def _draw_sidebar(img: Image.Image, data: LevelRenderData) -> Image.Image:
+    W, H = CANVAS_W, CANVAS_H  # noqa: N806
+    font_small = _load_font(data.sans_font_path, FONT_SANS_SMALL)
+    sb_rect = _sidebar_rect()
+    sb_w = sb_rect[2] - sb_rect[0]
     text_left = sb_rect[0] + SIDEBAR_TEXT_LEFT
     text_right = sb_rect[2] - SIDEBAR_TEXT_RIGHT_MARGIN
     avail_px = max(SIDEBAR_MIN_AVAIL_PX, text_right - text_left)
-    wrapped_lines = wrap_text_by_width(detail_text, avail_px, font_small)
+    wrapped_lines = wrap_text_by_width(data.detail_text, avail_px, font_small)
     max_y = sb_rect[3] - 20
-
     y_text = sb_rect[1] + 10
     last_y = y_text
     for _line in wrapped_lines:
@@ -513,193 +502,206 @@ async def create_level_image(
             break
         last_y = y_text + SIDEBAR_LINE_HEIGHT
         y_text += SIDEBAR_LINE_HEIGHT
-    text_height = last_y - sb_rect[1]
-    white_rect_height = text_height
-
-    spacing = RIGHT_BG_SPACING
-    bg_y_top = PANEL_MARGIN + white_rect_height + spacing
+    white_rect_height = last_y - sb_rect[1]
+    bg_y_top = PANEL_MARGIN + white_rect_height + RIGHT_BG_SPACING
     bg_height = H - PANEL_BOTTOM_OFFSET - bg_y_top
-
-    # 保存当前画面用于后续蒙版
     img_before_sidebar = img.copy()
 
-    # 背景图（不缩放，直接裁剪超出部分）
     if bg_height > 0:
         try:
-            right_bg_img = Image.open(right_bg_path).convert("RGBA")
-            crop_w = min(right_bg_img.width, sb_w+1)
-            crop_h = min(right_bg_img.height, bg_height+20)
+            right_bg_img = Image.open(data.right_bg_path).convert("RGBA")
+            crop_w = min(right_bg_img.width, sb_w + 1)
+            crop_h = min(right_bg_img.height, bg_height + 20)
             cropped = right_bg_img.crop((0, 0, crop_w, crop_h))
             if crop_w < sb_w:
                 padded = Image.new("RGBA", (sb_w, bg_height), (0, 0, 0, 0))
                 padded.paste(cropped, (0, 0))
-                img.paste(padded, (SIDEBAR_X, bg_y_top), padded)
+                ImageDraw.Draw(padded)
+                img.paste(padded, (sb_rect[0], bg_y_top), padded)
             else:
-                img.paste(cropped, (SIDEBAR_X, bg_y_top), cropped)
+                img.paste(cropped, (sb_rect[0], bg_y_top), cropped)
+            ImageDraw.Draw(img)
         except Exception as e:
-            logger.error("无法加载右侧背景图: %s", e)
+            logger.error("鏃犳硶鍔犺浇鍙充晶鑳屾櫙鍥? %s", e)
 
-    # 不再绘制白色半透明背景，直接绘制文字
-    draw = ImageDraw.Draw(img)  # 确保 draw 是最新的
+    draw = ImageDraw.Draw(img)
     y_text = sb_rect[1] + 10
     for line in wrapped_lines:
         if y_text > max_y:
             break
-        draw.text((text_left, y_text), line, fill=(0,0,0), font=font_small)
+        draw.text((text_left, y_text), line, fill=(0, 0, 0), font=font_small)
         y_text += SIDEBAR_LINE_HEIGHT
 
-    # 用侧边栏圆角蒙版裁剪整个侧边栏区域
     sidebar_mask = Image.new("L", (W, H), 0)
-    mdraw = ImageDraw.Draw(sidebar_mask)
-    mdraw.rounded_rectangle(sb_rect, radius=PANEL_RADIUS, fill=255)
+    ImageDraw.Draw(sidebar_mask).rounded_rectangle(sb_rect, radius=PANEL_RADIUS, fill=255)
     img = Image.composite(img, img_before_sidebar, sidebar_mask)
+    ImageDraw.Draw(img)
+    return img
 
-    # ---------- 右下角卡片 ----------
-    if skill_icons is None:
-        skill_icons = []
-    icon_paths = [tier_icon_path, *skill_icons]
-    icons: list[Image.Image] = []
-    try:
-        for ipath in icon_paths:
+
+def _draw_card(img: Image.Image, data: LevelRenderData) -> Image.Image:
+    draw = ImageDraw.Draw(img)
+    icon_paths = [data.tier_icon_path, *data.skill_icons]
+    icons: list[Image.Image | None] = []
+    for ipath in icon_paths:
+        try:
             icon = Image.open(ipath).convert("RGBA")
             w, h = icon.size
             new_h = ICON_DEFAULT_H
             new_w = max(1, int(w * new_h / h))
-            icon = icon.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            icons.append(icon)
-    except FileNotFoundError:
-        pass
+            icons.append(icon.resize((new_w, new_h), Image.Resampling.LANCZOS))
+        except (FileNotFoundError, OSError, ZeroDivisionError):
+            break
 
-    title_font = _load_font(pusab_font_path, TITLE_FONT_SIZE)
-    card_line_font = _load_font(pusab_font_path, CARD_LINE_FONT_SIZE)
-
-    title_w = draw.textbbox((0, 0), title_text, font=title_font)[2]
-    icon_spacing = ICON_SPACING
-    total_icon_w = sum(icon.width for icon in icons if icon) + max(0, (len(icons) - 1)) * icon_spacing
-
-    min_block_w = title_w + 16 + total_icon_w + 40
-    block_w = max(CARD_WIDTH, min_block_w)
-
+    title_font = _load_font(data.pusab_font_path, TITLE_FONT_SIZE)
+    card_line_font = _load_font(data.pusab_font_path, CARD_LINE_FONT_SIZE)
+    title_w = draw.textbbox((0, 0), data.title_text, font=title_font)[2]
+    total_icon_w = sum(icon.width for icon in icons if icon) + max(0, len(icons) - 1) * ICON_SPACING
+    block_w = max(CARD_WIDTH, title_w + 16 + total_icon_w + 40)
     allowed_icon_area = block_w - title_w - ICON_ALLOWED_EXTRA
     if total_icon_w > allowed_icon_area and total_icon_w > 0:
         scale = max(ICON_MIN_SCALE, allowed_icon_area / total_icon_w)
-        new_icons = []
+        resized_icons: list[Image.Image | None] = []
         for icon in icons:
             if icon:
                 ow, oh = icon.size
                 new_h = max(ICON_MIN_H, int(oh * scale))
-                new_w = max(1, int(ow * new_h / oh))
-                new_icons.append(icon.resize((new_w, new_h), Image.Resampling.LANCZOS))
+                resized_icons.append(icon.resize((max(1, int(ow * new_h / oh)), new_h), Image.Resampling.LANCZOS))
             else:
-                new_icons.append(None)
-        icons = new_icons
-        total_icon_w = sum(icon.width for icon in icons if icon) + max(0, (len(icons) - 1)) * icon_spacing
+                resized_icons.append(None)
+        icons = resized_icons
+        total_icon_w = sum(icon.width for icon in icons if icon) + max(0, len(icons) - 1) * ICON_SPACING
         block_w = max(block_w, title_w + 16 + total_icon_w + 40)
 
-    title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+    title_bbox = draw.textbbox((0, 0), data.title_text, font=title_font)
     title_h = title_bbox[3] - title_bbox[1]
     line_h = draw.textbbox((0, 0), "A", font=card_line_font)[3]
-
-    required_height = (CARD_TOP_PADDING + title_h + CARD_BETWEEN_TITLE_AND_LINES +
-                       line_h + CARD_INTER_LINE_SPACING + line_h + CARD_BOTTOM_PADDING)
+    required_height = CARD_TOP_PADDING + title_h + CARD_BETWEEN_TITLE_AND_LINES + line_h + CARD_INTER_LINE_SPACING + line_h + CARD_BOTTOM_PADDING
     block_h = max(DESIRED_BLOCK_HEIGHT, required_height)
-
-    block_x = panel[2] - panel_pad - block_w
-    block_y = panel[3] - panel_pad - block_h
+    panel = _panel_rect()
+    block_x = panel[2] - PANEL_PAD - block_w
+    block_y = panel[3] - PANEL_PAD - block_h
 
     card = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    cd = ImageDraw.Draw(card)
-    cd.rounded_rectangle([block_x, block_y, block_x + block_w, block_y + block_h],
-                         radius=CARD_BG_RADIUS, fill=CARD_BG_COLOR)
+    ImageDraw.Draw(card).rounded_rectangle([block_x, block_y, block_x + block_w, block_y + block_h], radius=CARD_BG_RADIUS, fill=CARD_BG_COLOR)
     img = Image.alpha_composite(img, card)
     draw = ImageDraw.Draw(img)
-
     tx = block_x + 16
     ty = block_y + CARD_TOP_PADDING
-    draw.text((tx, ty), title_text, fill=(255, 255, 255), font=title_font)
+    draw.text((tx, ty), data.title_text, fill=(255, 255, 255), font=title_font)
     center_y = ty + title_h / 2 - ICON_NEGATIVE_MARGIN
     tx += title_w + 12
-    if icons:
-        for icon in icons:
-            if icon:
-                icon_y = int(center_y - icon.height / 2)
-                img.paste(icon, (int(tx), int(icon_y)), icon)
-                tx += icon.width + icon_spacing
+    for icon in icons:
+        if icon:
+            icon_y = int(center_y - icon.height / 2)
+            img.paste(icon, (int(tx), int(icon_y)), icon)
+            draw = ImageDraw.Draw(img)
+            tx += icon.width + ICON_SPACING
 
     current_y = block_y + CARD_TOP_PADDING + title_h + CARD_BETWEEN_TITLE_AND_LINES
-    line1_color = TIER_COLOR_MAP.get(line1, (230, 230, 230))
-    draw.text(
-        (block_x + 16, current_y),
-        line1,
-        fill=line1_color,
-        font=card_line_font,
-    )
+    line1_color = TIER_COLOR_MAP.get(data.line1, (230, 230, 230))
+    draw = ImageDraw.Draw(img)
+    draw.text((block_x + 16, current_y), data.line1, fill=line1_color, font=card_line_font)
     current_y += line_h + CARD_INTER_LINE_SPACING + 4
-    draw.text((block_x + 16, current_y), line2, fill=(200, 200, 200), font=card_line_font)
+    draw.text((block_x + 16, current_y), data.line2, fill=(200, 200, 200), font=card_line_font)
+    return img
 
+
+def create_level_image(data: LevelRenderData) -> Image.Image:
+    img = _draw_background(data)
+    img = _draw_main_panel(img, data)
+    img = _draw_thumbnail(img, data)
+    img = _draw_sidebar(img, data)
+    img = _draw_card(img, data)
     return img.convert("RGB")
 
-async def create_image_from_gdlevel(level_id: int) -> Image.Image:
-    """根据传入的 `GDLevel` 自动查询 GDDL/AREDL/NLW/Plat 数据并生成图片。
 
-    如果某来源不存在对应信息，则对应绘图字段留空。
-    """
-    # 三个外部请求彼此不依赖，一起发。
-    # 以前是串着来的：GDDL 详情 -> GDDL tags -> 缩略图，实测一张图 3.5-5.4 秒，
-    # 而且几乎全是在等网络（PIL 那部分可以忽略不计）。
-    # 并发之后总耗时约等于最慢的那一个。
+async def _fetch_all_data(level_id: int) -> FetchedData:
     thumbnail_id = _thumbnail_id_for(level_id)
-    gdlevel, gddl_info, thumb_bytes = await asyncio.gather(
+    gdlevel, gddl_info, gddl_tags, thumb_bytes = await asyncio.gather(
         asyncio.to_thread(get_level_by_id, level_id),
         asyncio.to_thread(Gddl.getlevelbyid, level_id, False),
+        asyncio.to_thread(Gddl.getleveltags, level_id),
         _fetch_thumbnail(thumbnail_id) if thumbnail_id else _none(),
         return_exceptions=True,
     )
     gdlevel = _optional_remote_result(gdlevel, "GD level")
     gddl_info = _optional_remote_result(gddl_info, "GDDL level")
+    gddl_tags = _optional_remote_result(gddl_tags, "GDDL tags")
     thumb_bytes = _optional_remote_result(thumb_bytes, "thumbnail")
-    gddl_tags = None
-    if isinstance(gddl_info, GDDLLevel):
-        gddl_tags = _optional_remote_result(
-            await asyncio.to_thread(Gddl.getleveltags, level_id),
-            "GDDL tags",
-        )
-    
-    if gddl_info is not None and gddl_tags:
-        gddl_info.Tags = gddl_tags
 
-    # 这三个查的是内存里的表，不走网络
     aredl_info = Aredl.getlevelbyid(level_id)
     nlw_info = Nlw.getlevelbyid(level_id)
     plat_info = Platapi.getlevelbyid(level_id)
-    if gddl_info == None:
-        gddl_info = get_by_id(level_id)
-        if gddl_info is not None:
-            gddl_info = GDDLSearchEntry(gddl_info)
+    if gddl_info is None:
+        cached_info = get_by_id(level_id)
+        if cached_info is not None:
+            gddl_info = GDDLSearchEntry(cached_info)
+    if isinstance(gddl_info, GDDLLevel) and gddl_tags:
+        gddl_info.Tags = gddl_tags
 
-    # level_line / creator_line
-    display_level_id = (
-        getattr(gdlevel, "level_id", None)
-        or getattr(gddl_info, "ID", None)
-        or level_id
+    list_rank = None
+    if aredl_info is None and plat_info is None:
+        list_rank = Lists.search_level(level_id)
+    return FetchedData(
+        level_id=level_id,
+        gdlevel=gdlevel,
+        gddl_info=gddl_info,
+        gddl_tags=gddl_tags,
+        thumb_bytes=thumb_bytes,
+        aredl_info=aredl_info,
+        nlw_info=nlw_info,
+        plat_info=plat_info,
+        list_rank=list_rank,
     )
+
+
+def _valid_id(value: Any) -> Any | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return value
+
+
+def _build_render_data(data: FetchedData) -> LevelRenderData:
+    gdlevel = data.gdlevel
+    gddl_info = data.gddl_info
     gddl_meta = gddl_info.Meta if isinstance(gddl_info, GDDLLevel) else None
+    nlw_info = data.nlw_info
+    plat_info = data.plat_info
+    aredl_info = data.aredl_info
+
+    display_level_id = next(
+        value for value in (
+            _valid_id(getattr(gdlevel, "level_id", None)),
+            _valid_id(getattr(gddl_info, "ID", None)),
+            _valid_id(getattr(nlw_info, "id", None)),
+            _valid_id(getattr(plat_info, "id", None)),
+            _valid_id(getattr(aredl_info, "level_id", None)),
+            data.level_id,
+        )
+        if value is not None
+    )
+
+    gddl_name = getattr(gddl_meta, "Name", "") or ""
     level_line = (
         getattr(gdlevel, "level_name", "")
-        or getattr(gddl_meta, "Name", "")
+        or gddl_name
+        or getattr(nlw_info, "name", "")
+        or getattr(plat_info, "name", "")
+        or getattr(aredl_info, "name", "")
+        or getattr(gddl_info, "Name", "")
         or ""
     )
     creator = getattr(gdlevel, "creator_name", None)
-    if not creator and nlw_info and getattr(nlw_info, "creator", None):
-        creator = nlw_info.creator
+    creator = creator or getattr(nlw_info, "creator", None) or getattr(plat_info, "creator", None)
+    creator = creator or getattr(gddl_info, "PublisherName", None)
     creator_line = f"By {creator}" if creator else ""
 
-    # id_line
     length_text = ""
-    if nlw_info and nlw_info.length:
+    if nlw_info and getattr(nlw_info, "length", None):
         length_text = f"({nlw_info.length})"
-    elif gddl_meta and gddl_meta.seconds:
-        length_text = f"({int(gddl_meta.seconds//60)}:{int(gddl_meta.seconds)%60})"
+    elif gddl_meta and (seconds := getattr(gddl_meta, "seconds", None)) is not None:
+        length_text = f"({int(seconds // 60)}:{int(seconds) % 60})"
     else:
         length = getattr(gdlevel, "length", None)
         if length is None and gddl_meta is not None:
@@ -708,12 +710,11 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
                 length = int(length) - 1
         if length is not None and length != 5 and 0 <= length < 5:
             length_text = f"({['Tiny', 'Short', 'Medium', 'Long', 'XL'][length]})"
-    id_line = f"Level ID: {display_level_id} {length_text}" if display_level_id is not None else ""
+    id_line = f"Level ID: {display_level_id} {length_text}"
 
-    # rank_line: 集成 AREDL / GDDL 等排行信息
     rank_parts = []
     if plat_info:
-        if plat_info.tpl: #有platinfo的话再放aredl会写不下
+        if plat_info.tpl:
             rank_parts.append(f"{plat_info.tpl}(TPL)")
         if plat_info.pemonlist:
             rank_parts.append(f"{plat_info.pemonlist}(Pemonlist)")
@@ -722,46 +723,45 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
             rank_parts.append("AREDL #Legacy")
         else:
             rank_parts.append(f"AREDL #{aredl_info.position}")
-        # EDEL 的 enjoyment 是 0-100 的刻度，不是 GDDL 那个 0-10，所以标上 EDEL 前缀区分。
-        # pending 的数还没定稿，直接不显示。
         edel = getattr(aredl_info, "edel_enjoyment", None)
         if edel is not None and not getattr(aredl_info, "is_edel_pending", False):
             rank_parts.append(f"EDEL {edel:.1f}")
-    elif list_rank := Lists.search_level(level_id):
-        rank_parts.append(list_rank)
+    elif data.list_rank:
+        rank_parts.append(data.list_rank)
     rank_line = " | ".join(rank_parts) if rank_parts else ""
 
-    # tier 信息与前缀
     tier_prefix = ""
     tier_category_line = ""
-    tier_value = None
-    if nlw_info and nlw_info.tier:
+    tier_value = ""
+    if nlw_info and getattr(nlw_info, "tier", None):
         tier_prefix = f"{nlw_info.source} "
-        tier_category_line = str(nlw_info.tier) + " Tier"
-        tier_value = nlw_info.tier
-    elif aredl_info and aredl_info.nlw_tier:
-        tier_prefix = "NLW " #查到的必然是是nlw tier
-        tier_category_line = str(aredl_info.nlw_tier) + " Tier"
-        tier_value = aredl_info.nlw_tier
+        tier_category_line = f"{nlw_info.tier} Tier"
+        tier_value = str(nlw_info.tier)
+    elif aredl_info and getattr(aredl_info, "nlw_tier", None):
+        tier_prefix = "NLW "
+        tier_category_line = f"{aredl_info.nlw_tier} Tier"
+        tier_value = str(aredl_info.nlw_tier)
     elif plat_info and plat_info.tier:
         tier_prefix = "Plat "
         tier_category_line = str(plat_info.tier)
-        tier_value = plat_info.tier
+        tier_value = str(plat_info.tier)
 
-    # derived
     derived_suffix = ""
     derived_difficulty = ""
     if plat_info and plat_info.derived_levels:
-        derived_level = Platapi.getderivedlevels(plat_info)[0]
-        derived_suffix = derived_level.name.removeprefix(plat_info.name).strip()
-        derived_difficulty = str(derived_level.tier or "")
-    # skillset
-    skillset_line = f"Skillset: {nlw_info.skillset}" if nlw_info and getattr(nlw_info, "skillset", None) else ""
+        derived_levels = Platapi.getderivedlevels(plat_info)
+        if derived_levels:
+            derived_level = derived_levels[0]
+            derived_suffix = derived_level.name.removeprefix(plat_info.name).strip()
+            derived_difficulty = str(derived_level.tier or "")
 
-    # song info
-    if str(display_level_id) in nong_index:
-        song_name = nong_index[str(display_level_id)]["name"]
-        song_artist = nong_index[str(display_level_id)]["artist"]
+    skillset = getattr(nlw_info, "skillset", None)
+    skillset_line = f"Skillset: {skillset}" if skillset else ""
+
+    nong_song = nong_index.get(str(display_level_id))
+    if nong_song:
+        song_name = nong_song.get("name", "") or ""
+        song_artist = nong_song.get("artist", "") or ""
         song_id = "NONG"
     elif gdlevel is None and gddl_meta is not None:
         gddl_song = getattr(gddl_meta, "Song", None)
@@ -773,54 +773,48 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
         song_artist = getattr(gdlevel, "song_author", "") or ""
         song_id = getattr(gdlevel, "song_id", "") or ""
 
-    # diff icon mapping
-    diff_icon_path = RES_DIR/"diffIcon/diffIcon_0.png"
+    diff_icon_path = RES_DIR / "diffIcon/diffIcon_0.png"
     try:
         if gdlevel is None and gddl_meta is not None:
-            gddl_difficulty = getattr(gddl_meta, "Difficulty", "")
             demon_difficulty = {
-                "Official": 0,
-                "Unknown": 0,
-                "Easy": 1,
-                "Medium": 2,
-                "Hard": 3,
-                "Insane": 4,
-                "Extreme": 5,
-            }.get(gddl_difficulty)
-            if demon_difficulty is None:
-                diff_icon_path = RES_DIR/"diffIcon/diffIcon_10.png"
-            else:
-                diff_icon_path = RES_DIR/f"diffIcon/diffIcon_1{demon_difficulty}.png"
+                "Official": 0, "Unknown": 0, "Easy": 1, "Medium": 2,
+                "Hard": 3, "Insane": 4, "Extreme": 5,
+            }.get(getattr(gddl_meta, "Difficulty", ""))
+            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{10 if demon_difficulty is None else f'1{demon_difficulty}'}.png"
         elif getattr(gdlevel, "is_demon", False):
-            # check readable difficulty label for mapping
-            demon_difficulty = "3001245"[gdlevel.demon_difficulty]
-            diff_icon_path = RES_DIR/f"diffIcon/diffIcon_1{demon_difficulty}.png"
+            demon_difficulty = "3001245"[getattr(gdlevel, "demon_difficulty", 0)]
+            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_1{demon_difficulty}.png"
         else:
-            stars = int(getattr(gdlevel, "stars", 0) or 0)
-            stars = max(0, min(9, stars))
-            diff_icon_path =  RES_DIR/f"diffIcon/diffIcon_{stars}.png"
-    except Exception:
-        diff_icon_path = RES_DIR/"diffIcon/diffIcon_0.png"
+            stars = max(0, min(9, int(getattr(gdlevel, "stars", 0) or 0)))
+            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{stars}.png"
+    except (IndexError, TypeError, ValueError):
+        pass
 
-    # tier icon: use rounded gddl rating if present
-    tier_icon_path = RES_DIR/"tiers/tier_0.png"
-    if (
-        (gdlevel is not None and gdlevel.is_plat())
-        or (gdlevel is None and gddl_meta is not None and gddl_meta.is_pemon())
-    ):
-        tier_icon_path = RES_DIR/"moon.png"
-    elif gddl_info and (gddl_info.Rating or getattr(gddl_info,"DefaultRating",None)) is not None:
-        tier_icon_path =  RES_DIR/f"tiers/tier_{int(gddl_info.Rating+0.5) if gddl_info.Rating else getattr(gddl_info,'DefaultRating',0)}.png"
+    tier_icon_path = RES_DIR / "tiers/tier_0.png"
+    is_plat = False
+    if gdlevel is not None:
+        is_plat_method = getattr(gdlevel, "is_plat", None)
+        if callable(is_plat_method):
+            try:
+                is_plat = bool(is_plat_method())
+            except Exception:
+                is_plat = False
+    if is_plat or (gdlevel is None and gddl_meta is not None and gddl_meta.is_pemon()):
+        tier_icon_path = RES_DIR / "moon.png"
+    else:
+        rating = getattr(gddl_info, "Rating", None)
+        default_rating = getattr(gddl_info, "DefaultRating", None)
+        if gddl_info and (rating or default_rating) is not None:
+            rating_value = int(rating + 0.5) if rating else default_rating
+            tier_icon_path = RES_DIR / f"tiers/tier_{rating_value}.png"
 
-    # skill icons from gddl tags
     skill_icons = []
-    if gddl_info and isinstance(gddl_info,GDDLLevel) and getattr(gddl_info, "Tags", None):
-        for tag in (gddl_info.Tags or [])[:3]:
+    if isinstance(gddl_info, GDDLLevel):
+        for tag in (getattr(gddl_info, "Tags", None) or [])[:3]:
             name = tag.get("Name") if isinstance(tag, dict) else None
-            if not name:
-                continue
-            fname = name.replace(" ", "_").replace("-", "_").lower()
-            skill_icons.append(RES_DIR/f"skillsets/skillset_{fname}.png")
+            if name:
+                fname = name.replace(" ", "_").replace("-", "_").lower()
+                skill_icons.append(RES_DIR / f"skillsets/skillset_{fname}.png")
 
     if plat_info:
         title_text = "P.Diff"
@@ -828,58 +822,43 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
         line2 = f"Enjoyment: {plat_info.enjoyment}" if plat_info.enjoyment is not None else ""
     elif gddl_info:
         title_text = "GDDL"
-        rating = round(gddl_info.Rating, 2) if gddl_info and gddl_info.Rating else "N/A"
-        is_two_player = (
-            getattr(gdlevel, "is_two_player", False)
-            if gdlevel is not None
-            else getattr(gddl_meta, "IsTwoPlayer", False)
-        )
+        rating = getattr(gddl_info, "Rating", None)
+        line1_rating = round(rating, 2) if rating else "N/A"
+        is_two_player = getattr(gdlevel, "is_two_player", False) if gdlevel is not None else getattr(gddl_meta, "IsTwoPlayer", False)
         if isinstance(gddl_info, GDDLLevel):
-            if is_two_player and gddl_info.TwoPlayerRating:
-                rating_count = f"/{round(gddl_info.TwoPlayerRating, 2)}(2p)"
-            else:
-                rating_count = f"({gddl_info.RatingCount})" if gddl_info.RatingCount else ""
+            rating_count = f"/{round(gddl_info.TwoPlayerRating, 2)}(2p)" if is_two_player and gddl_info.TwoPlayerRating else f"({gddl_info.RatingCount})" if gddl_info.RatingCount else ""
+            enj_count = f"/{round(gddl_info.TwoPlayerEnjoyment, 2)}(2p)" if is_two_player and gddl_info.TwoPlayerEnjoyment else f"({gddl_info.EnjoymentCount})" if gddl_info.EnjoymentCount else ""
         else:
             rating_count = ""
-        line1 = f"Tier: {rating}{rating_count}"
-
-        enj = round(gddl_info.Enjoyment, 2) if gddl_info and gddl_info.Enjoyment else "N/A"
-        if isinstance(gddl_info, GDDLLevel):
-            if is_two_player and gddl_info.TwoPlayerEnjoyment:
-                enj_count = f"/{round(gddl_info.TwoPlayerEnjoyment, 2)}(2p)"
-            else:
-                enj_count = f"({gddl_info.EnjoymentCount})" if gddl_info and gddl_info.EnjoymentCount else ""
-        else:
             enj_count = ""
-        line2 = f"Enj: {enj}{enj_count}"
+        enjoyment = getattr(gddl_info, "Enjoyment", None)
+        line1 = f"Tier: {line1_rating}{rating_count}"
+        line2 = f"Enj: {round(enjoyment, 2) if enjoyment else 'N/A'}{enj_count}"
     else:
         title_text = "No info"
         line1 = "sorry :("
         line2 = ""
 
-    #detail text
-    detail_text = ""
     description = getattr(gdlevel, "description", None) if gdlevel else None
-    if description is None and gddl_meta is not None:
-        description = getattr(gddl_meta, "Description", None)
-    detail_text += f"Description: {description or ''}"
+    description = description if description is not None else getattr(gddl_meta, "Description", None)
+    detail_text = f"Description: {description or ''}"
     if plat_info and plat_info.tags:
         detail_text += f"\n\nDifficulty Chart Tags: {', '.join(plat_info.tags)}"
-    if nlw_info and nlw_info.description:
+    if nlw_info and getattr(nlw_info, "description", None):
         detail_text += f"\n\n{nlw_info.source} Description: {nlw_info.description}"
-    if aredl_info and aredl_info.description:
+    if aredl_info and getattr(aredl_info, "description", None):
         detail_text += f"\n\nAREDL Description: {aredl_info.description}"
 
-    # featured fx -x try from aredl tags or leave empty
     if gdlevel is not None:
-        featured_level = gdlevel.epic + 1 if gdlevel.epic else 1 if gdlevel.feature_score else 0
+        epic = getattr(gdlevel, "epic", 0)
+        feature_score = getattr(gdlevel, "feature_score", 0)
+        featured_level = epic + 1 if epic else 1 if feature_score else 0
     else:
         rarity = getattr(gddl_meta, "Rarity", 0) if gddl_meta is not None else 0
         featured_level = rarity if isinstance(rarity, int) and 1 <= rarity <= 4 else 0
-    featured_fx = RES_DIR/f"diffIcon/featured_{featured_level}.png" if featured_level else Path()
+    featured_fx = RES_DIR / f"diffIcon/featured_{featured_level}.png" if featured_level else Path()
 
-    # thumbnail id - use level id
-    return await create_level_image(
+    return LevelRenderData(
         level_line=level_line,
         creator_line=creator_line,
         id_line=id_line,
@@ -893,13 +872,18 @@ async def create_image_from_gdlevel(level_id: int) -> Image.Image:
         featured_fx_path=featured_fx,
         line1=line1,
         line2=line2,
-        tier_value=tier_value or "",
+        tier_value=tier_value,
         tier_icon_path=tier_icon_path,
         skill_icons=skill_icons,
         detail_text=detail_text,
-        thumb_bytes=thumb_bytes,
+        thumb_bytes=data.thumb_bytes,
         derived_suffix=derived_suffix,
         derived_difficulty=derived_difficulty,
         tier_prefix=tier_prefix,
         title_text=title_text,
     )
+
+
+async def create_image_from_gdlevel(level_id: int) -> Image.Image:
+    fetched = await _fetch_all_data(level_id)
+    return create_level_image(_build_render_data(fetched))

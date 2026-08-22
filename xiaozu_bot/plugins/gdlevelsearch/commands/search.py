@@ -72,7 +72,7 @@ async def handle_gdsearch(
         await gdsearch.finish(f"没有找到名为 '{name}' 的demon关卡")
 
     if len(results) == 1:
-        await send_result(bot, event, results[0].id)
+        await send_result(bot, event, int(results[0].id))
         await gdsearch.finish()
 
     # 多结果缓存
@@ -127,5 +127,5 @@ async def handle_choice(bot: Bot, event: Event) -> None:
         timeout_tasks[user_id].cancel()
         del timeout_tasks[user_id]
 
-    await send_result(bot, event, result.id)
+    await send_result(bot, event, int(result.id))
     await gdsearchselect.finish()

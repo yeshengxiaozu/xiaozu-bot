@@ -6,9 +6,8 @@ from nonebot import on_command
 from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 
-from ..api.gdapi import GDAPIUnavailable
 from ..api.gddlapi import Gddl
-from ..services.search import getlevelinfo, send_result
+from ..services.search import getlevelinfo, send_result  # noqa: F401
 
 gdrandom = on_command("gd随机推关")
 
@@ -52,5 +51,5 @@ async def handle_gdrandom(bot: Bot, event: Event, arg: Message = CommandArg()) -
     if not result:
         await gdrandom.finish("没有找到符合条件的关卡，把条件放宽点试试")
 
-    await send_result(bot, event, result.ID)
+    await send_result(bot, event, int(result.ID))
     await gdrandom.finish()

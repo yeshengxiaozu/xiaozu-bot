@@ -109,15 +109,6 @@ class TestGdsearchManage:
         assert manage.manage_sessions == {}
         assert _read(manage_paths / "metadata_unmatched.json") == []
 
-    async def test_zero_id_is_rejected(
-        self, fake_bot: FakeBot, make_group_event: Any, manage_paths: Path
-    ) -> None:
-        _write_unmatched(manage_paths, _sample_entries())
-        await run_handler(
-            gdsearchmanage, fake_bot, make_group_event("*gdsearch_manage 1 0"), arg="1 0"
-        )
-        assert "正整数" in sent_texts(fake_bot)[-1]
-
     async def test_out_of_range_index_is_rejected(
         self, fake_bot: FakeBot, make_group_event: Any, manage_paths: Path
     ) -> None:

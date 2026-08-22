@@ -234,8 +234,11 @@ async def _qq_local_upload(
         for i, part in enumerate(prepare.parts)
     ]
     try:
+        # The adapter limits concurrent part uploads; gather all parts before
+        # finalizing the upload so the returned upload ID is usable.
         await asyncio.gather(*tasks)
     finally:
+        # Do not leave pending uploads running after one part fails.
         for task in tasks:
             if not task.done():
                 task.cancel()
@@ -296,6 +299,8 @@ def install_qq_rich_media_compat() -> None:
     if getattr(QQBot, "_xiaozu_rich_media_compat", False):
         return
 
+    # This module can be imported through several plugin paths, so make the
+    # monkey patch idempotent and install it only once per process.
     for name, function in (
         ("post_c2c_files", _qq_post_c2c_files),
         ("post_group_files", _qq_post_group_files),

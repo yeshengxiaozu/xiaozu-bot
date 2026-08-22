@@ -1,4 +1,4 @@
-"""?????????????gdsearch / gdrandom / dailydemon ????"""
+"""Shared search helpers for gdsearch, gdrandom, and dailydemon."""
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -19,9 +19,8 @@ from ..constants import SEARCH_MAX_WORKERS, SOURCE_LOOKUP_TIMEOUT
 from ..render.draw import create_image_from_gdlevel
 
 
-# fallback function since I should already get it using gdapi if this get called we f*cked up
 def get_creator(level_id: int) -> str | None:
-    """try to ge the creator name from a backup source"""
+    """Fetch a creator name from the history API as a last-resort fallback."""
     logger.warning("get_creator got called: " + str(level_id))
     try:
         data = http_request(
@@ -34,9 +33,8 @@ def get_creator(level_id: int) -> str | None:
         return None
 
 
-# nice little function that extract exactly what i need
 def get_difficulty(level_id: int) -> str | None:
-    """directly fetch level difficulty from gdapi"""
+    """Fetch the difficulty label directly from the official GD API."""
     logger.info("get_difficulty got called: " + str(level_id))
     try:
         data = get_level_by_id(level_id)
@@ -71,7 +69,7 @@ def _add_search_result(
     tier: str | None = None,
     difficulty: str | None = None,
 ):
-    """add results to the lists"""
+    """Merge one source result into the ID-keyed result set."""
     level_id = _coerce_level_id(level_id)
     if level_id is None:
         return
@@ -143,8 +141,8 @@ def search_by_name(name: str) -> list[SearchResult]:
 
     source_values = _lookup_sources(name)
 
-    # 1) GDDL exact match. Each source is best-effort: a transient failure in
-    # one provider must not hide matches available in the other providers.
+    # Each provider is best-effort: one transient failure must not hide
+    # matches returned by the other providers.
     gddl_candidates = source_values.get("gddl") or []
     for level in gddl_candidates:
         if not level:
@@ -167,9 +165,9 @@ def search_by_name(name: str) -> list[SearchResult]:
             logger.info(
                 f"Find a result in GDDL: tier {getattr(level, 'Rating', None) or 'Na'}"
             )
-    # 2) everything in AREDL is included in GDDL so nah
+    # AREDL entries are included in GDDL, so no separate lookup is needed.
 
-    # 3) NLW exact match
+    # NLW exact matches.
     nlw_candidates = source_values.get("nlw") or []
     for level in nlw_candidates:
         source_id = _coerce_level_id(getattr(level, "id", None))
@@ -184,7 +182,7 @@ def search_by_name(name: str) -> list[SearchResult]:
         )
         logger.info(f"Find a result in {level.source}: {level.tier or 'Unknown'} Tier")
 
-    # 4) Platdata exact match
+    # Platform chart exact matches.
     plat_info = source_values.get("plat")
     plat_id = _coerce_level_id(getattr(plat_info, "id", None)) if plat_info else None
     if plat_info and plat_id is not None:
@@ -201,7 +199,7 @@ def search_by_name(name: str) -> list[SearchResult]:
 
 
 def getlevelinfo(level_id: int) -> GDLevel | None:
-    """query gdapi"""
+    """Return the official GD level record for an ID."""
     gdlevel = get_level_by_id(level_id)
     if not gdlevel:
         return None
@@ -209,6 +207,7 @@ def getlevelinfo(level_id: int) -> GDLevel | None:
 
 
 async def send_result(bot: Bot, event: Event, level_id: int) -> None:
+    """Render a level and send its PNG through the adapter compatibility layer."""
     image = await create_image_from_gdlevel(level_id)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
@@ -216,6 +215,7 @@ async def send_result(bot: Bot, event: Event, level_id: int) -> None:
 
 
 def _clear_all_sessions(event: Event) -> None:
+    """Cancel every level-search session belonging to the current event."""
     from ..commands.fullsearch import _drop_fullsearch
     from ..commands.ratings import _drop_ratings
     from ..commands.search import search_cache, timeout_tasks

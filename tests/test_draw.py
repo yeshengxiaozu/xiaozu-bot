@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ from xiaozu_bot.plugins.gdlevelsearch.constants import (
     HTTP_SERVER_ERROR,
 )
 from xiaozu_bot.plugins.gdlevelsearch.render.draw import (
+    LevelRenderData,
     _fetch_thumbnail,
     _load_font,
     _none,
@@ -609,8 +611,8 @@ class TestCreateImageFromGdlevelRemoteFailures:
 
         rendered: dict[str, Any] = {}
 
-        async def _fake_create_level_image(**kwargs: Any) -> Image.Image:
-            rendered.update(kwargs)
+        def _fake_create_level_image(data: LevelRenderData) -> Image.Image:
+            rendered.update({item.name: getattr(data, item.name) for item in fields(data)})
             return Image.new("RGB", (1, 1))
 
         monkeypatch.setattr(draw, "create_level_image", _fake_create_level_image)
@@ -679,8 +681,8 @@ class TestCreateImageFromGdlevelRemoteFailures:
 
         rendered: dict[str, Any] = {}
 
-        async def _fake_create_level_image(**kwargs: Any) -> Image.Image:
-            rendered.update(kwargs)
+        def _fake_create_level_image(data: LevelRenderData) -> Image.Image:
+            rendered.update({item.name: getattr(data, item.name) for item in fields(data)})
             return Image.new("RGB", (1, 1))
 
         monkeypatch.setattr(draw, "create_level_image", _fake_create_level_image)
@@ -744,8 +746,8 @@ class TestCreateImageFromGdlevelRemoteFailures:
 
         rendered: dict[str, Any] = {}
 
-        async def _fake_create_level_image(**kwargs: Any) -> Image.Image:
-            rendered.update(kwargs)
+        def _fake_create_level_image(data: LevelRenderData) -> Image.Image:
+            rendered.update({item.name: getattr(data, item.name) for item in fields(data)})
             return Image.new("RGB", (1, 1))
 
         monkeypatch.setattr(draw, "create_level_image", _fake_create_level_image)

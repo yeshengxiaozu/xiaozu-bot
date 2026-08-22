@@ -5,19 +5,17 @@ from pathlib import Path
 
 from nonebot import logger
 
-# 当前 updater 文件所在目录
+# Directory containing the gdlevelsearch plugin.
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 
-# data 统一目录 —— bot 读的是这里，只放"已经完整可用"的数据
+# The bot reads only complete, published snapshots from this directory.
 DATA_DIR = PLUGIN_DIR / "data"
 
-# 本次抓取的中间产物先落在这里，全部跑完才搬进 DATA_DIR。
-# 这样中途挂了不会把线上数据冲掉 —— 以前 nlw/ids/lw/hds 是先写一份没有
-# metadata 的进 DATA_DIR，等最后 getmetadata 再回填，中间任何一步失败
-# （runner 默认 stop_on_error）都会让 bot 读到缺 metadata 的半成品。
+# Write the current run here first, then publish only complete files. This
+# prevents a failed metadata stage from replacing the live snapshot.
 STAGING_DIR = DATA_DIR / ".staging"
 
-# 这些是 bot 真正会读的文件，只有它们需要"做完才发布"
+# Files consumed by the bot and therefore eligible for publication.
 PUBLISHED_FILES = (
     "gddl_levels.json",
     "nlw_levels.json",
@@ -32,7 +30,7 @@ PUBLISHED_FILES = (
     "nong_index.json",
 )
 
-# 这些只是中间数据（platbatch 的输入），bot 不读，留在 staging 就行
+# Intermediate inputs for platbatch; they are intentionally not published.
 INTERMEDIATE_FILES = (
     "tpl.json",
     "pemonlist.json",
@@ -46,28 +44,28 @@ def ensure_dirs() -> None:
 
 
 def staged(name: str) -> Path:
-    """本次运行要写到哪"""
+    """Return the staging path for a job output."""
     STAGING_DIR.mkdir(parents=True, exist_ok=True)
     return STAGING_DIR / name
 
 
 def staged_or_published(name: str) -> Path:
-    """读的时候：本次已经抓到新的就用新的，否则退回上一次发布的。
+    """Prefer this run's output and fall back to the last published snapshot.
 
-    这样单独重跑某一个 job 时，下游还能读到上一轮的数据。
+    The fallback lets an isolated job rerun while downstream jobs still see
+    the previous snapshot for every source that was not refreshed.
     """
     candidate = STAGING_DIR / name
     return candidate if candidate.exists() else DATA_DIR / name
 
 
-#: 新文件的条目数至少要有旧文件的这个比例，否则拒绝发布。
-#: 榜单每天的正常变动是个位数百分比（实测一次真实更新：hds -3.9%、ids +1.7%、
-#: nlw +1.7%、plat +3.4%），留到 50% 已经非常宽松，只拦「基本被清空」这种。
+#: Reject a replacement when its record count falls below this ratio.
+#: The threshold is intentionally loose and catches only near-empty snapshots.
 MIN_KEEP_RATIO = 0.5
 
 
 def _entry_count(path: Path) -> "int | None":
-    """数一个数据文件里有多少条记录，读不了就返回 None（None = 不做判断）。"""
+    """Count records in a snapshot, returning ``None`` when it is unreadable."""
     import json
 
     try:
@@ -82,20 +80,18 @@ def _entry_count(path: Path) -> "int | None":
 
 
 def publish() -> list[str]:
-    """把 staging 里的成品原子地搬进 DATA_DIR。
+    """Atomically move valid staged outputs into the live data directory.
 
-    用 os.replace，同一个文件系统上是原子的，不会出现读到写一半的文件。
-    返回实际发布了哪些文件。
+    Each file is replaced atomically and the returned list contains the files
+    that were actually published.
 
-    **注意原子性的边界**：每个文件各自是原子的，但这里是 7 次独立的 replace。
-    中途被 kill / 磁盘满，DATA_DIR 里会留下「一部分是新的、一部分是上一轮的」
-    的混合状态。重跑一次就能收敛，但别把它当成一次全有或全无的事务。
+    Atomicity applies per file, not to the whole set. A process exit between
+    replacements can leave a mixed snapshot; rerunning the updater converges
+    it to a consistent state.
 
-    发布前会做一道**下限检查**：新文件的条目数不到旧文件的 MIN_KEEP_RATIO，
-    就拒绝发布这一个文件（其余照常）。理由是上游是社区维护的在线表格，
-    改个格式、插一行空行就可能让解析结果变成空列表或被截断，而那种情况
-    **不会抛异常** —— job 报成功，然后一份 30 字节的空文件就把几百 KB 的
-    线上数据盖掉了，而 data/ 不在 git 里，盖掉就没了。
+    Before replacing an existing file, compare record counts and reject a
+    near-empty result. Upstream format changes can otherwise produce a
+    successful job with a truncated file and destroy the only live snapshot.
     """
     moved: list[str] = []
     for name in PUBLISHED_FILES:
@@ -125,7 +121,7 @@ def publish() -> list[str]:
 
 
 def clear_staging() -> None:
-    """清掉 staging，跑之前调一次，免得混进上次失败留下的残渣"""
+    """Remove staged files before a new update run."""
     if not STAGING_DIR.exists():
         return
     for path in STAGING_DIR.iterdir():

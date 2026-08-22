@@ -18,9 +18,8 @@ from nonebot.internal.adapter import Bot, Event
 
 from xiaozu_bot.utils.json_storage import JsonRedis
 
-from ..api.gdapi import GDAPIUnavailable
-from ..api.gddlapi import Gddl, GDDLSearchEntry
-from ..services.search import getlevelinfo, send_result
+from ..api.gddlapi import Gddl
+from ..services.search import send_result
 
 # 挑关卡的条件
 TIER_MIN = 1
@@ -163,8 +162,8 @@ dailydemon = on_command("dailydemon")
 
 @dailydemon.handle()
 async def handle_dailydemon(bot: Bot, event: Event) -> None:
-    level_id, total, err = await asyncio.to_thread(get_daily_demon)
+    level_id, _total, err = await asyncio.to_thread(get_daily_demon)
     if level_id is None:
         await dailydemon.finish(err)
-    await send_result(bot, event, level_id)
+    await send_result(bot, event, int(level_id))
     await dailydemon.finish()

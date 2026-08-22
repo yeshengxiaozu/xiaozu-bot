@@ -23,7 +23,7 @@ from .paths import clear_staging, ensure_dirs, publish
 
 _lock = asyncio.Lock()
 
-# 每个任务： 任务名 -> 执行函数
+# Map each job name to its synchronous worker function.
 JOBS: dict[str, Callable[[], None]] = {
     "nlw": nlw.fetch,
     "ids": ids.fetch,
@@ -39,22 +39,22 @@ JOBS: dict[str, Callable[[], None]] = {
     "getmetadata": getmetadata.main,
 }
 
-# 按依赖分层，同一层之间没有先后关系，可以一起跑。
-#   第 1 层：纯抓取，各写各的
-#   第 2 层：platbatch 要 tpl/pemonlist/platdiff，
-#            getmetadata 要 nlw/ids/lw/hds
+# Jobs are grouped by dependency. Jobs in one stage can run concurrently.
+# Stage 1 fetches independent sources; stage 2 consumes stage 1 outputs.
 STAGES: tuple[tuple[str, ...], ...] = (
-    ("nlw", "ids", "lw", "hds",
-     "idl","lists","tpl","pemonlist",
-     "platdiff", "sfh"),
+    (
+        "nlw", "ids", "lw", "hds", "idl", "lists", "tpl", "pemonlist",
+        "platdiff", "sfh",
+    ),
     ("platbatch", "getmetadata"),
 )
 
-async def _run_job(name: str) -> tuple[str, Exception | None]:
-    """把同步的抓取函数丢到线程里跑。
 
-    这些 job 用的是 requests，是同步阻塞的，直接 await 会把事件循环卡死。
-    它们全是网络 IO，丢线程池里并发就够了，没必要为此重写成 httpx。
+async def _run_job(name: str) -> tuple[str, Exception | None]:
+    """Run one blocking fetcher in a worker thread.
+
+    The jobs use synchronous requests. Moving them off the event loop keeps
+    NoneBot responsive while allowing the stage to run concurrently.
     """
     logger.info(f"[RUNNER] ▶ start job: {name}")
     try:
@@ -67,18 +67,17 @@ async def _run_job(name: str) -> tuple[str, Exception | None]:
 
 
 async def run_all_async(stop_on_error: bool = True) -> dict:
-    """跑完整条流水线。
+    """Run the staged update pipeline and publish successful output files.
 
-    同一层的任务并发跑，层与层之间等前一层全部结束。
-    必需任务全部成功才会把 staging 里的东西发布到 data/；可降级任务失败时，
-    只发布其他已经成功的源。
+    Every stage waits for all jobs in the previous stage. A failure leaves
+    staging intact for diagnosis and prevents partial publication.
     """
     if _lock.locked():
         raise RuntimeError("已经有一个更新任务在跑了，等它跑完再来")
 
     async with _lock:
         ensure_dirs()
-        clear_staging()  # 清掉上次失败留下的残渣
+        clear_staging()  # Remove files left by a previous failed run.
 
         results: dict = {"success": [], "failed": [], "published": []}
         logger.info(f"[RUNNER] 开始，共 {len(STAGES)} 层")
@@ -105,7 +104,7 @@ async def run_all_async(stop_on_error: bool = True) -> dict:
 
         fatal_failures = list(results["failed"])
         if fatal_failures:
-            # 不发布，staging 留着方便查问题
+            # Keep staging intact so operators can inspect the failed output.
             raise RuntimeError(f"Updater failed: {fatal_failures}")
 
         results["published"] = publish()
@@ -114,5 +113,5 @@ async def run_all_async(stop_on_error: bool = True) -> dict:
 
 
 def run_all(stop_on_error: bool = True) -> dict:
-    """同步版，给脚本用。bot 里请用 run_all_async。"""
+    """Run the asynchronous pipeline from a synchronous script."""
     return asyncio.run(run_all_async(stop_on_error))

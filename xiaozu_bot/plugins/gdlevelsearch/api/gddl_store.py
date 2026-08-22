@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from nonebot import logger
+
 from ..paths import DATA_DIR
 
 DATA_FILE = DATA_DIR / "gddl_levels.json"
@@ -145,6 +146,7 @@ def pick_random(
 
 
 def _rebuild_indexes(new_levels: list[dict[str, Any]], stamp: str | None) -> None:
+    """Replace all lookup indexes from one validated snapshot."""
     global fetched_at
     levels.clear()
     by_id.clear()
@@ -164,6 +166,7 @@ def _rebuild_indexes(new_levels: list[dict[str, Any]], stamp: str | None) -> Non
 
 
 def reload(path: Path | None = None) -> None:
+    """Load a usable local snapshot and rebuild its in-memory indexes."""
     if path is None:
         path = DATA_FILE
     try:
@@ -223,6 +226,7 @@ def fetch_all_levels() -> list[dict[str, Any]] | None:
         return payload
 
     with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as executor:
+        # Fetch page zero first because it provides the total page count.
         first = executor.submit(page, 0).result()
         if not first or not first.get("data"):
             logger.warning("[gddl_store] first page was empty; abandoning scan")
@@ -235,6 +239,7 @@ def fetch_all_levels() -> list[dict[str, Any]] | None:
                 seen[int(level["id"])] = level
 
         for batch_start in range(1, pages, FETCH_WORKERS):
+            # Keep a short pause between batches to avoid overwhelming the API.
             time.sleep(FETCH_INTERVAL)
             batch = range(batch_start, min(batch_start + FETCH_WORKERS, pages))
             futures = {

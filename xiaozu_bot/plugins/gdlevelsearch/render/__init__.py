@@ -1,4 +1,4 @@
-"""gdlevelsearch ???????????"""
+"""Image rendering modules for gdlevelsearch."""
 
 from . import draw, iconrender, icons
 

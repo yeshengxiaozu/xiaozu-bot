@@ -324,7 +324,7 @@ class Gddl:
 
     @staticmethod
     def getleveltags(level_id: str | int) -> list[dict[str, Any]]:
-        """??????gddl api?????????????????????tag"""
+        """Fetch the tags associated with a level from the GDDL API."""
         url = f"https://gdladder.com/api/levels/{level_id}/tags"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
@@ -382,7 +382,7 @@ class Gddl:
         level_id: str | int,
         with_tags: bool = True,
     ) -> GDDLLevel | None:
-        """??????gddl api????????????id????????????????????????"""
+        """Fetch a GDDL level by ID, optionally including a second tag request."""
         url = f"https://gdladder.com/api/levels/{level_id}"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
