@@ -3,6 +3,7 @@ import time
 from collections.abc import Callable
 from functools import wraps
 from threading import Semaphore
+from time import monotonic
 from typing import Any
 
 from googleapiclient.discovery import build
@@ -17,32 +18,49 @@ def _status_code(error: HttpError) -> int | None:
     return getattr(getattr(error, "resp", None), "status", None)
 
 
-def _execute(request: Callable[[], Any]) -> Any:
+def _execute(request: Callable[[], Any], *, label: str = "Sheets request") -> Any:
     """Execute one Sheets request with global serialization and bounded retry."""
     max_tries = 5
     for attempt in range(1, max_tries + 1):
+        request_started = monotonic()
+        logger.debug(f"[Sheets] start: {label} (attempt {attempt}/{max_tries})")
+        logger.debug(f"[Sheets] waiting for concurrency slot: {label}")
+        slot_started = monotonic()
         try:
             with _SHEETS_EXECUTE_SEMAPHORE:
-                return request()
+                waited = monotonic() - slot_started
+                if waited >= 0.01:
+                    logger.debug(
+                        f"[Sheets] slot acquired after {waited:.3f}s: {label}"
+                    )
+                result = request()
+            elapsed = monotonic() - request_started
+            logger.debug(f"[Sheets] success in {elapsed:.3f}s: {label}")
+            return result
         except HttpError as error:
             status = _status_code(error)
             if status not in _RETRYABLE_STATUS_CODES:
+                logger.error(f"[Sheets] failed HTTP {status}: {label}")
                 raise
             wait = 60 if status == 429 else 2**attempt
             logger.warning(
-                f"API error {status}, retrying in {wait}s "
-                f"({attempt}/{max_tries})..."
+                f"[Sheets] retryable HTTP {status}; retry {attempt + 1}/"
+                f"{max_tries} after {wait}s: {label}"
             )
             if attempt == max_tries:
+                logger.error(f"[Sheets] exhausted retries: {label}")
                 raise
+            logger.info(f"[Sheets] waiting {wait}s before retry: {label}")
             time.sleep(wait)
         except (TimeoutError, ConnectionError) as error:
             logger.warning(
-                f"Transient Sheets error: {error}, "
-                f"retrying ({attempt}/{max_tries})..."
+                f"[Sheets] transient error {type(error).__name__}; retry "
+                f"{attempt + 1}/{max_tries}: {label}"
             )
             if attempt == max_tries:
+                logger.error(f"[Sheets] exhausted retries: {label}")
                 raise
+            logger.info(f"[Sheets] waiting 2s before retry: {label}")
             time.sleep(2)
     raise AssertionError("unreachable")
 
@@ -72,7 +90,10 @@ class SheetAPI:
             spreadsheetId=sheet_ID,
             range=range_name,
         )
-        result = _execute(request.execute)
+        result = _execute(
+            request.execute,
+            label=f"values.get sheet={sheet_ID!r} range={range_name!r}",
+        )
         values = result.get("values", [])
         return [row[0] if row else "" for row in values]
 
@@ -85,13 +106,15 @@ class SheetAPI:
             service.spreadsheets().values().get(
                 spreadsheetId=sheet_ID,
                 range=range_name,
-            ).execute
+            ).execute,
+            label=f"values.get sheet={sheet_ID!r} range={range_name!r}",
         )
         values = result.get("values", [])
         plain_values = [row[0] if row else "" for row in values]
 
         sheet_metadata = _execute(
-            service.spreadsheets().get(spreadsheetId=sheet_ID).execute
+            service.spreadsheets().get(spreadsheetId=sheet_ID).execute,
+            label=f"spreadsheets.get metadata sheet={sheet_ID!r}",
         )
         sheet_id = next(
             (
@@ -111,7 +134,11 @@ class SheetAPI:
                 ranges=[range_name],
                 includeGridData=True,
             )
-            .execute
+            .execute,
+            label=(
+                f"spreadsheets.get grid data sheet={sheet_ID!r} "
+                f"range={range_name!r}"
+            ),
         )
         notes: dict[int, str] = {}
         sheets = get_result.get("sheets", [])
@@ -140,7 +167,11 @@ class SheetAPI:
                 ranges=[range_name],
                 fields="sheets/data/rowData/values/hyperlink",
             )
-            .execute
+            .execute,
+            label=(
+                f"spreadsheets.get hyperlinks sheet={sheet_ID!r} "
+                f"range={range_name!r}"
+            ),
         )
         rows = sheet_meta["sheets"][0]["data"][0].get("rowData", [])
         links: list[str | None] = []

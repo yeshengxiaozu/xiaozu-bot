@@ -5,7 +5,7 @@ from typing import Any
 from xiaozu_bot.utils.json_storage import write_json_atomic
 
 from .constants import PLAT_DIFF_ID, PLAT_DIFF_NAME
-from .googlesheetapi import SheetAPI, persistently
+from .googlesheetapi import SheetAPI
 
 try:
     from ..paths import staged, staged_or_published
@@ -71,7 +71,6 @@ class PlatDiff:
             return None
 
 
-@persistently
 def fetch_plat_diff_cells(service, sheet_id: str, sheet_name: str) -> dict[str, list[str]]:
     names = SheetAPI.get_column_values(service, sheet_id, sheet_name, 'A')
     ids = SheetAPI.get_column_values(service, sheet_id, sheet_name, 'C')
@@ -137,7 +136,6 @@ def build_plat_diff_list(columns: dict[str, list[str]]) -> list[PlatDiff]:
     return entries
 
 
-@persistently
 def fetch_plat_diff_levels(service, sheet_id: str, sheet_name: str) -> list[PlatDiff]:
     columns = fetch_plat_diff_cells(service, sheet_id, sheet_name)
     return build_plat_diff_list(columns)

@@ -6,7 +6,7 @@ from nonebot import logger
 
 from xiaozu_bot.utils.json_storage import write_json_atomic
 
-from .googlesheetapi import SheetAPI, persistently
+from .googlesheetapi import SheetAPI
 
 try:
     from ..paths import staged
@@ -29,7 +29,6 @@ from .constants import (
 # ------------------------------
 # 数据抓取函数（现在接收 sheet_name 而非 sheet_id）
 # ------------------------------
-@persistently
 def fetch_regular_cells(service, sheet_name: str) -> dict[str, list]:
     levels = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'B')
     videos = SheetAPI.get_hyperlink_column(service, HDS_ID, sheet_name, 'C')
@@ -48,7 +47,6 @@ def fetch_regular_cells(service, sheet_name: str) -> dict[str, list]:
         'videos': videos,
     }
 
-@persistently
 def fetch_platformer_cells(service, sheet_name: str) -> dict[str, list]:
     levels = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'A')
     videos = SheetAPI.get_hyperlink_column(service, HDS_ID, sheet_name, 'B')
@@ -126,7 +124,6 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
 
     return level_objs
 
-@persistently
 def fetch_levels(service, sheet_name: str, platformer: bool, pending: bool) -> list[dict[str, Any]]:
     if platformer:
         cols = fetch_platformer_cells(service, sheet_name)
@@ -148,7 +145,6 @@ def fetch_all_levels() -> dict[str, list[dict[str, Any]]]:
       }
     """
     service = SheetAPI.get_service()
-    logger.info('[HDS] Loading spreadsheet info...')
 
     # 获取各工作表名称
     reg_name = HDS_LEVELS_NAME
