@@ -46,6 +46,9 @@ from xiaozu_bot.plugins.gdlevelsearch.commands import (
     gduser as cmd_gduser,
 )
 from xiaozu_bot.plugins.gdlevelsearch.commands import (
+    plat_random as cmd_plat_random,
+)
+from xiaozu_bot.plugins.gdlevelsearch.commands import (
     random as cmd_random,
 )
 from xiaozu_bot.plugins.gdlevelsearch.commands import (
@@ -1181,6 +1184,24 @@ class TestHandleGduser:
         )
         assert "7" in sent_texts(fake_bot)[0]
 
+    async def test_truncated_breakdowns_are_ignored(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """截断的统计列表不能让命令因下标越界而失败。"""
+        user = make_gduser(
+            classic_levels=[1],
+            platformer_levels=[2],
+            demons_breakdown=[3],
+        )
+        monkeypatch.setattr(cmd_gduser, "get_user_by_name", lambda _n: user)
+
+        await run_handler(
+            gdlevelsearch.gduser, fake_bot, make_group_event("*gduser"), arg="Player"
+        )
+
+        assert len(sent_texts(fake_bot)) == 1
+        assert "Player" in sent_texts(fake_bot)[0]
+
     async def test_full_breakdown_keeps_every_number(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1296,6 +1317,113 @@ class TestHandleGdrandom:
 
 
 # ==========================================================================
+# *plat随机推关 的参数校验与渲染
+# ===========================================================================
+class TestHandlePlatRandom:
+    @pytest.mark.parametrize("arg", ["0", "14", "abc", "1 2"])
+    async def test_bad_arguments_are_rejected(
+        self,
+        arg: str,
+        fake_bot: FakeBot,
+        make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls: list[Any] = []
+        monkeypatch.setattr(
+            cmd_plat_random.Platapi,
+            "getrandomlevelbytier",
+            lambda tier=None: calls.append(tier),
+        )
+
+        await run_handler(
+            gdlevelsearch.platrandom,
+            fake_bot,
+            make_group_event("*plat随机推关"),
+            arg=arg,
+        )
+
+        assert len(sent_texts(fake_bot)) == 1
+        assert calls == []
+        assert image_segments(fake_bot) == []
+
+    async def test_no_argument_uses_all_tiers(
+        self,
+        fake_bot: FakeBot,
+        make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_image: list[int],
+    ) -> None:
+        calls: list[Any] = []
+        level = plat_info("9876", "Random Plat")
+
+        def pick(tier: int | None = None) -> PlatInfo:
+            calls.append(tier)
+            return level
+
+        monkeypatch.setattr(cmd_plat_random.Platapi, "getrandomlevelbytier", pick)
+
+        await run_handler(
+            gdlevelsearch.platrandom,
+            fake_bot,
+            make_group_event("*plat随机推关"),
+            arg="",
+        )
+
+        assert calls == [None]
+        assert stub_image == [9876]
+        assert len(image_segments(fake_bot)) == 1
+
+    async def test_tier_argument_is_forwarded_and_rendered(
+        self,
+        fake_bot: FakeBot,
+        make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_image: list[int],
+    ) -> None:
+        calls: list[Any] = []
+        level = plat_info("8765", "Tier Nine", tier="9 - CRUEL")
+
+        def pick(tier: int | None = None) -> PlatInfo:
+            calls.append(tier)
+            return level
+
+        monkeypatch.setattr(cmd_plat_random.Platapi, "getrandomlevelbytier", pick)
+
+        await run_handler(
+            gdlevelsearch.platrandom,
+            fake_bot,
+            make_group_event("*plat随机推关"),
+            arg="9",
+        )
+
+        assert calls == [9]
+        assert stub_image == [8765]
+        assert len(image_segments(fake_bot)) == 1
+
+    async def test_no_matching_tier_sends_text_only(
+        self,
+        fake_bot: FakeBot,
+        make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            cmd_plat_random.Platapi,
+            "getrandomlevelbytier",
+            lambda _tier=None: None,
+        )
+
+        await run_handler(
+            gdlevelsearch.platrandom,
+            fake_bot,
+            make_group_event("*plat随机推关"),
+            arg="13",
+        )
+
+        assert len(sent_texts(fake_bot)) == 1
+        assert "tier 13" in sent_texts(fake_bot)[0]
+        assert image_segments(fake_bot) == []
+
+
 # *gdicon 的参数解析
 # ==========================================================================
 class TestHandleGdiconArgs:

@@ -520,6 +520,40 @@ def parse_song_object(song_str: str) -> dict[str, Any] | None:
     return song_data if "id" in song_data else None
 
 
+def _parse_user_response(
+    response: str,
+    *,
+    endpoint: str,
+    require_account_id: bool = False,
+) -> GDUser | None:
+    """Parse a user response and reject incomplete or malformed payloads."""
+    if not isinstance(response, str):
+        logger.error("[gdapi] %s 返回了非文本响应", endpoint)
+        return None
+
+    payload = response.split("#", 1)[0].strip()
+    if not payload or payload == "-1":
+        return None
+
+    try:
+        user = GDUser.from_server_response(payload)
+    except (TypeError, ValueError, IndexError) as e:
+        logger.error("[gdapi] %s 响应解析失败: %s", endpoint, e)
+        return None
+
+    # A response without these fields is usually an HTML/error body or a
+    # truncated GD response, not a usable user record.
+    if (
+        not isinstance(user.user_name, str)
+        or not user.user_name
+        or not isinstance(user.user_id, int)
+        or (require_account_id and not isinstance(user.account_id, int))
+    ):
+        logger.error("[gdapi] %s 返回了不完整的用户信息", endpoint)
+        return None
+    return user
+
+
 @dataclass
 class SearchPage:
     """一次 getGJLevels21 请求的结果，带上响应里的分页信息。
@@ -783,11 +817,13 @@ def get_user_info(
     except ServiceUnavailable as e:
         logger.error(f"[gdapi] get_user_info({user_id}) 请求失败: {e}")
         return None
-    text = resp.text.strip()
-    logger.info(f"get_user_info({user_id}): {text}")
-    if text == "-1":
+    raw_text = resp.text
+    if not isinstance(raw_text, str):
+        logger.error("[gdapi] get_user_info(%s) 返回了非文本响应", user_id)
         return None
-    return GDUser.from_server_response(text.split("#")[0])
+    text = raw_text.strip()
+    logger.info(f"get_user_info({user_id}): {text}")
+    return _parse_user_response(text, endpoint=f"get_user_info({user_id})")
 
 def search_user(
     name: str
@@ -811,11 +847,17 @@ def search_user(
     except ServiceUnavailable as e:
         logger.error(f"[gdapi] search_user({name}) 请求失败: {e}")
         return None
-    text = resp.text.strip()
-    logger.info(f"search_user({name}): {text}")
-    if text == "-1":
+    raw_text = resp.text
+    if not isinstance(raw_text, str):
+        logger.error("[gdapi] search_user(%s) 返回了非文本响应", name)
         return None
-    return GDUser.from_server_response(text.split("#")[0])
+    text = raw_text.strip()
+    logger.info(f"search_user({name}): {text}")
+    return _parse_user_response(
+        text,
+        endpoint=f"search_user({name})",
+        require_account_id=True,
+    )
 
 
 
@@ -891,6 +933,6 @@ def get_level_by_id(level_id: int) -> GDLevel | None:
 def get_user_by_name(user_name: str) -> GDUser | None:
     """通过用户名获取单个用户对象。"""
     search_result = search_user(user_name)
-    if search_result:
+    if search_result is not None and search_result.account_id is not None:
         return get_user_info(search_result.account_id)
     return None

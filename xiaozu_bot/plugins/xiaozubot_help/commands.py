@@ -127,6 +127,16 @@ COMMANDS: dict[str, Cmd] = {
             "*gd随机推关 0 15 0 6",
         ),
     ),
+    "plat随机推关": Cmd(
+        usage="*plat随机推关 [tier]",
+        summary="按 Plat tier 随机推一关",
+        category="gd",
+        detail=(
+            "从 Plat difficulty chart 中随机挑一关并渲染。"
+            "不写 tier 时从所有可用关卡中随机；tier 可写 1-13。"
+        ),
+        examples=("*plat随机推关", "*plat随机推关 9"),
+    ),
     "dailydemon": Cmd(
         usage="*dailydemon",
         summary="今日关卡，每天换一关",

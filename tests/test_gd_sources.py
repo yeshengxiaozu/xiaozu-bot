@@ -1620,6 +1620,46 @@ class TestPlatInfoFromDict:
 
 
 class TestPlatData:
+    def test_random_by_tier_uses_numeric_prefix_and_main_entries(
+        self,
+        plat_globals: None,
+        write_plat: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        path = write_plat(
+            [
+                make_plat_row("1", "Tier One", tier="1 - EASY"),
+                make_plat_row("2", "Tier Ten", tier="10 - INSANE"),
+                make_plat_row(
+                    "3", "Derived", tier="1 - EASY", derived_from="Tier One"
+                ),
+                make_plat_row("---", "Placeholder", tier="1 - EASY"),
+            ]
+        )
+        platapi.fetch(cache_file=str(path))
+        seen: list[list[str]] = []
+
+        def pick(candidates: list[PlatInfo]) -> PlatInfo:
+            seen.append([entry.id for entry in candidates])
+            return candidates[0]
+
+        monkeypatch.setattr(platapi.random, "choice", pick)
+
+        result = Platapi.getrandomlevelbytier(1)
+
+        assert result.id == "1"
+        assert seen == [["1"]]
+
+    def test_random_by_tier_returns_none_without_matching_entries(
+        self,
+        plat_globals: None,
+        write_plat: Any,
+    ) -> None:
+        path = write_plat([make_plat_row("1", "Tier One", tier="1 - EASY")])
+        platapi.fetch(cache_file=str(path))
+
+        assert Platapi.getrandomlevelbytier(13) is None
+
     def test_derived_entries_go_into_by_name_but_not_by_id(
         self, write_plat: Any
     ) -> None:
