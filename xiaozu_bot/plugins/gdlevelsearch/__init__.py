@@ -95,6 +95,7 @@ from .commands.manage import (  # noqa: F401
     gdsearchmanage_select,
     gdsearchstatus,
 )
+from .commands.plat_random import platrandom  # noqa: F401
 from .commands.random import gdrandom  # noqa: F401
 from .commands.ratings import (  # noqa: F401
     _drop_ratings,

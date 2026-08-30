@@ -1366,8 +1366,23 @@ class TestGetUserInfo:
         stub_requests.post(GD_USERINFO_URL, text="-1")
         assert gdapi.get_user_info(1) is None
 
+    @pytest.mark.parametrize(
+        "text",
+        ["", "garbage", "1:Riot:2:not-a-number", "1:Riot:2:1:55:1,oops"],
+    )
+    def test_invalid_response_returns_none(
+        self, stub_requests: Any, text: str
+    ) -> None:
+        """空响应和无法解析的响应不能变成一个空的 GDUser。"""
+        stub_requests.post(GD_USERINFO_URL, text=text)
+        assert gdapi.get_user_info(1) is None
+
     def test_request_exception_returns_none(self, stub_requests: Any) -> None:
         stub_requests.post(GD_USERINFO_URL, requests.Timeout("timeout"))
+        assert gdapi.get_user_info(1) is None
+
+    def test_non_text_response_returns_none(self, stub_requests: Any) -> None:
+        stub_requests.post(GD_USERINFO_URL, text=None)
         assert gdapi.get_user_info(1) is None
 
 
@@ -1384,6 +1399,13 @@ class TestSearchUser:
     def test_minus_one_returns_none(self, stub_requests: Any) -> None:
         stub_requests.post(GD_USERS_URL, text="-1")
         assert gdapi.search_user("nobody") is None
+
+    @pytest.mark.parametrize("text", ["", "garbage", "1:Riot:2:503085"])
+    def test_invalid_response_returns_none(
+        self, stub_requests: Any, text: str
+    ) -> None:
+        stub_requests.post(GD_USERS_URL, text=text)
+        assert gdapi.search_user("Riot") is None
 
     def test_request_exception_returns_none(self, stub_requests: Any) -> None:
         stub_requests.post(GD_USERS_URL, requests.ConnectionError("down"))

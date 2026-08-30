@@ -764,18 +764,25 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
     # icons (face/fire, gddl tier/skillset, plat)
     diff_icon_path = RES_DIR / "diffIcon/diffIcon_0.png"
     try:
-        if gdlevel is None and gddl_meta is not None:
+        if gdlevel is not None:
+            if getattr(gdlevel, "is_demon", False):
+                demon_difficulty = "3001245"[getattr(gdlevel, "demon_difficulty", 0)]
+                diff_icon_path = RES_DIR / f"diffIcon/diffIcon_1{demon_difficulty}.png"
+            else:
+                stars = max(0, min(9, int(getattr(gdlevel, "stars", 0) or 0)))
+                diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{stars}.png"
+        elif gddl_meta is not None:
             demon_difficulty = {
                 "Official": 0, "Easy": 1, "Medium": 2,
                 "Hard": 3, "Insane": 4, "Extreme": 5,
             }.get(getattr(gddl_meta, "Difficulty", ""),0)
             diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{f'1{demon_difficulty}'}.png"
-        elif getattr(gdlevel, "is_demon", False):
-            demon_difficulty = "3001245"[getattr(gdlevel, "demon_difficulty", 0)]
-            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_1{demon_difficulty}.png"
-        else:
-            stars = max(0, min(9, int(getattr(gdlevel, "stars", 0) or 0)))
-            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{stars}.png"
+        elif isinstance(gddl_info, GDDLSearchEntry):
+            demon_difficulty = {
+                "Official": 0, "Easy": 1, "Medium": 2,
+                "Hard": 3, "Insane": 4, "Extreme": 5,
+            }.get(getattr(gddl_info, "Difficulty", ""),0)
+            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{f'1{demon_difficulty}'}.png"
     except (IndexError, TypeError, ValueError):
         pass
 

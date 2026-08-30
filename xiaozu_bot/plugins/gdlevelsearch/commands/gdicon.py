@@ -48,7 +48,7 @@ async def handle_gdicon(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
         await gdicon.finish("请给一个 GD 用户名")
 
     user = await asyncio.to_thread(get_user_by_name, name)
-    if not user:
+    if user is None:
         await gdicon.finish(f"没有找到用户「{name}」")
 
     if show_all:

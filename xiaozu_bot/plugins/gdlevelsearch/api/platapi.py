@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -242,6 +244,24 @@ class Platapi:
         if not name:
             return None
         return platdata.getlevelbyname(name)
+
+    @staticmethod
+    def getrandomlevelbytier(tier: int | str | None = None) -> PlatInfo | None:
+        """Return a random usable main entry, optionally filtered by tier."""
+        tier_text = None if tier is None else str(tier).strip()
+        if tier_text is not None and not tier_text.isdigit():
+            return None
+
+        candidates = []
+        for entry in platdata_main_entries:
+            if not entry.id.isdigit() or int(entry.id) <= 0:
+                continue
+            match = re.match(r"^\s*(\d+)", entry.tier or "")
+            if match is None:
+                continue
+            if tier_text is None or int(match.group(1)) == int(tier_text):
+                candidates.append(entry)
+        return random.choice(candidates) if candidates else None
 
     @staticmethod
     def getderivedlevels(level: PlatInfo) -> list[PlatInfo]:

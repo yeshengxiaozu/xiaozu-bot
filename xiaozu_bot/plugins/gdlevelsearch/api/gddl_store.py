@@ -236,8 +236,10 @@ def fetch_all_levels() -> list[dict[str, Any]] | None:
         seen: dict[int, dict[str, Any]] = {}
         for level in first.get("data") or []:
             if isinstance(level, dict) and "id" in level:
-                del level['isInPack']
-                del level['isComplete']
+                if "isInPack" in level:
+                    del level['isInPack']
+                if "isComplete" in level:
+                    del level['isComplete']
                 seen[int(level["id"])] = level
 
         for batch_start in range(1, pages, FETCH_WORKERS):
