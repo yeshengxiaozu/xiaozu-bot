@@ -2,8 +2,8 @@
 #
 # 单独拆一个文件而不是把版本写进 .github/workflows/ci.yml 的 run: 里，
 # 是为了让 dependabot 能看见它 —— dependabot 的 pip 生态只解析依赖清单文件，
-# 写在 run: 命令行里的 `pip install "ruff==0.16.0"` 它是解析不到的。
+# 写在 run: 命令行里的 `pip install "ruff==0.16.5"` 它是解析不到的。
 #
 # 升级 ruff 就改这一行，改完本地跑一遍 `ruff check --statistics .`
 # 看看新规则带来了多少条新违规，再决定要不要在 pyproject 里关掉几类。
-ruff==0.16.0
+ruff==0.16.5
