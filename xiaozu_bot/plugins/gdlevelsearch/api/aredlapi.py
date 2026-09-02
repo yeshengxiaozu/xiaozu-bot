@@ -5,11 +5,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
 from nonebot import logger
 
 from ..constants import HTTP_OK
 from ..paths import DATA_DIR as WORK_FOLDER
-from .http import ServiceUnavailable
 from .http import request as http_request
 
 # 外网请求超时。不设的话客户端会一直等，
@@ -80,7 +80,7 @@ def fetch_aredl_levels() -> list[AREDLLevel]:
     }
     try:
         response = http_request("GET", url, headers=headers, timeout=AREDL_TIMEOUT)
-    except ServiceUnavailable as e:
+    except httpx.HTTPError as e:
         logger.error(f"[aredlapi] 拉取失败 {url}: {e}")
         return []
     if response.status_code == HTTP_OK:
@@ -92,32 +92,37 @@ def fetch_aredl_levels() -> list[AREDLLevel]:
     return []
 
 
+def _load_cached_levels(path: Path) -> tuple[list[AREDLLevel], bool]:
+    """Load a cache and report whether its timestamp is still fresh."""
+    if not path.exists():
+        return [], False
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        levels = [AREDLLevel(level_data) for level_data in data.get("levels", [])]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        logger.exception(f"[aredlapi] 缓存读不了，当过期处理: {path}")
+        return [], False
+    timestamp = data.get("timestamp")
+    fresh = bool(timestamp and time.time() - timestamp < 24 * 3600)
+    return levels, fresh
+
+
 def get_aredl_levels() -> list[AREDLLevel]:
-    aredlfilename = "aredl_levels.json"
-    aredlfilepath = WORK_FOLDER / aredlfilename
-    if Path.exists(aredlfilepath):
-        try:
-            with Path.open(aredlfilepath, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            logger.exception(f"[aredlapi] 缓存读不了，当过期处理: {aredlfilepath}")
-            data = {}
-        except : # noqa: E722
-            logger.exception(f"[aredlapi] 缓存读取时出现其他错误，当过期处理: {aredlfilepath}")
-            data = {}
-        if True:
-            timestamp = data.get("timestamp")
-            if timestamp and time.time() - timestamp < 24 * 3600:
-                levels_data = data.get("levels", [])
-                aredllevels = [AREDLLevel(level_data) for level_data in levels_data]
-                logger.info(
-                    f"successly load {levels_data.__len__()} levels from aredl_levels.json"
-                )
-                return aredllevels
+    aredlfilepath = WORK_FOLDER / "aredl_levels.json"
+    cached_levels, fresh = _load_cached_levels(aredlfilepath)
+    if fresh:
+        logger.info(
+            f"successly load {len(cached_levels)} levels from aredl_levels.json"
+        )
+        return cached_levels
     logger.info("cache expired, trying to re-fetch levels...")
-    aredllevels = fetch_aredl_levels()
+    fetched_levels = fetch_aredl_levels()
+    if not fetched_levels and cached_levels:
+        logger.warning("[aredlapi] 刷新失败，继续使用过期的 AREDL 缓存")
+        return cached_levels
     levels_data = []
-    for level in aredllevels:
+    for level in fetched_levels:
         level_data = {
             "id": level.id,
             "position": level.position,
@@ -139,8 +144,8 @@ def get_aredl_levels() -> list[AREDLLevel]:
         with Path.open(aredlfilepath, "w", encoding="utf-8") as f:
             json.dump({"timestamp": time.time(), "levels": levels_data}, f, indent=4)
     else:
-        logger.error(f"failed to save {aredllevels.__len__()} level datas")
-    return aredllevels
+        logger.error("failed to save 0 AREDL level datas")
+    return fetched_levels
 
 
 def fetch_arepl_levels() -> list[AREDLLevel]:
@@ -150,7 +155,7 @@ def fetch_arepl_levels() -> list[AREDLLevel]:
     }
     try:
         response = http_request("GET", url, headers=headers, timeout=AREDL_TIMEOUT)
-    except ServiceUnavailable as e:
+    except httpx.HTTPError as e:
         logger.error(f"[aredlapi] 拉取失败 {url}: {e}")
         return []
     if response.status_code == HTTP_OK:
@@ -163,33 +168,19 @@ def fetch_arepl_levels() -> list[AREDLLevel]:
 
 
 def get_arepl_levels() -> list[AREDLLevel]:
-    areplfilename = "arepl_levels.json"
-    areplfilepath = WORK_FOLDER / areplfilename
-    if Path.exists(areplfilepath):
-        try:
-            with Path.open(areplfilepath, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            logger.exception(f"[aredlapi] 缓存读不了，当过期处理: {areplfilepath}")
-            data = {}
-        except : # noqa: E722
-            logger.exception(f"[aredlapi] 缓存读取时出现其他错误，当过期处理: {areplfilepath}")
-            data = {}
-        if True:
-            timestamp = data.get("timestamp")
-            if timestamp and time.time() - timestamp < 24 * 3600:
-                arepllevels = []
-                levels_data = data.get("levels", [])
-                for level_data in levels_data:
-                    aredllevel_instance = AREDLLevel(level_data)
-                    arepllevels.append(aredllevel_instance)
-                logger.info(
-                    f"successly load {levels_data.__len__()} levels from arepl_levels.json"
-                )
-                return arepllevels
-    arepllevels = fetch_arepl_levels()
+    areplfilepath = WORK_FOLDER / "arepl_levels.json"
+    cached_levels, fresh = _load_cached_levels(areplfilepath)
+    if fresh:
+        logger.info(
+            f"successly load {len(cached_levels)} levels from arepl_levels.json"
+        )
+        return cached_levels
+    fetched_levels = fetch_arepl_levels()
+    if not fetched_levels and cached_levels:
+        logger.warning("[aredlapi] 刷新失败，继续使用过期的 AREPL 缓存")
+        return cached_levels
     levels_data = []
-    for level in arepllevels:
+    for level in fetched_levels:
         level_data = {
             "id": level.id,
             "position": level.position,
@@ -211,8 +202,8 @@ def get_arepl_levels() -> list[AREDLLevel]:
         with Path.open(areplfilepath, "w", encoding="utf-8") as f:
             json.dump({"timestamp": time.time(), "levels": levels_data}, f, indent=4)
     else:
-        logger.error(f"failed to save {arepllevels.__len__()} level datas")
-    return arepllevels
+        logger.error("failed to save 0 AREPL level datas")
+    return fetched_levels
 
 
 aredllevels: list[AREDLLevel] = []

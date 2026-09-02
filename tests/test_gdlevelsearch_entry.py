@@ -379,7 +379,7 @@ def sources(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 class TestSearchByName:
     def test_nothing_anywhere_gives_an_empty_list(self, sources: Any) -> None:
-        sources()
+        sources(gddl=[])
         assert gdlevelsearch.search_by_name("Nope") == []
 
     def test_gddl_failure_does_not_hide_local_source_matches(
@@ -433,9 +433,9 @@ class TestSearchByName:
         ]
 
     def test_gddl_none_is_tolerated(self, sources: Any) -> None:
-        """`Gddl.getlevelsbyname(name) or []` —— 接口返回 None 不该炸"""
+        """A failed GDDL source is tolerated when no result is available."""
         sources(gddl=None)
-        assert gdlevelsearch.search_by_name("Nope") == []
+        assert gdlevelsearch.search_by_name("Nope") is None
 
     def test_gddl_exact_match_only(self, sources: Any) -> None:
         """GDDL 是模糊搜索，这里只留名字完全对得上的（去空格 + 忽略大小写）"""
@@ -501,6 +501,7 @@ class TestSearchByName:
     def test_nlw_missing_id_is_ignored(self, sources: Any) -> None:
         """`int(level.id or 0)` —— 没 id 的行全部落进 id=0，互相顶掉"""
         sources(
+            gddl=[],
             nlw=[
                 nlw_level(None, "A", creator="First"),
                 nlw_level(None, "B", creator="Second"),
@@ -953,6 +954,19 @@ class TestHandleGdsearch:
         )
         # 行为是「一个都没搜到就回一句话，不出图」
         assert len(sent_texts(fake_bot)) == 1
+        assert image_segments(fake_bot) == []
+
+    async def test_name_lookup_failure_says_service_is_unavailable(
+        self, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(cmd_search, "search_by_name", lambda _n: None)
+
+        await run_handler(
+            gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="Nope"
+        )
+
+        assert cmd_search.GDDL_UNAVAILABLE_MESSAGE in sent_texts(fake_bot)
         assert image_segments(fake_bot) == []
 
     async def test_single_match_is_sent_straight_away(

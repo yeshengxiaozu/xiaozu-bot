@@ -156,7 +156,7 @@ pytest 的 `tmp_path`，干净 checkout 上照样全绿。
 `gdlevelsearch` 的关卡数据来自 `xiaozu_bot/plugins/gdlevelsearch/data/*.json`，
 由 `updater/` 下的十二个抓取任务生成：
 
-- 每天凌晨 3 点自动跑一次（`updater/__init__.py` 里注册的定时任务）
+- 每天凌晨 3 点自动跑一次（在 NoneBot startup 阶段注册，沿用 APScheduler 配置的服务器时区）
 - 超级用户可以发 `*gdsearch_update` 手动触发
 - 超级用户可以发 `*gdsearch_store_update` 立即更新 GDDL 本地缓存
 - GDDL 快照写入 `data/gddl_levels.json`；它是 best-effort 任务，远端失败会保留旧快照，不阻塞其他数据源发布
@@ -184,7 +184,8 @@ GDDL 不在这个流水线里：它作为独立后台任务与主更新同时启
 不影响主流水线。
 
 `gddlapi.py` 查询时优先访问 GDDL 在线接口；在线请求失败后，按关卡 ID、名称或搜索条件回退到
-`data/gddl_levels.json` 快照，因此 GDDL 暂时不可用时已有数据仍可查询。
+`data/gddl_levels.json` 快照，因此 GDDL 暂时不可用时已有数据仍可查询；在线明确返回空列表
+和“远端不可用且本地没有结果”会分别处理。
 
 ## 关键配置与外部服务
 

@@ -1,19 +1,16 @@
 from typing import Any
 
+import httpx
 from nonebot import logger
 
 try:
     from ..constants import HTTP_OK, USER_AGENT
     from . import gddl_store
-    from .http import ServiceUnavailable
     from .http import request as http_request
 except ImportError:  # standalone updater script mode
     import gddl_store
     from constants import HTTP_OK, USER_AGENT
 
-    from xiaozu_bot.plugins.gdlevelsearch.api.http import (
-        ServiceUnavailable,
-    )
     from xiaozu_bot.plugins.gdlevelsearch.api.http import (
         request as http_request,
     )
@@ -299,7 +296,7 @@ class Gddl:
                 logger.warning(f"[gddl] 不认识的进度过滤 {progress_filter!r}，忽略")
         try:
             response = http_request("GET", url, headers=headers, params=params, timeout=15)
-        except ServiceUnavailable as e:
+        except httpx.HTTPError as e:
             logger.error(f"[gddl] 拉取提交评分失败 level={level_id}: {e}")
             return None
         if response.status_code != HTTP_OK:
@@ -320,7 +317,7 @@ class Gddl:
         }
         try:
             response = http_request("GET", url, headers=headers, timeout=15)
-        except ServiceUnavailable as e:
+        except httpx.HTTPError as e:
             logger.error(f"[gddl] 拉取分布失败 level={level_id}: {e}")
             return None
         if response.status_code != HTTP_OK:
@@ -338,7 +335,7 @@ class Gddl:
         }
         try:
             response = http_request("GET", url, headers=headers, timeout=GDDL_TIMEOUT)
-        except ServiceUnavailable as e:
+        except httpx.HTTPError as e:
             logger.error(f"[gddl] 拉 tags 失败 level={level_id}: {e}")
             return []
         if response.status_code == HTTP_OK:
@@ -350,7 +347,8 @@ class Gddl:
         return []
 
     @staticmethod
-    def getlevelsbyname(name: str) -> list[GDDLSearchEntry]:
+    def getlevelsbyname(name: str) -> list[GDDLSearchEntry] | None:
+        """Search by name; return None when both remote and local lookup fail."""
         url = "https://gdladder.com/api/levels"
         headers = {
             "User-Agent": USER_AGENT,
@@ -358,29 +356,25 @@ class Gddl:
             "Authorization": f"Bearer {apikey}",
         }
         data = {"name": name}
-        remote_failed = True
         try:
             response = http_request("GET", url, headers=headers, params=data, timeout=GDDL_TIMEOUT)
             if response.status_code == HTTP_OK:
                 data = response.json()
-                result = [GDDLSearchEntry(level_data) for level_data in data["data"]]
-                remote_failed = False
-                return result
+                return [GDDLSearchEntry(level_data) for level_data in data["data"]]
             logger.info(f"[gddl] networl error: HTTP {response.status_code}")
-        except (ServiceUnavailable, ValueError, KeyError, TypeError) as e:
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error fetching levels: {e}")
-        if remote_failed:
-            logger.info(f"[gddl] remote failed, try to use local snapshot: {name}")
-            cached = []
-            for level in gddl_store.get_by_name(name):
-                try:
-                    cached.append(GDDLSearchEntry(level))
-                except (KeyError, TypeError, ValueError):
-                    logger.warning("[gddl] skipping malformed local level")
-            if cached:
-                logger.info(f"[gddl] name lookup fell back to local snapshot: {name!r}")
+        logger.info(f"[gddl] remote failed, try to use local snapshot: {name}")
+        cached = []
+        for level in gddl_store.get_by_name(name):
+            try:
+                cached.append(GDDLSearchEntry(level))
+            except (KeyError, TypeError, ValueError):
+                logger.warning("[gddl] skipping malformed local level")
+        if cached:
+            logger.info(f"[gddl] name lookup fell back to local snapshot: {name!r}")
             return cached
-        return []
+        return None
 
     @staticmethod
     def getlevelbyid(
@@ -402,7 +396,7 @@ class Gddl:
                 # 调用方想并发的话可以自己单独调 getleveltags
                 tags = Gddl.getleveltags(level_id) if with_tags else None
                 return GDDLLevel(data, tags)
-        except (ServiceUnavailable, ValueError, KeyError, TypeError) as e:
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error fetching level by ID: {e}")
         cached = gddl_store.get_by_id(level_id)
         if cached is not None:
@@ -429,7 +423,7 @@ class Gddl:
         params.update({k: v for k, v in filters.items() if v is not None})
         try:
             response = http_request("GET", url, headers=headers, params=params, timeout=GDDL_TIMEOUT)
-        except (ServiceUnavailable, ValueError) as e:
+        except (httpx.HTTPError, ValueError) as e:
             logger.error(f"[gddl] 搜索失败: {e}")
             return None
         if response.status_code != HTTP_OK:

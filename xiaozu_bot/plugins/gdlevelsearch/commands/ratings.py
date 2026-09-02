@@ -127,7 +127,9 @@ def resolve_level(target: str) -> tuple[int | None, str | None, str]:
         name = level.Meta.Name if level and getattr(level, "Meta", None) else None
         return level_id, name, ""
 
-    candidates = Gddl.getlevelsbyname(target) or []
+    candidates = Gddl.getlevelsbyname(target)
+    if candidates is None:
+        return None, None, "GDDL 那边没响应，等会再试试"
     normalized = target.strip().lower()
     exact = [
         lv for lv in candidates

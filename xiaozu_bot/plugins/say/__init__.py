@@ -1,5 +1,9 @@
 import asyncio
 import os
+import re
+import wave
+from contextlib import suppress
+from pathlib import Path
 
 from nonebot import get_plugin_config, on_command
 from nonebot.internal.adapter import Bot, Event, Message
@@ -43,6 +47,26 @@ say_instructed = on_command("say_i")
 # mlx_audio 只在 Apple Silicon 上装得了，所以延迟到真正要用的时候再 import。
 # 这样在没装它的机器上，say 插件本身还是能正常加载，只是 say 指令用不了。
 _MODEL = None  # 线程安全，因为 mlx 模型在推理时是只读的
+TTS_CHUNK_LENGTH = 200
+_TTS_BREAKS = re.compile(r"(?<=[。！？.!?；;，,\n ])")
+
+
+def split_text(text: str, max_length: int = TTS_CHUNK_LENGTH) -> list[str]:
+    """Split text without dropping characters, preferring natural breaks."""
+    if max_length <= 0:
+        raise ValueError("max_length must be positive")
+
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(start + max_length, len(text))
+        if end < len(text):
+            candidates = list(_TTS_BREAKS.finditer(text[start:end]))
+            if candidates:
+                end = start + candidates[-1].end()
+        chunks.append(text[start:end])
+        start = end
+    return chunks
 
 
 def get_model():
@@ -54,26 +78,83 @@ def get_model():
     return _MODEL
 
 
-def sync_generate_audio(text: str, instruct: str | None, output_dir: str) -> str:
-    """同步执行的 TTS 生成，返回音频文件路径"""
-    import os
+def _generated_path(
+    result: object, output_dir: Path, file_prefix: str
+) -> Path:
+    """Resolve the WAV path produced by mlx_audio."""
+    expected = output_dir / f"{file_prefix}.wav"
+    if expected.exists():
+        return expected
+    if isinstance(result, (str, Path)):
+        returned = Path(result)
+        if returned.exists():
+            return returned
+    matches = sorted(output_dir.glob(f"{file_prefix}*.wav"))
+    if len(matches) == 1:
+        return matches[0]
+    raise FileNotFoundError(f"mlx_audio did not create {expected}")
 
+
+def _join_wav_files(parts: list[Path], output: Path) -> None:
+    """Concatenate PCM WAV files and reject incompatible audio formats."""
+    with wave.open(str(parts[0]), "rb") as first:
+        params = first.getparams()
+        format_signature = (
+            first.getnchannels(),
+            first.getsampwidth(),
+            first.getframerate(),
+            first.getcomptype(),
+        )
+        with wave.open(str(output), "wb") as joined:
+            joined.setparams(params)
+            joined.writeframes(first.readframes(first.getnframes()))
+            for part in parts[1:]:
+                with wave.open(str(part), "rb") as current:
+                    current_signature = (
+                        current.getnchannels(),
+                        current.getsampwidth(),
+                        current.getframerate(),
+                        current.getcomptype(),
+                    )
+                    if current_signature != format_signature:
+                        raise ValueError("mlx_audio returned incompatible WAV files")
+                    joined.writeframes(current.readframes(current.getnframes()))
+
+
+def sync_generate_audio(text: str, instruct: str | None, output_dir: str) -> str:
+    """Generate all text chunks and return one concatenated WAV path."""
     from mlx_audio.tts.generate import generate_audio
 
-    # 注意：这里假设 generate_audio 会写入文件并返回文件路径
-    # 请根据实际 API 调整
-    file_name = f"audio_{os.getpid()}_{id(text)}.wav"  # 避免多线程冲突
-    file_path = os.path.join(output_dir, file_name)
+    output = Path(output_dir)
+    base_name = f"audio_{os.getpid()}_{id(text)}"
+    parts: list[Path] = []
+    final_path = output / f"{base_name}.wav"
+    chunks = split_text(text)
+    try:
+        for index, chunk in enumerate(chunks):
+            prefix = base_name if len(chunks) == 1 else f"{base_name}_{index}"
+            result = generate_audio(
+                model=get_model(),
+                text=chunk,
+                instruct=instruct,
+                file_prefix=prefix,
+                path=str(output),
+                join_audio=True,
+            )
+            parts.append(_generated_path(result, output, prefix))
 
-    generate_audio(
-        model=get_model(),
-        text=text,
-        instruct=instruct,
-        file_prefix=file_name[:-4],
-        path=output_dir,
-        join_audio=True,
-    )
-    return file_path
+        if len(parts) > 1:
+            _join_wav_files(parts, final_path)
+        return str(parts[0] if len(parts) == 1 else final_path)
+    except Exception:
+        with suppress(OSError):
+            final_path.unlink()
+        raise
+    finally:
+        for part in parts:
+            if part != final_path:
+                with suppress(OSError):
+                    part.unlink()
 
 
 @say.handle()
@@ -102,8 +183,13 @@ async def handle_function(
         )
     except Exception as e:
         await say.finish(f"生成音频失败: {e}")
-    await send_audio(bot, event, file_path)
-    os.remove(file_path)
+    try:
+        await send_audio(bot, event, file_path)
+    except Exception as e:
+        await say.finish(f"发送音频失败: {e}")
+    finally:
+        with suppress(OSError):
+            os.remove(file_path)
     await say.finish()
 
 
@@ -136,7 +222,12 @@ async def handle_function(
             sync_generate_audio, text, instruct, output_dir
         )
     except Exception as e:
-        await say.finish(f"生成音频失败: {e}")
-    await send_audio(bot, event, file_path)
-    os.remove(file_path)
+        await say_instructed.finish(f"生成音频失败: {e}")
+    try:
+        await send_audio(bot, event, file_path)
+    except Exception as e:
+        await say_instructed.finish(f"发送音频失败: {e}")
+    finally:
+        with suppress(OSError):
+            os.remove(file_path)
     await say_instructed.finish("")

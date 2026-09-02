@@ -221,6 +221,11 @@ GDDL 是独立于主流水线的后台任务，快照发布为
 同时启动（`updater/__init__.py` 里的 `gddl_update_job`）；GDDL 失败只上报管理员，
 不影响主流水线。`gddlapi.py` 会在在线请求失败时回退到这份快照。
 
+主 updater 的 APScheduler job 在 NoneBot startup 阶段注册，沿用 APScheduler 的
+服务器时区，并使用 job id `gdlevelsearch.daily_update`。启动日志必须出现
+`[UPDATER] daily update job registered`；如果只看到 APScheduler 的日志而没有这条，
+先检查插件加载是否在 startup 阶段报错。
+
 想先小范围试试，用这个 —— 它只发 1 个 API 请求，而且产出的
 `tpl.json` 属于中间文件（不在 `PUBLISHED_FILES` 里），
 **跑它绝对不会动 `data/`**：

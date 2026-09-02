@@ -1681,7 +1681,7 @@ class TestGetAredlLevels:
         cache = aredl_workdir / "aredl_levels.json"
         write_cache(cache, [aredl_dict_payload(name="stale")], age_seconds=25 * 3600)
         stub_requests.get(AREDL_URL, requests.Timeout("timeout"))
-        assert aredlapi.get_aredl_levels() == []
+        assert [level.name for level in aredlapi.get_aredl_levels()] == ["stale"]
         saved = json.loads(cache.read_text(encoding="utf-8"))
         assert [lv["name"] for lv in saved["levels"]] == ["stale"]
 
@@ -1713,6 +1713,18 @@ class TestGetAreplLevels:
         stub_requests.get(AREPL_URL, json_data=[])
         assert aredlapi.get_arepl_levels() == []
         assert not (aredl_workdir / "arepl_levels.json").exists()
+
+    def test_failed_fetch_keeps_stale_cache_in_memory(
+        self, stub_requests: Any, aredl_workdir: Path
+    ) -> None:
+        write_cache(
+            aredl_workdir / "arepl_levels.json",
+            [aredl_dict_payload(name="stale")],
+            age_seconds=25 * 3600,
+        )
+        stub_requests.get(AREPL_URL, requests.Timeout("timeout"))
+
+        assert [level.name for level in aredlapi.get_arepl_levels()] == ["stale"]
 
 
 class TestReload:

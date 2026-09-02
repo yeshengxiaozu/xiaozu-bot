@@ -102,8 +102,9 @@ def _collect_result(future, source: str, name: str):
 def _lookup_sources(name: str) -> dict[str, object | None]:
     """Query all optional indexes in parallel with one shared deadline.
 
-    A provider that raises, returns nothing, or exceeds the deadline only
-    contributes an empty result; the other providers still answer.
+    A provider that raises or exceeds the deadline contributes no result; the
+    GDDL None status is preserved so callers can distinguish an outage from a
+    successful empty search.
     """
     futures = {
         "gddl": _SEARCH_EXECUTOR.submit(Gddl.getlevelsbyname, name),
@@ -135,7 +136,7 @@ def _lookup_sources(name: str) -> dict[str, object | None]:
     return values
 
 
-def search_by_name(name: str) -> list[SearchResult]:
+def search_by_name(name: str) -> list[SearchResult] | None:
     normalized = name.strip().lower()
     results: dict[int, SearchResult] = {}
 
@@ -195,6 +196,9 @@ def search_by_name(name: str) -> list[SearchResult]:
             None,
         )
 
+    if not results and source_values.get("gddl") is None:
+        logger.warning(f"GDDL name lookup unavailable for {name!r}")
+        return None
     return list(results.values())
 
 

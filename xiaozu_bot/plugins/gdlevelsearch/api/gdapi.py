@@ -3,10 +3,10 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 from urllib.parse import unquote
 
+import httpx
 from nonebot import logger
 
 from ..constants import HTTP_RETRY_ATTEMPTS, HTTP_RETRY_BACKOFF
-from .http import ServiceUnavailable
 from .http import request as http_request
 
 DEMON_STARS = 10
@@ -685,7 +685,7 @@ def _search_levels(
             timeout=GD_TIMEOUT,
             allow_retry=True,
         )
-    except ServiceUnavailable as e:
+    except httpx.HTTPError as e:
         logger.error(f"[gdapi] search request exhausted: {e}")
         if raise_on_request_error:
             raise GDAPIUnavailable(
@@ -814,7 +814,7 @@ def get_user_info(
             timeout=GD_TIMEOUT,
             allow_retry=True,
         )
-    except ServiceUnavailable as e:
+    except httpx.HTTPError as e:
         logger.error(f"[gdapi] get_user_info({user_id}) 请求失败: {e}")
         return None
     raw_text = resp.text
@@ -844,7 +844,7 @@ def search_user(
             timeout=GD_TIMEOUT,
             allow_retry=True,
         )
-    except ServiceUnavailable as e:
+    except httpx.HTTPError as e:
         logger.error(f"[gdapi] search_user({name}) 请求失败: {e}")
         return None
     raw_text = resp.text

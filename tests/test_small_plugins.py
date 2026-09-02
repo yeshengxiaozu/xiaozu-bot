@@ -22,6 +22,7 @@ import random
 import re
 import sys
 import types
+import wave
 from collections.abc import Callable
 from datetime import datetime as real_datetime
 from pathlib import Path
@@ -851,8 +852,13 @@ def fake_mlx_audio(monkeypatch, tmp_path):
                 "join_audio": join_audio,
             }
         )
-        # 真库会把音频写到 path/file_prefix.wav，这里照做，好让 os.remove 有东西删
-        Path(path, file_prefix + ".wav").write_bytes(b"RIFFfake")
+        # The real library writes path/file_prefix.wav; use valid PCM for join tests.
+        output = Path(path, file_prefix + ".wav")
+        with wave.open(str(output), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(b"\0\0" * len(text))
 
     root = types.ModuleType("mlx_audio")
     tts = types.ModuleType("mlx_audio.tts")
@@ -974,6 +980,19 @@ class TestSay:
         assert audio_path.suffix == ".wav"
         assert not audio_path.exists(), "发完应该把临时 wav 删掉"
 
+    def test_long_generation_returns_a_complete_joined_wav(
+        self, fake_mlx_audio, tmp_path
+    ):
+        text = "a" * (say.TTS_CHUNK_LENGTH * 2 + 1)
+
+        audio_path = Path(say.sync_generate_audio(text, None, str(tmp_path)))
+        try:
+            with wave.open(str(audio_path), "rb") as wav:
+                assert wav.getnframes() == len(text)
+            assert "".join(call["text"] for call in fake_mlx_audio["generate_audio"]) == text
+        finally:
+            audio_path.unlink(missing_ok=True)
+
     async def test_private_success_uses_send_msg(
         self, fake_bot, make_private_event, fake_mlx_audio
     ):
@@ -1054,7 +1073,9 @@ class TestSayInstructed:
     ):
         event = make_group_event(user_id=MASTER_ID)
         await run_handler(say.say_instructed, fake_bot, event, arg="指令 " + "b" * 1000)
-        assert len(fake_mlx_audio["generate_audio"][0]["text"]) == 1000
+        calls = fake_mlx_audio["generate_audio"]
+        assert "".join(call["text"] for call in calls) == "b" * 1000
+        assert all(len(call["text"]) <= say.TTS_CHUNK_LENGTH for call in calls)
 
     async def test_rest_of_the_line_is_the_text(
         self, fake_bot, make_group_event, fake_mlx_audio

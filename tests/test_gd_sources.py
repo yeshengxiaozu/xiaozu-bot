@@ -707,7 +707,7 @@ class TestGddlLevelLookup:
             GDDL_SEARCH_URL,
             make_response(404, json_data={}),
         )
-        assert Gddl.getlevelsbyname("__definitely_not_cached__") == []
+        assert Gddl.getlevelsbyname("__definitely_not_cached__") is None
 
     def test_getlevelsbyname_exception(
         self,
@@ -720,7 +720,7 @@ class TestGddlLevelLookup:
             GDDL_SEARCH_URL,
             _requests.ConnectionError("boom"),
         )
-        assert Gddl.getlevelsbyname("__definitely_not_cached__") == []
+        assert Gddl.getlevelsbyname("__definitely_not_cached__") is None
 
     def test_getlevelbyid_with_tags_does_two_round_trips(
         self, stub_requests: Any, make_response: Any

@@ -3,7 +3,7 @@
 import asyncio
 import functools
 
-from nonebot import logger
+from nonebot import get_driver, logger
 
 from .runner import run_all_async
 
@@ -17,6 +17,8 @@ _background_tasks: set[asyncio.Task] = set()
 
 # 防止某一次 GDDL 更新异常延长后，与下一次定时任务同时运行。
 _gddl_lock = asyncio.Lock()
+
+DAILY_UPDATE_JOB_ID = "gdlevelsearch.daily_update"
 
 
 def _create_background_task(coro) -> asyncio.Task:
@@ -210,27 +212,60 @@ async def daily_update_job() -> None:
             )
 
 
+def register_daily_update_job() -> bool:
+    """Register the daily job after all NoneBot plugins have loaded."""
+    try:
+        from nonebot_plugin_apscheduler import scheduler
+    except (ImportError, ValueError):
+        logger.error(
+            "[UPDATER] apscheduler is unavailable; automatic updates are disabled"
+        )
+        return False
+
+    try:
+        job = scheduler.add_job(
+            daily_update_job,
+            "cron",
+            hour=3,
+            minute=0,
+            id=DAILY_UPDATE_JOB_ID,
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=3600,
+        )
+    except Exception:
+        logger.exception("[UPDATER] failed to register the daily update job")
+        return False
+
+    next_run = getattr(job, "next_run_time", "unknown")
+    logger.info(
+        f"[UPDATER] daily update job registered: "
+        f"id={DAILY_UPDATE_JOB_ID}, timezone=server-default, "
+        f"schedule=03:00, next_run={next_run!s}, "
+        "misfire_grace_time=3600s"
+    )
+    return True
+
+
+def _register_daily_update_job_on_startup() -> None:
+    """Register the job and fail startup if automatic updates are unavailable."""
+    if not register_daily_update_job():
+        raise RuntimeError("Automatic gdlevelsearch updates could not be registered")
+
+
 setup_updater()
 
 
-# 定时任务的注册放在最后，而且允许失败。
+# Register during startup rather than during module import.
 #
-# 这样 scripts/run_updater.py 之类的独立脚本仍然可以：
-#
-#     import updater
-#
-# 而不会因为没有初始化 NoneBot 就在 import 阶段炸掉。
+# NoneBot plugin loading order is not guaranteed. Registering here means the
+# APScheduler plugin has had a chance to load before we add the job, while
+# standalone updater scripts can still import this package safely.
 try:
-    from nonebot_plugin_apscheduler import scheduler
-except (ImportError, ValueError):
+    get_driver().on_startup(_register_daily_update_job_on_startup)
+except ValueError:
     logger.warning(
-        "[UPDATER] 没有 apscheduler 或 nonebot 未初始化，"
-        "跳过定时任务注册"
-        "（单独跑脚本时这是正常的）"
+        "[UPDATER] NoneBot is not initialized; skipping scheduler setup "
+        "(expected in standalone updater mode)"
     )
-else:
-    scheduler.scheduled_job(
-        "cron",
-        hour=3,
-        minute=0,
-    )(daily_update_job)

@@ -17,8 +17,9 @@ import inspect
 from typing import Any, NamedTuple
 
 import pytest
+import requests
 
-from xiaozu_bot.plugins.gdlevelsearch import gdapi
+from xiaozu_bot.plugins.gdlevelsearch import gdapi, gddlapi
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
     GD_PAGE_SIZE,
     GD_TOTAL_CAP,
@@ -30,6 +31,7 @@ from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import (
     PROGRESS_FILTERS,
     SORT_DIRECTIONS,
     SUBMISSION_SORTS,
+    Gddl,
     GDDLLevel,
     GDDLSearchEntry,
     Submission,
@@ -545,6 +547,18 @@ class TestResolveLevel:
 
         assert (level_id, name) == (None, None)
         assert "不存在的关" in err  # 搜不到时要回显用户输的关卡名
+
+    def test_name_lookup_failure_returns_retryable_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = FakeGddl(by_name=[])
+        monkeypatch.setattr(fake, "getlevelsbyname", lambda _name: None)
+        monkeypatch.setattr(ratings, "Gddl", fake)
+
+        level_id, name, err = ratings.resolve_level("Bloodbath")
+
+        assert (level_id, name) == (None, None)
+        assert "没响应" in err
 
     def test_exact_name_match_wins_over_fuzzy_ones(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1112,6 +1126,26 @@ class TestRatingsAgainstStubbedHttp:
 
         assert session.fetch(0) is None
         assert session.pages == {}
+
+    def test_name_timeout_is_not_reported_as_an_empty_match(
+        self, stub_requests, monkeypatch
+    ) -> None:
+        """A timed-out remote lookup must remain distinguishable from [] ."""
+        stub_requests.get("https://gdladder.com/api/levels", requests.Timeout("timeout"))
+        monkeypatch.setattr(gddlapi.gddl_store, "get_by_name", lambda _name: [])
+
+        assert Gddl.getlevelsbyname("Bloodbath") is None
+
+    def test_name_empty_response_is_a_successful_empty_match(
+        self, stub_requests, monkeypatch
+    ) -> None:
+        stub_requests.get(
+            "https://gdladder.com/api/levels",
+            json_data={"data": []},
+        )
+        monkeypatch.setattr(gddlapi.gddl_store, "get_by_name", lambda _name: [])
+
+        assert Gddl.getlevelsbyname("Nope") == []
 
 
 # ===========================================================================

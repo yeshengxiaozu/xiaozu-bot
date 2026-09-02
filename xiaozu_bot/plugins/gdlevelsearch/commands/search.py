@@ -22,6 +22,7 @@ gdsearch = on_command("gdsearch")
 search_cache = {}
 timeout_tasks = {}
 GD_API_UNAVAILABLE_MESSAGE = "GD 关卡服务器暂时无法访问，请稍后重试"
+GDDL_UNAVAILABLE_MESSAGE = "GDDL 暂时无法访问，请稍后重试"
 
 
 def has_cache(event: Event) -> bool:
@@ -68,6 +69,8 @@ async def handle_gdsearch(
 
     # 名称搜索（要打 GDDL，别堵事件循环）
     results = await asyncio.to_thread(search_by_name, name)
+    if results is None:
+        await gdsearch.finish(GDDL_UNAVAILABLE_MESSAGE)
     if not results:
         await gdsearch.finish(f"没有找到名为 '{name}' 的demon关卡")
 

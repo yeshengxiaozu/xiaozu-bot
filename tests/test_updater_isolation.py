@@ -266,24 +266,54 @@ class TestUpdaterImportIsSideEffectSafe:
         assert ctx1 is not ctx2
 
 
-class TestSchedulerRegistrationIsOptional:
-    """定时任务注册失败不能让 import 挂掉（scripts/run_updater.py 就靠这个）。"""
+class TestSchedulerRegistration:
+    """The daily job is registered during startup and standalone imports stay safe."""
 
-    def test_没有nonebot环境时也能import(self) -> None:
-        """回归：以前只 catch ImportError。
+    def test_启动钩子负责注册任务(self) -> None:
+        import nonebot
 
-        nonebot_plugin_apscheduler 装着的时候 import 本身是成功的，但它模块体里
-        会调 get_driver()，没 nonebot.init() 过就抛 ValueError —— 也就是说
-        `python scripts/run_updater.py` 在 import 期就直接炸，
-        而那个脚本正是「不起 bot 也能更新数据」的唯一入口。
-        """
-        source = (
-            Path(__file__).resolve().parent.parent
-            / "xiaozu_bot/plugins/gdlevelsearch/updater/__init__.py"
-        ).read_text(encoding="utf-8")
-        assert "except (ImportError, ValueError)" in source, (
-            "定时任务注册的兜底必须同时接住 ImportError 和 ValueError"
+        from xiaozu_bot.plugins.gdlevelsearch import updater
+
+        assert updater._register_daily_update_job_on_startup in (
+            nonebot.get_driver()._lifespan._startup_funcs
         )
+
+    def test_注册使用固定id且沿用scheduler时区(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+        from types import SimpleNamespace
+
+        from xiaozu_bot.plugins.gdlevelsearch import updater
+
+        calls: list[tuple[object, str, dict]] = []
+
+        class FakeScheduler:
+            def add_job(self, func: object, trigger: str, **kwargs: object) -> None:
+                calls.append((func, trigger, kwargs))
+
+        monkeypatch.setitem(
+            sys.modules,
+            "nonebot_plugin_apscheduler",
+            SimpleNamespace(scheduler=FakeScheduler()),
+        )
+
+        assert updater.register_daily_update_job() is True
+        assert calls == [
+            (
+                updater.daily_update_job,
+                "cron",
+                {
+                    "hour": 3,
+                    "minute": 0,
+                    "id": "gdlevelsearch.daily_update",
+                    "replace_existing": True,
+                    "coalesce": True,
+                    "max_instances": 1,
+                    "misfire_grace_time": 3600,
+                },
+            )
+        ]
 
 
 class TestNoNetworkAtImportTime:
