@@ -107,7 +107,7 @@ def _fetch_list(base_url: str, use_name_map: bool) -> list[dict[str, str]]:
                     levels[position] = future.result()
                 except Exception as e:
                     raise RuntimeError(
-                        f"绗?{position} 鍚嶅叧鍗?{level_name!r} 鑾峰彇澶辫触"
+                        f"[lists] error fetching #{position}: {level_name!r}"
                     ) from e
 
         return [levels[position] for position in range(1, len(level_names) + 1)]
