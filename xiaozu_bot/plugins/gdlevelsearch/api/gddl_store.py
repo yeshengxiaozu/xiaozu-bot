@@ -7,6 +7,7 @@ import os
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,15 @@ levels: list[dict[str, Any]] = []
 by_id: dict[int, dict[str, Any]] = {}
 _by_name: dict[str, list[dict[str, Any]]] = {}
 fetched_at: str | None = None
+
+
+@dataclass(frozen=True)
+class FetchResult:
+    """Outcome of one best-effort snapshot scan."""
+
+    levels: list[dict[str, Any]]
+    failed_pages: list[int]
+    fetched_at: str
 
 
 def loaded() -> bool:
@@ -192,11 +202,70 @@ def reload(path: Path | None = None) -> None:
     logger.info(f"[gddl_store] loaded {len(levels)} levels ({fetched_at})")
 
 
-def _save(new_levels: list[dict[str, Any]], path: Path | None = None) -> str:
+def _merge_old_data_for_failed_pages(
+    new_levels: list[dict[str, Any]],
+    failed_pages: list[int],
+    path: Path,
+) -> tuple[list[dict[str, Any]], int]:
+    """Merge old records only for IDs not returned by the successful scan.
+
+    Failed page numbers are hints for which old IDs may be retained. Remote
+    data always wins for an ID, so page-boundary shifts cannot overwrite a
+    newer snapshot record with stale data.
+    """
+    if not failed_pages:
+        return new_levels, 0
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = None
+    old_levels = payload.get("levels") if isinstance(payload, dict) else None
+    if not isinstance(old_levels, list):
+        old_levels = []
+
+    merged = {int(level["id"]): level for level in new_levels if _valid_id(level)}
+    retained = 0
+    for level in old_levels:
+        if not _valid_id(level):
+            continue
+        level_id = int(level["id"])
+        if level_id in merged or level_id // PAGE_SIZE not in failed_pages:
+            continue
+        merged[level_id] = level
+        retained += 1
+
+    return list(merged.values()), retained
+
+
+def _valid_id(level: dict[str, Any]) -> bool:
+    try:
+        int(level["id"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _save(
+    new_levels: list[dict[str, Any]],
+    failed_pages: list[int],
+    path: Path | None = None,
+) -> str:
     if path is None:
         path = DATA_FILE
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    payload = {"fetchedAt": stamp, "total": len(new_levels), "levels": new_levels}
+    stored_levels = []
+    for level in new_levels:
+        stored = level.copy()
+        stored.setdefault("fetchedAt", stamp)
+        stored_levels.append(stored)
+    payload = {
+        "fetchedAt": stamp,
+        "total": len(stored_levels),
+        "partial": bool(failed_pages),
+        "failedPages": failed_pages,
+        "levels": stored_levels,
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
     with temporary.open("w", encoding="utf-8") as handle:
@@ -205,8 +274,12 @@ def _save(new_levels: list[dict[str, Any]], path: Path | None = None) -> str:
     return stamp
 
 
-def fetch_all_levels() -> list[dict[str, Any]] | None:
-    """Fetch a complete remote snapshot without consulting the local fallback."""
+def fetch_all_levels() -> FetchResult | None:
+    """Fetch a remote snapshot while tolerating failures on non-initial pages.
+
+    Page zero is required because it establishes the total page count. Data
+    for failed later pages is merged back by ID during publication.
+    """
     try:
         from .gddlapi import Gddl
     except ImportError:  # standalone updater script mode
@@ -234,6 +307,7 @@ def fetch_all_levels() -> list[dict[str, Any]] | None:
         total = int(first.get("total") or 0)
         pages = max(1, -(-total // PAGE_SIZE))
         seen: dict[int, dict[str, Any]] = {}
+        failed_pages: list[int] = []
         for level in first.get("data") or []:
             if isinstance(level, dict) and "id" in level:
                 if "isInPack" in level:
@@ -254,34 +328,44 @@ def fetch_all_levels() -> list[dict[str, Any]] | None:
                 payload = future.result()
                 if payload is None:
                     logger.error(
-                        f"[gddl_store] page {number} failed twice; abandoning scan"
+                        f"[gddl_store] page {number} failed twice; will retain old records"
                     )
-                    return None
+                    failed_pages.append(number)
+                    continue
                 for level in payload.get("data") or []:
                     if isinstance(level, dict) and "id" in level:
                         seen[int(level["id"])] = level
                 if number % 50 == 0:
                     logger.info(f"[gddl_store] page {number} fetched")
 
-    if total and len(seen) < total * MIN_COMPLETE_RATIO:
-        logger.error(f"[gddl_store] only fetched {len(seen)}/{total} levels")
-        return None
-    return list(seen.values())
+    return FetchResult(
+        levels=list(seen.values()),
+        failed_pages=failed_pages,
+        fetched_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
 
 
 def refresh(path: Path | None = None, reload_after: bool = True) -> bool:
     if path is None:
         path = DATA_FILE
-    new_levels = fetch_all_levels()
-    if new_levels is None:
+    result = fetch_all_levels()
+    if result is None:
         return False
+    levels_to_save, retained_count = _merge_old_data_for_failed_pages(
+        result.levels, result.failed_pages, path
+    )
     try:
-        stamp = _save(new_levels, path)
+        stamp = _save(levels_to_save, result.failed_pages, path)
     except OSError:
         logger.exception("[gddl_store] snapshot write failed")
         return False
+    if result.failed_pages:
+        logger.warning(
+            f"[gddl_store] partial snapshot published: failed_pages={result.failed_pages}, "
+            f"reused_old_levels={retained_count}"
+        )
     if reload_after:
-        _rebuild_indexes(new_levels, stamp)
+        _rebuild_indexes(levels_to_save, stamp)
     return True
 
 

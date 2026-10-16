@@ -218,8 +218,12 @@ python scripts/run_updater.py
 
 GDDL 是独立于主流水线的后台任务，快照发布为
 `xiaozu_bot/plugins/gdlevelsearch/data/gddl_levels.json`。它每天凌晨 3 点和主更新
-同时启动（`updater/__init__.py` 里的 `gddl_update_job`）；GDDL 失败只上报管理员，
-不影响主流水线。`gddlapi.py` 会在在线请求失败时回退到这份快照。
+同时启动（`updater/__init__.py` 里的 `gddl_update_job`），每天 07:00 还会运行
+`gddl_snapshot_refresh_job` 刷新快照；GDDL 失败只上报管理员，不影响主流水线。
+快照扫描允许非首页失败：已抓到的页会与旧快照按 ID 合并后发布，失败页记录在
+`failedPages`，`partial` 标记本轮是否为部分成功。`gddlapi.py` 的名称/搜索查询
+会回退到这份快照；按 ID 查询需要显式传 `fallback=True` 才返回降级的
+`GDDLSearchEntry`。
 
 主 updater 的 APScheduler job 在 NoneBot startup 阶段注册，沿用 APScheduler 的
 服务器时区，并使用 job id `gdlevelsearch.daily_update`。启动日志必须出现

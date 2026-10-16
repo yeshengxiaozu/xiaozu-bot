@@ -6,11 +6,15 @@ from nonebot import logger
 try:
     from ..constants import HTTP_OK, USER_AGENT
     from . import gddl_store
+    from .http import GDDL_RETRY_POLICY
     from .http import request as http_request
 except ImportError:  # standalone updater script mode
     import gddl_store
     from constants import HTTP_OK, USER_AGENT
 
+    from xiaozu_bot.plugins.gdlevelsearch.api.http import (
+        GDDL_RETRY_POLICY,
+    )
     from xiaozu_bot.plugins.gdlevelsearch.api.http import (
         request as http_request,
     )
@@ -295,7 +299,15 @@ class Gddl:
             else:
                 logger.warning(f"[gddl] 不认识的进度过滤 {progress_filter!r}，忽略")
         try:
-            response = http_request("GET", url, headers=headers, params=params, timeout=15)
+            response = http_request(
+                "GET",
+                url,
+                headers=headers,
+                params=params,
+                timeout=15,
+                policy=GDDL_RETRY_POLICY,
+                allow_retry=True,
+            )
         except httpx.HTTPError as e:
             logger.error(f"[gddl] 拉取提交评分失败 level={level_id}: {e}")
             return None
@@ -316,7 +328,9 @@ class Gddl:
             "Authorization": f"Bearer {apikey}",
         }
         try:
-            response = http_request("GET", url, headers=headers, timeout=15)
+            response = http_request(
+                "GET", url, headers=headers, timeout=15, policy=GDDL_RETRY_POLICY, allow_retry=True
+            )
         except httpx.HTTPError as e:
             logger.error(f"[gddl] 拉取分布失败 level={level_id}: {e}")
             return None
@@ -334,7 +348,14 @@ class Gddl:
             "Authorization": f"Bearer {apikey}",
         }
         try:
-            response = http_request("GET", url, headers=headers, timeout=GDDL_TIMEOUT)
+            response = http_request(
+                "GET",
+                url,
+                headers=headers,
+                timeout=GDDL_TIMEOUT,
+                policy=GDDL_RETRY_POLICY,
+                allow_retry=True,
+            )
         except httpx.HTTPError as e:
             logger.error(f"[gddl] 拉 tags 失败 level={level_id}: {e}")
             return []
@@ -357,7 +378,15 @@ class Gddl:
         }
         data = {"name": name}
         try:
-            response = http_request("GET", url, headers=headers, params=data, timeout=GDDL_TIMEOUT)
+            response = http_request(
+                "GET",
+                url,
+                headers=headers,
+                params=data,
+                timeout=GDDL_TIMEOUT,
+                policy=GDDL_RETRY_POLICY,
+                allow_retry=True,
+            )
             if response.status_code == HTTP_OK:
                 data = response.json()
                 return [GDDLSearchEntry(level_data) for level_data in data["data"]]
@@ -380,8 +409,13 @@ class Gddl:
     def getlevelbyid(
         level_id: str | int,
         with_tags: bool = True,
-    ) -> GDDLLevel | None:
-        """Fetch a GDDL level by ID, optionally including a second tag request."""
+        fallback: bool = False,
+    ) -> GDDLLevel | GDDLSearchEntry | None:
+        """Fetch a level by ID, optionally falling back to snapshot data.
+
+        Snapshot fallback returns GDDLSearchEntry, which is degraded data and
+        has no full Meta or Tags information.
+        """
         url = f"https://gdladder.com/api/levels/{level_id}"
         headers = {
             "User-Agent": USER_AGENT,
@@ -389,18 +423,34 @@ class Gddl:
             "Authorization": f"Bearer {apikey}",
         }
         try:
-            response = http_request("GET", url, headers=headers, timeout=GDDL_TIMEOUT)
-            if response.status_code == HTTP_OK:
+            response = http_request(
+                "GET",
+                url,
+                headers=headers,
+                timeout=GDDL_TIMEOUT,
+                policy=GDDL_RETRY_POLICY,
+                allow_retry=True,
+            )
+            if response.status_code != HTTP_OK:
+                logger.warning(
+                    f"[gddl] level-by-ID endpoint returned {response.status_code} "
+                    f"level={level_id}"
+                )
+            else:
                 data = response.json()
-                # with_tags=False 时不在这里顺带拉 tags —— 那是第二次往返，
-                # 调用方想并发的话可以自己单独调 getleveltags
+                # with_tags=False avoids a second round trip; callers that want
+                # concurrency can fetch tags separately.
                 tags = Gddl.getleveltags(level_id) if with_tags else None
                 return GDDLLevel(data, tags)
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
             logger.error(f"Error fetching level by ID: {e}")
-        cached = gddl_store.get_by_id(level_id)
-        if cached is not None:
-            return None #we cant use local thing since its different type now
+
+        if fallback:
+            cached = gddl_store.get_by_id(level_id)
+            try:
+                return GDDLSearchEntry(cached)
+            except (KeyError, TypeError, ValueError):
+                logger.warning(f"[gddl] malformed local snapshot for level={level_id}")
         return None
 
     @staticmethod
@@ -422,7 +472,15 @@ class Gddl:
             params["sortDirection"] = sort_direction
         params.update({k: v for k, v in filters.items() if v is not None})
         try:
-            response = http_request("GET", url, headers=headers, params=params, timeout=GDDL_TIMEOUT)
+            response = http_request(
+                "GET",
+                url,
+                headers=headers,
+                params=params,
+                timeout=GDDL_TIMEOUT,
+                policy=GDDL_RETRY_POLICY,
+                allow_retry=True,
+            )
         except (httpx.HTTPError, ValueError) as e:
             logger.error(f"[gddl] 搜索失败: {e}")
             return None

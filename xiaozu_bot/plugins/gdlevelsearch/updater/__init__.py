@@ -19,6 +19,7 @@ _background_tasks: set[asyncio.Task] = set()
 _gddl_lock = asyncio.Lock()
 
 DAILY_UPDATE_JOB_ID = "gdlevelsearch.daily_update"
+GDDL_SNAPSHOT_REFRESH_JOB_ID = "gdlevelsearch.gddl_snapshot_refresh"
 
 
 def _create_background_task(coro) -> asyncio.Task:
@@ -145,6 +146,37 @@ async def gddl_store_update_job() -> bool:
         return True
 
 
+async def gddl_snapshot_refresh_job() -> None:
+    """Refresh the GDDL snapshot at 07:00 without blocking the event loop."""
+    if _gddl_lock.locked():
+        logger.warning("[GDDL] snapshot refresh skipped: another update is running")
+        return
+
+    async with _gddl_lock:
+        from ..api import gddl_store
+
+        try:
+            success = await asyncio.to_thread(gddl_store.refresh)
+        except Exception as exc:
+            logger.exception("[GDDL] snapshot refresh failed")
+            from .notify import report_error
+
+            try:
+                await report_error(
+                    title="GDDL snapshot refresh failed",
+                    err=exc,
+                    context={"job": GDDL_SNAPSHOT_REFRESH_JOB_ID, "stage": "refresh"},
+                )
+            except Exception:
+                logger.exception("[GDDL] snapshot refresh notification failed")
+            return
+
+        if not success:
+            logger.error("[GDDL] snapshot refresh failed")
+            return
+        logger.info("[GDDL] snapshot refresh completed")
+
+
 async def daily_update_job() -> None:
     """
     每日自动更新入口。
@@ -248,12 +280,44 @@ def register_daily_update_job() -> bool:
     return True
 
 
+def register_gddl_snapshot_refresh_job() -> bool:
+    """Register the 07:00 GDDL snapshot refresh job."""
+    try:
+        from nonebot_plugin_apscheduler import scheduler
+    except (ImportError, ValueError):
+        logger.error("[UPDATER] apscheduler is unavailable; GDDL snapshot refresh disabled")
+        return False
+
+    try:
+        job = scheduler.add_job(
+            gddl_snapshot_refresh_job,
+            "cron",
+            hour=7,
+            minute=0,
+            id=GDDL_SNAPSHOT_REFRESH_JOB_ID,
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=3600,
+        )
+    except Exception:
+        logger.exception("[UPDATER] failed to register the GDDL snapshot refresh job")
+        return False
+
+    next_run = getattr(job, "next_run_time", "unknown")
+    logger.info(
+        f"[UPDATER] GDDL snapshot refresh job registered: "
+        f"id={GDDL_SNAPSHOT_REFRESH_JOB_ID}, schedule=07:00, next_run={next_run!s}"
+    )
+    return True
+
+
 def _register_daily_update_job_on_startup() -> None:
-    """Register the job and fail startup if automatic updates are unavailable."""
+    """Register the jobs and fail startup if automatic updates are unavailable."""
     if not register_daily_update_job():
         raise RuntimeError("Automatic gdlevelsearch updates could not be registered")
-
-
+    if not register_gddl_snapshot_refresh_job():
+        raise RuntimeError("Automatic GDDL snapshot refresh could not be registered")
 setup_updater()
 
 

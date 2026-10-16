@@ -315,6 +315,60 @@ class TestSchedulerRegistration:
             )
         ]
 
+    def test_注册_gddl_快照七点刷新任务(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+        from types import SimpleNamespace
+
+        from xiaozu_bot.plugins.gdlevelsearch import updater
+
+        calls: list[tuple[object, str, dict]] = []
+
+        class FakeScheduler:
+            def add_job(self, func: object, trigger: str, **kwargs: object) -> None:
+                calls.append((func, trigger, kwargs))
+
+        monkeypatch.setitem(
+            sys.modules,
+            "nonebot_plugin_apscheduler",
+            SimpleNamespace(scheduler=FakeScheduler()),
+        )
+
+        assert updater.register_gddl_snapshot_refresh_job() is True
+        assert calls == [
+            (
+                updater.gddl_snapshot_refresh_job,
+                "cron",
+                {
+                    "hour": 7,
+                    "minute": 0,
+                    "id": "gdlevelsearch.gddl_snapshot_refresh",
+                    "replace_existing": True,
+                    "coalesce": True,
+                    "max_instances": 1,
+                    "misfire_grace_time": 3600,
+                },
+            )
+        ]
+
+    async def test_gddl_快照刷新运行中跳过重复触发(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio
+
+        from xiaozu_bot.plugins.gdlevelsearch import updater
+
+        monkeypatch.setattr(updater, "_gddl_lock", asyncio.Lock())
+        updater._gddl_lock.locked = lambda: True
+
+        async def fail_to_thread(func, *args, **kwargs):
+            raise AssertionError("refresh should not run while locked")
+
+        monkeypatch.setattr(asyncio, "to_thread", fail_to_thread)
+        await updater.gddl_snapshot_refresh_job()
+        assert updater._gddl_lock.locked() is True
+
 
 class TestNoNetworkAtImportTime:
     """整个插件树在断网下必须 import 得动（no_network 是 autouse 的）。"""

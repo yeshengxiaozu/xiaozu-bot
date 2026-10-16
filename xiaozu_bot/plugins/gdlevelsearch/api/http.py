@@ -43,6 +43,7 @@ class RetryPolicy:
 
 
 DEFAULT_POLICY = RetryPolicy()
+GDDL_RETRY_POLICY = RetryPolicy(attempts=2)
 
 _sync_client_lock = threading.Lock()
 _sync_client: httpx.Client | None = None

@@ -19,7 +19,7 @@ async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
     user = await asyncio.to_thread(get_user_by_name, name)
     if user is None:
         await gduser.finish("没有找到对应的用户")
-    user_basic_info = f"{user.user_name}\n{user.stars}⭐ {user.moons}🌙 {user.demons_count}👿 {str(user.creator_points) + '🔧' if user.creator_points else ''}"
+    user_basic_info = f"{user.user_name}\n{user.stars}⭐ {user.moons}🌙 {user.demons_count}👿 {str(user.follower_count) + '👤' if user.follower_count else ''} {str(user.creator_points) + '🔧' if user.creator_points else ''}"
     user_classic_nondemon = (
         f"\nClassic: {user.classic_levels[0]}🤖 {user.classic_levels[1]}💙 {user.classic_levels[2]}💚 {user.classic_levels[3]}💛 {user.classic_levels[4]}🧡 {user.classic_levels[5]}💜;\n{user.classic_levels[6]} Daily; {user.classic_levels[7]} Gauntlet"
         if user.classic_levels and len(user.classic_levels) >= 8

@@ -405,6 +405,7 @@ class GDUser:
         55: ("demons_breakdown", "comma_int_list"),
         56: ("classic_levels", "comma_int_list"),
         57: ("platformer_levels", "comma_int_list"),
+        67: ("follower_count", int)
     }
 
     user_name: str
@@ -455,6 +456,7 @@ class GDUser:
     demons_breakdown: list[int] | None = None
     classic_levels: list[int] | None = None
     platformer_levels: list[int] | None = None
+    follower_count: int | None = None
 
     def __init__(self) -> None:
         for attr, _ in self.FIELD_MAP.values():

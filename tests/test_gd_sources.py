@@ -247,8 +247,26 @@ def gddl_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gddl_store, "fetched_at", None)
     gddl_store._rebuild_indexes(
         [
-            make_level_payload(ID=123, Meta=make_meta_payload(Name="Cached Level")),
-            make_level_payload(ID=456, Rating=30, Enjoyment=9, SubmissionCount=20),
+            {
+                "id": 123,
+                "rating": 20.5,
+                "enjoyment": 7.5,
+                "name": "Cached Level",
+                "difficulty": "Extreme",
+                "rarity": 0,
+                "publisherName": "RobTop",
+                "songName": "Stereo Madness",
+            },
+            {
+                "id": 456,
+                "rating": 30,
+                "enjoyment": 9,
+                "name": "Another Level",
+                "difficulty": "Extreme",
+                "rarity": 0,
+                "publisherName": "RobTop",
+                "songName": "Stereo Madness",
+            },
         ],
         "test",
     )
@@ -784,6 +802,81 @@ class TestGddlLevelLookup:
             _requests.Timeout("t"),
         )
         assert Gddl.getlevelbyid(unknown_id) is None
+
+    def test_getlevelbyid_fallback_without_snapshot_returns_none(
+        self,
+        empty_gddl_snapshot: None,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        stub_requests.get(
+            "/api/levels/123",
+            make_response(500, json_data={}),
+        )
+        assert Gddl.getlevelbyid(123, fallback=True) is None
+
+    def test_getlevelbyid_fallback_uses_degraded_snapshot_entry(
+        self,
+        gddl_snapshot: None,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        stub_requests.get(
+            "/api/levels/123",
+            make_response(500, json_data={}),
+        )
+        level = Gddl.getlevelbyid(123, with_tags=False, fallback=True)
+
+        assert isinstance(level, GDDLSearchEntry)
+        assert level.ID == 123
+        assert level.Name == "Cached Level"
+
+    def test_getlevelbyid_malformed_snapshot_fallback_returns_none(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        monkeypatch.setattr(gddl_store, "by_id", {123: {"bad": "data"}})
+        stub_requests.get(
+            "/api/levels/123",
+            make_response(500, json_data={}),
+        )
+        assert Gddl.getlevelbyid(123, fallback=True) is None
+
+    def test_getlevelbyid_retries_once_on_server_error(
+        self,
+        empty_gddl_snapshot: None,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        responses = [
+            make_response(500, json_data={}),
+            make_response(json_data=make_level_payload(ID=123)),
+        ]
+
+        def next_response(**__: Any):
+            return responses.pop(0)
+
+        stub_requests.get("/api/levels/123", next_response)
+        level = Gddl.getlevelbyid(123, with_tags=False)
+
+        assert level is not None
+        assert level.ID == 123
+        assert len(stub_requests.calls) == 2
+
+    def test_getlevelbyid_returns_none_after_two_server_errors(
+        self,
+        empty_gddl_snapshot: None,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        stub_requests.get(
+            "/api/levels/123",
+            make_response(500, json_data={}),
+        )
+        assert Gddl.getlevelbyid(123, with_tags=False) is None
+        assert len(stub_requests.calls) == 2
 
 
 class TestGddlLocalFallback:
