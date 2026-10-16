@@ -337,8 +337,16 @@ class TestRatingsParseArgs:
 
         assert query.target == "bloodbath"
         assert query.sort is None
-        assert query.ascending is False
+        assert query.sort_direction is None
         assert query.victors_only is False
+
+    def test_desc_flag(self) -> None:
+        assert ratings.parse_args("bloodbath -desc").sort_direction == "desc"
+
+    def test_direction_flags_last_one_wins(self) -> None:
+        """-asc / -desc 都能给，最后出现的那个说了算（两个方向是同一个字段）"""
+        assert ratings.parse_args("bloodbath -asc -desc").sort_direction == "desc"
+        assert ratings.parse_args("bloodbath -desc -asc").sort_direction == "asc"
 
     def test_sort_flag_alone_without_target_raises(self) -> None:
         """`-s tier` 把 tier 吃掉当排序字段了，剩下的关键词是空的"""
@@ -355,8 +363,9 @@ class TestRatingsParseArgs:
         query = ratings.parse_args("bloodbath -S TIER -ASC -V")
 
         assert query.sort == "rating"
-        assert query.ascending is True
+        assert query.sort_direction == "asc"
         assert query.victors_only is True
+        assert ratings.parse_args("bloodbath -DESC").sort_direction == "desc"
 
     def test_unknown_sort_raises_and_echoes_what_the_user_wrote(self) -> None:
         with pytest.raises(ratings.ArgError) as exc:
@@ -382,14 +391,14 @@ class TestRatingsParseArgs:
         assert a == b
         assert a.target == "bloodbath"
         assert a.sort == "rating"
-        assert a.ascending is True
+        assert a.sort_direction == "asc"
         assert a.victors_only is True
 
     def test_repeated_flags_last_one_wins(self) -> None:
         assert ratings.parse_args("bloodbath -s tier -s enj").sort == "enjoyment"
-        # 布尔开关重复给是幂等的
+        # 重复给同一个方向是幂等的，victors 那个开关也是
         query = ratings.parse_args("bloodbath -asc -asc -v -v")
-        assert query.ascending is True
+        assert query.sort_direction == "asc"
         assert query.victors_only is True
 
     def test_numeric_id_target_is_kept_as_text(self) -> None:
@@ -400,26 +409,36 @@ class TestRatingsParseArgs:
 class TestRatingsQueryApiKwargs:
     """RatingsQuery.as_api_kwargs()"""
 
-    def test_sort_always_carries_a_direction(self) -> None:
-        """注释说「只给 sort 不给方向的话接口按自己默认来」，所以方向必须一起给"""
-        assert ratings.RatingsQuery(target="x").as_api_kwargs() == {}
-        assert ratings.RatingsQuery(target="x", sort="rating").as_api_kwargs() == {
-            "sort": "rating",
-            "sort_direction": "desc",
-        }
+    def test_sort_and_direction_are_independent(self) -> None:
+        """sort 和 sort_direction 各管各的：给了哪个才发哪个。
+
+        以前是「只要给了 sort 就一定补一个方向（不写 -asc 就是 desc）」，
+        现在方向默认交给接口，只有用户显式写了 -asc / -desc 才出现在请求里。
+        """
+        assert ratings.RatingsQuery(target="x", sort_direction=None).as_api_kwargs() == {}
         assert ratings.RatingsQuery(
-            target="x", sort="rating", ascending=True
+            target="x", sort_direction=None, sort="rating"
+        ).as_api_kwargs() == {"sort": "rating"}
+        assert ratings.RatingsQuery(
+            target="x", sort_direction="asc", sort="rating"
         ).as_api_kwargs() == {"sort": "rating", "sort_direction": "asc"}
-        # 光给 -asc 不给 -s 的话方向不传（接口默认排序自己说了算）
-        assert ratings.RatingsQuery(target="x", ascending=True).as_api_kwargs() == {}
+        assert ratings.RatingsQuery(
+            target="x", sort_direction="desc", sort="rating"
+        ).as_api_kwargs() == {"sort": "rating", "sort_direction": "desc"}
+
+    def test_direction_without_sort_is_still_sent(self) -> None:
+        """只给 -desc 不给 -s 也照发 —— 方向可以单独覆盖接口的默认排序"""
+        assert ratings.RatingsQuery(
+            target="x", sort_direction="desc"
+        ).as_api_kwargs() == {"sort_direction": "desc"}
 
     def test_victors_only_maps_to_progress_filter(self) -> None:
-        assert ratings.RatingsQuery(target="x", victors_only=True).as_api_kwargs() == {
-            "progress_filter": "victors"
-        }
+        assert ratings.RatingsQuery(
+            target="x", sort_direction=None, victors_only=True
+        ).as_api_kwargs() == {"progress_filter": "victors"}
         # 三个开关一起给的时候互不干扰
         assert ratings.RatingsQuery(
-            target="x", sort="enjoyment", ascending=True, victors_only=True
+            target="x", sort_direction="asc", sort="enjoyment", victors_only=True
         ).as_api_kwargs() == {
             "sort": "enjoyment",
             "sort_direction": "asc",
@@ -437,7 +456,7 @@ class TestRatingsQueryApiKwargs:
 
         params = set(inspect.signature(Gddl.getsubmissions).parameters)
         emitted = ratings.RatingsQuery(
-            target="x", sort="rating", ascending=True, victors_only=True
+            target="x", sort_direction="asc", sort="rating", victors_only=True
         ).as_api_kwargs()
 
         assert set(emitted) <= params
@@ -450,30 +469,62 @@ class TestRatingsQueryDescribe:
     """
 
     def test_nothing_to_describe_is_empty(self) -> None:
-        assert ratings.RatingsQuery(target="x").describe() == ""
-        # 没有 sort 的时候 -asc 不进 describe（跟 as_api_kwargs 一致）
-        assert ratings.RatingsQuery(target="x", ascending=True).describe() == ""
+        assert ratings.RatingsQuery(target="x", sort_direction=None).describe() == ""
 
     def test_each_condition_gets_its_own_summary(self) -> None:
-        """正序 / 倒序 / 只看通关 三种条件的摘要必须互不相同"""
-        desc = ratings.RatingsQuery(target="x", sort="rating").describe()
-        asc = ratings.RatingsQuery(target="x", sort="rating", ascending=True).describe()
-        victors = ratings.RatingsQuery(target="x", victors_only=True).describe()
+        """不同排序字段 / 只看通关 的摘要必须互不相同"""
+        rating = ratings.RatingsQuery(
+            target="x", sort_direction=None, sort="rating"
+        ).describe()
+        enj = ratings.RatingsQuery(
+            target="x", sort_direction=None, sort="enjoyment"
+        ).describe()
+        victors = ratings.RatingsQuery(
+            target="x", sort_direction=None, victors_only=True
+        ).describe()
 
-        assert len({desc, asc, victors}) == 3
-        assert all([desc, asc, victors])
+        assert len({rating, enj, victors}) == 3
+        assert all([rating, enj, victors])
+
+    def test_direction_appears_only_when_specified(self) -> None:
+        """方向写进摘要的条件是用户显式给了 -asc / -desc。
+
+        接口自己的默认方向没法确认，所以不写方向时摘要里也不该冒出「正序/倒序」；
+        写了才追加一段，正序和倒序的摘要要区分得开。
+        """
+        base = ratings.RatingsQuery(
+            target="x", sort_direction=None, sort="rating"
+        ).describe()
+        asc = ratings.RatingsQuery(
+            target="x", sort_direction="asc", sort="rating"
+        ).describe()
+        desc = ratings.RatingsQuery(
+            target="x", sort_direction="desc", sort="rating"
+        ).describe()
+
+        assert len({base, asc, desc}) == 3
+        assert base in asc and base in desc  # 只是多追加一段，不重写原摘要
+        # 光给方向不给 -s 也有一句摘要（跟 as_api_kwargs 一致）
+        assert ratings.RatingsQuery(target="x", sort_direction="asc").describe() != ""
 
     def test_multiple_conditions_are_all_carried(self) -> None:
         """几个条件一起给的时候，每一段都得在摘要里"""
         both = ratings.RatingsQuery(
-            target="x", sort="enjoyment", ascending=True, victors_only=True
+            target="x", sort_direction="asc", sort="enjoyment", victors_only=True
         ).describe()
 
         assert (
-            ratings.RatingsQuery(target="x", sort="enjoyment", ascending=True).describe()
+            ratings.RatingsQuery(
+                target="x", sort_direction="asc", sort="enjoyment"
+            ).describe()
             in both
         )
-        assert ratings.RatingsQuery(target="x", victors_only=True).describe() in both
+        assert (
+            ratings.RatingsQuery(
+                target="x", sort_direction=None, victors_only=True
+            ).describe()
+            in both
+        )
 
     def test_describe_uses_api_field_name_not_alias(self) -> None:
         """用户写 -s tier，describe 里显示的是 API 字段名 rating"""
@@ -712,6 +763,7 @@ class TestRatingsSessionFetch:
     """RatingsSession.fetch()：缓存、总数、失败"""
 
     def _session(self, fake: FakeGddl, **query_kw: Any) -> ratings.RatingsSession:
+        query_kw.setdefault("sort_direction", None)
         return ratings.RatingsSession(
             query=ratings.RatingsQuery(target="bloodbath", **query_kw),
             level_id=10565740,
@@ -735,7 +787,9 @@ class TestRatingsSessionFetch:
     ) -> None:
         fake = FakeGddl({0: _sub_page([], total=0)})
         monkeypatch.setattr(ratings, "Gddl", fake)
-        session = self._session(fake, sort="rating", ascending=True, victors_only=True)
+        session = self._session(
+            fake, sort="rating", sort_direction="asc", victors_only=True
+        )
 
         session.fetch(0)
 
@@ -787,7 +841,7 @@ class TestRatingsSessionPaging:
         self, fake: FakeGddl, *, page: int = 0, total_pages: int = 1
     ) -> ratings.RatingsSession:
         session = ratings.RatingsSession(
-            query=ratings.RatingsQuery(target="bloodbath"),
+            query=ratings.RatingsQuery(target="bloodbath", sort_direction=None),
             level_id=10565740,
             level_name="Bloodbath",
             page=page,
@@ -873,7 +927,7 @@ class TestRatingsSessionPaging:
 
     def test_current_is_empty_for_a_page_that_was_never_fetched(self) -> None:
         session = ratings.RatingsSession(
-            query=ratings.RatingsQuery(target="x"), level_id=1, page=5
+            query=ratings.RatingsQuery(target="x", sort_direction=None), level_id=1, page=5
         )
 
         assert session.current == []
@@ -882,7 +936,9 @@ class TestRatingsSessionPaging:
         """判定是 `> SESSION_TIMEOUT`，卡在 120 秒整还不算过期"""
         clock = FakeClock()
         monkeypatch.setattr(ratings, "time", clock)
-        session = ratings.RatingsSession(query=ratings.RatingsQuery(target="x"), level_id=1)
+        session = ratings.RatingsSession(
+            query=ratings.RatingsQuery(target="x", sort_direction=None), level_id=1
+        )
         session.updated_at = clock.now
 
         assert ratings.SESSION_TIMEOUT == 120
@@ -897,7 +953,9 @@ class TestRatingsSessionPaging:
     def test_touch_resets_the_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
         clock = FakeClock()
         monkeypatch.setattr(ratings, "time", clock)
-        session = ratings.RatingsSession(query=ratings.RatingsQuery(target="x"), level_id=1)
+        session = ratings.RatingsSession(
+            query=ratings.RatingsQuery(target="x", sort_direction=None), level_id=1
+        )
         session.updated_at = clock.now - 500
 
         assert session.expired is True
@@ -937,7 +995,7 @@ class TestRatingsRender:
 
     def _session(self, **kw: Any) -> ratings.RatingsSession:
         defaults: dict[str, Any] = {
-            "query": ratings.RatingsQuery(target="bloodbath"),
+            "query": ratings.RatingsQuery(target="bloodbath", sort_direction=None),
             "level_id": 10565740,
             "level_name": "Bloodbath",
         }
@@ -986,7 +1044,10 @@ class TestRatingsRender:
             total=2,
             total_pages=1,
             query=ratings.RatingsQuery(
-                target="bloodbath", sort="rating", ascending=True, victors_only=True
+                target="bloodbath",
+                sort_direction="asc",
+                sort="rating",
+                victors_only=True,
             ),
         )
 
@@ -1093,7 +1154,10 @@ class TestRatingsAgainstStubbedHttp:
         )
         session = ratings.RatingsSession(
             query=ratings.RatingsQuery(
-                target="bloodbath", sort="rating", ascending=True, victors_only=True
+                target="bloodbath",
+                sort_direction="asc",
+                sort="rating",
+                victors_only=True,
             ),
             level_id=10565740,
             level_name="Bloodbath",
@@ -1121,7 +1185,7 @@ class TestRatingsAgainstStubbedHttp:
             "https://gdladder.com/api/levels/1/submissions", status_code=500, text="boom"
         )
         session = ratings.RatingsSession(
-            query=ratings.RatingsQuery(target="1"), level_id=1
+            query=ratings.RatingsQuery(target="1", sort_direction=None), level_id=1
         )
 
         assert session.fetch(0) is None

@@ -163,6 +163,10 @@ class GDDLLevel:
     Meta: LevelMeta
     Tags: list[dict[str,str]]
 
+    @property
+    def Name(self):
+        return self.Meta.Name if self.Meta else None
+
     def __init__(self, jsondict: dict[str, Any], tags: list[dict[str, str]] | None = None) -> None:
         if tags is None:
             tags = []

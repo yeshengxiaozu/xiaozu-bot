@@ -399,6 +399,20 @@ class TestGddlModels:
         assert GDDLLevel(make_level_payload(meta={"Length": 6})).is_pemon() is True
         assert GDDLLevel(make_level_payload(meta={"Length": 5})).is_pemon() is False
 
+    def test_gddl_level_name_reads_through_to_meta(self) -> None:
+        """详情 DTO 的关卡名藏在 Meta.Name 里，`Name` 属性把它提到和搜索 DTO 同级。
+
+        `ratings.resolve_level` 对详情 DTO（按 id 查）和搜索 DTO（按名字查）
+        都读 `level.Name`，所以两边必须同名同义 —— 详情这边以前没有这个属性。
+        """
+        level = GDDLLevel(make_level_payload(meta={"Name": "Detail Level"}))
+        assert level.Name == level.Meta.Name == "Detail Level"
+        assert GDDLSearchEntry(make_search_payload(name="Compact")).Name == "Compact"
+
+        # Meta 被清掉时回 None 而不是 AttributeError，这就是属性里那个条件分支
+        level.Meta = None
+        assert level.Name is None
+
     def test_gddl_level_missing_key_raises(self) -> None:
         """所有字段都是硬取，少任何一个都是 KeyError（调用方得自己接住）"""
         for missing in make_level_payload():

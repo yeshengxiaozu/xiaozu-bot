@@ -31,8 +31,8 @@ SORT_ALIASES: dict[str, str] = {
 }
 
 USAGE = """用法：*gdratings <关卡名或id> [-s <排序>] [-asc] [-v]
-  -s <排序>  按什么排：tier / enj / date / progress / attempts
-  -asc       正序（默认倒序）
+  -s <排序>  排序依据：tier / enj / date / progress / attempts
+  -asc / -desc 正序/倒序（覆盖默认）
   -v         只看通关的人
 翻页：n 下一页 / p 上一页 / 结束 取消"""
 
@@ -46,16 +46,16 @@ class RatingsQuery:
     """一次 gdratings 的查询条件"""
 
     target: str                      # 关卡名或 id，还没解析成 level_id
+    sort_direction: str | None = None
     sort: str | None = None
-    ascending: bool = False
     victors_only: bool = False
 
     def as_api_kwargs(self) -> dict:
         kwargs: dict = {}
         if self.sort:
             kwargs["sort"] = self.sort
-            # 只给 sort 不给方向的话接口按自己的默认来，所以方向一起给
-            kwargs["sort_direction"] = "asc" if self.ascending else "desc"
+        if self.sort_direction:
+            kwargs["sort_direction"] = self.sort_direction
         if self.victors_only:
             kwargs["progress_filter"] = "victors"
         return kwargs
@@ -63,9 +63,13 @@ class RatingsQuery:
     def describe(self) -> str:
         bits = []
         if self.sort:
-            bits.append(f"按 {self.sort} {'正序' if self.ascending else '倒序'}")
+            bits.append(f"按 {self.sort}")
+        # 接口自己的默认方向没法确认，所以只有用户显式写了 -asc / -desc
+        # 才进摘要（和 as_api_kwargs 一致）
+        if self.sort_direction in ("asc", "desc"):
+            bits.append("正序" if self.sort_direction == "asc" else "倒序")
         if self.victors_only:
-            bits.append("只看通关")
+            bits.append("仅限通关")
         return "、".join(bits)
 
 
@@ -76,7 +80,7 @@ def parse_args(text: str) -> RatingsQuery:
         raise ArgError("请提供关卡名或 id\n\n" + USAGE)
 
     sort: str | None = None
-    ascending = False
+    sort_direction = None
     victors = False
     words: list[str] = []
 
@@ -84,7 +88,10 @@ def parse_args(text: str) -> RatingsQuery:
     while i < len(tokens):
         lowered = tokens[i].lower()
         if lowered == "-asc":
-            ascending = True
+            sort_direction = "asc"
+            i += 1
+        elif lowered == "-desc":
+            sort_direction = "desc"
             i += 1
         elif lowered in ("-v", "-victors"):
             victors = True
@@ -92,12 +99,12 @@ def parse_args(text: str) -> RatingsQuery:
         elif lowered == "-s":
             if i + 1 >= len(tokens):
                 raise ArgError(
-                    "-s 后面要跟排序字段：" + " / ".join(sorted(set(SORT_ALIASES.values())))
+                    "-s 后面请输入排序字段：" + " / ".join(sorted(set(SORT_ALIASES.values())))
                 )
             key = tokens[i + 1].lower()
             if key not in SORT_ALIASES:
                 raise ArgError(
-                    f"看不懂的排序字段：{tokens[i + 1]}\n"
+                    f"无法解析的排序字段：{tokens[i + 1]}\n"
                     "可以用：tier / enj / date / progress / attempts / rr"
                 )
             sort = SORT_ALIASES[key]
@@ -110,7 +117,7 @@ def parse_args(text: str) -> RatingsQuery:
     if not target:
         raise ArgError("请提供关卡名或 id\n\n" + USAGE)
 
-    return RatingsQuery(target=target, sort=sort, ascending=ascending, victors_only=victors)
+    return RatingsQuery(target=target, sort_direction=sort_direction, sort=sort, victors_only=victors)
 
 
 MIN_ID_LEN = 4
@@ -124,7 +131,7 @@ def resolve_level(target: str) -> tuple[int | None, str | None, str]:
     if len(target) > MIN_ID_LEN and target.isdigit():
         level_id = int(target)
         level = Gddl.getlevelbyid(level_id)
-        name = level.Meta.Name if level and getattr(level, "Meta", None) else None
+        name = level.Name if level else None
         return level_id, name, ""
 
     candidates = Gddl.getlevelsbyname(target)
