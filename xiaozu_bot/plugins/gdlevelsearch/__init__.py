@@ -85,6 +85,7 @@ from .commands.fullsearch import (  # noqa: F401
 )
 from .commands.gdicon import gdicon  # noqa: F401
 from .commands.gduser import gduser  # noqa: F401
+from .commands.gdsong import gdsong  # noqa: F401
 from .commands.help import (  # noqa: F401
     gdsearch_store_update,
     gdsearchhelp,

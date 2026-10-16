@@ -483,6 +483,46 @@ class GDUser:
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
 
+class GDSongInfo:
+    id: int
+    name: str
+    artist_id: int
+    artist_name: str
+    size: float
+    level_count: int | None
+    rated_count: int | None
+    downloads: int | None
+    usage_detail: list | None
+
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def from_dict(cls, song_dict: dict[str, Any] | None) -> "GDSongInfo":
+        ret = cls()
+        if not song_dict:
+            return ret
+        ret.id = song_dict["id"]
+        ret.name = song_dict["name"]
+        ret.artist_id = song_dict["artist_id"]
+        ret.artist_name = song_dict["artist_name"]
+        ret.size = song_dict["size"]
+        return ret
+
+    @classmethod
+    def from_server_response(cls, response: str) -> "GDSongInfo":
+        """Parse a single user server response string into a GDUser."""
+        instance = cls()
+        dict = parse_song_object(response)
+        return instance.from_dict(dict)
+
+    @classmethod
+    def from_string(cls, response: str) -> "GDSongInfo":
+        return cls.from_server_response(response)
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+    
 
 def parse_song_object(song_str: str) -> dict[str, Any] | None:
     tokens = song_str.split("~|~")
@@ -861,7 +901,89 @@ def search_user(
         require_account_id=True,
     )
 
+def get_song_usage(
+    song_id: int
+) -> tuple[int,int,int,list[list[int]]|None] | None:
+    url = "http://www.boomlings.com/database/getGJSongUsage.php"
+    headers = {"User-Agent": USER_AGENT}
 
+    data = {
+        "secret": "Wmfd2893gb7",
+        "songID": song_id
+    }
+    try:
+        resp = http_request(
+            "POST",
+            url,
+            data=data,
+            headers=headers,
+            timeout=GD_TIMEOUT,
+            allow_retry=True,
+        )
+    except httpx.HTTPError as e:
+        logger.error(f"[gdapi] get_song_usage({song_id}) 请求失败: {e}")
+        return None
+    raw_text = resp.text
+    if not isinstance(raw_text, str):
+        logger.error("[gdapi] get_song_usage(%s) 返回了非文本响应", song_id)
+        return None
+    text = raw_text.strip()
+    logger.info(f"get_song_usage({song_id}): {text}")
+    #schema: level,rated,download#usageinfo
+    main, _, usage_str = text.strip().partition('#')
+    level_count_str, rated_count_str, downloads_str = main.split(',')
+    level_count = int(level_count_str)
+    rated_count = int(rated_count_str)
+    downloads = int(downloads_str)
+
+    # 动态创建二维数组，初始值为 0
+    usage = [[0] * 7 for _ in range(5)]
+
+    if usage_str:
+        for part in usage_str.split('|'):
+            part = part.strip()
+            if not part:
+                continue
+
+            i, j, value = map(int, part.split(':'))
+            usage[i][j] = value
+
+    return level_count, rated_count, downloads, usage
+    
+
+def get_song_info(
+    song_id: int
+) -> GDSongInfo | None:
+    url = "http://www.boomlings.com/database/getGJSongInfo.php"
+    headers = {"User-Agent": USER_AGENT}
+
+    data = {
+        "secret": "Wmfd2893gb7",
+        "songID": str(song_id)
+    }
+    try:
+        resp = http_request(
+            "POST",
+            url,
+            data=data,
+            headers=headers,
+            timeout=GD_TIMEOUT,
+            allow_retry=True,
+        )
+    except httpx.HTTPError as e:
+        logger.error(f"[gdapi] get_song_info({song_id}) 请求失败: {e}")
+        return None
+    raw_text = resp.text
+    if not isinstance(raw_text, str):
+        logger.error("[gdapi] get_song_info(%s) 返回了非文本响应", song_id)
+        return None
+    text = raw_text.strip()
+    logger.info(f"get_song_info({song_id}): {text}")
+    ret = GDSongInfo.from_server_response(text)
+    song_usage = get_song_usage(song_id)
+    if song_usage is not None:
+        ret.level_count, ret.rated_count, ret.downloads, ret.usage_detail = song_usage
+    return ret
 
 
 def search_levels_by_name(
