@@ -71,14 +71,14 @@ COMMANDS: dict[str, Cmd] = {
         constraints="2 分钟不操作自动结束搜索",
     ),
     "gdratings": Cmd(
-        usage="*gdratings 关卡名或id [-s 排序] [-asc] [-v]",
+        usage="*gdratings 关卡名或id [-s 排序] [-asc|-desc] [-v]",
         summary="查看 GDDL 上的评分详情",
         category="gd",
         detail=(
             "列出这关在 GDDL 上每个人提交的 tier 和 enjoyment，\n"
             "完全的vibe coding产物！\n"
             "-s 排序　tier / enj / date / progress / attempts\n"
-            "-asc　　正序（默认倒序）\n"
+            "-asc / -desc　正序 / 倒序，不写就用接口自己的默认顺序\n"
             "-v　　　只看通关的人\n"
             "一页列出 10 条内容：回复序号选中、回复下一页/上一页翻页，回复结束取消。\n"
             "如果有多个关卡重名，会列出所有相关关卡的id，请使用id重新搜索"
@@ -109,6 +109,19 @@ COMMANDS: dict[str, Cmd] = {
             "加 -a 把九个 gamemode 拼成一张图发出来，不会刷屏。"
         ),
         examples=("*gdicon RobTop", "*gdicon RobTop ship", "*gdicon RobTop -a"),
+    ),
+    "gdsong": Cmd(
+        usage="*gdsong 歌曲id",
+        summary="查歌曲信息和使用情况",
+        category="gd",
+        detail=(
+            "按 id 查一首歌的名字、作者，以及它在 GD 关卡里被用的次数。\n"
+            "id 是关卡自定义歌曲的 Newgrounds 编号（数字），\n"
+            "比如关卡用的是什么歌可以在 *gdsearch 的结果里看到。\n"
+            "结果里的 usage 按稀有度和难度分列，可以看出这首歌主要被用在哪类关卡。\n"
+            "查不到这首歌、或者这首歌没有 usage 数据时会少显示一部分，不会报错。"
+        ),
+        examples=("*gdsong 467339",),
     ),
     "gd随机推关": Cmd(
         usage="*gd随机推关 (最低)tier [最高tier] [最低enj] [最高enj]",

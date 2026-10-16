@@ -19,6 +19,7 @@ import binascii
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
 
@@ -30,6 +31,7 @@ from xiaozu_bot.plugins.gdlevelsearch.api import http as http_transport
 from xiaozu_bot.plugins.gdlevelsearch.api.aredlapi import Aredl, AREDLLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
     GDLevel,
+    GDSongInfo,
     GDUser,
     SearchPage,
     parse_server_key_value_pairs,
@@ -42,6 +44,8 @@ from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
 GD_LEVELS_URL = "http://www.boomlings.com/database/getGJLevels21.php"
 GD_USERINFO_URL = "http://www.boomlings.com/database/getGJUserInfo20.php"
 GD_USERS_URL = "http://www.boomlings.com/database/getGJUsers20.php"
+GD_SONGINFO_URL = "http://www.boomlings.com/database/getGJSongInfo.php"
+GD_SONGUSAGE_URL = "http://www.boomlings.com/database/getGJSongUsage.php"
 GD_SECRET = "Wmfd2893gb7"
 
 AREDL_URL = "https://api.aredl.net/v2/api/aredl/levels"
@@ -815,6 +819,299 @@ class TestParseSongObject:
         result = parse_song_object("1~|~1~|~2~|~a%20b")
         assert result is not None
         assert result["name"] == "a%20b"
+
+
+# ==========================================================================
+# GDSongInfo
+# ==========================================================================
+class TestGDSongInfo:
+    def test_fresh_instance_exposes_every_declared_field(self) -> None:
+        """查不到的歌曲 id 会一路走到 from_dict(None)，所以空实例上每个属性都得在。
+
+        以前 __init__ 是 `pass`，拿到的是个一个属性都没有的对象，
+        命令层的 `song.name is None` 直接变成 AttributeError。
+        """
+        song = GDSongInfo()
+        for attr in GDSongInfo.FIELDS:
+            assert getattr(song, attr) is None, attr
+        assert song.name is None  # 命令层读的就是这一个
+
+    def test_fields_covers_every_annotation(self) -> None:
+        """FIELDS 是手写的清单，加了字段忘了同步就会漏掉初始化（实例上没这个属性）。
+
+        `FIELDS` 自己也是一条带注解的赋值，比对时先把它摘掉。
+        """
+        declared = set(GDSongInfo.__annotations__) - {"FIELDS"}
+        assert set(GDSongInfo.FIELDS) == declared
+
+    def test_from_dict_none_is_a_blank_instance_not_none(self) -> None:
+        """parse_song_object 对 GD 的 "-1" 回 None，from_dict 必须接住。"""
+        song = GDSongInfo.from_dict(None)
+        assert isinstance(song, GDSongInfo)
+        assert song.id is None
+        assert song.name is None
+
+    def test_from_dict_empty_dict_is_also_blank(self) -> None:
+        """空 dict 是 falsy，和 None 走同一条兜底。"""
+        assert GDSongInfo.from_dict({}).name is None
+
+    def test_from_dict_maps_the_documented_keys(self) -> None:
+        payload = {
+            "id": 467339,
+            "name": "At the Speed of Light",
+            "artist_id": 50531,
+            "artist_name": "Dimrain47",
+            "size": 9.56,
+            "link": "https://audio.ngfiles.com/467000/467339.mp3",
+        }
+        song = GDSongInfo.from_dict(payload)
+        assert (song.id, song.name, song.artist_id, song.artist_name, song.size) == (
+            467339,
+            "At the Speed of Light",
+            50531,
+            "Dimrain47",
+            9.56,
+        )
+        # link 不是 GDSongInfo 的字段；usage 那几个要 get_song_usage 之后才补
+        assert not hasattr(song, "link")
+        assert (song.level_count, song.rated_count, song.downloads) == (None, None, None)
+        assert song.usage_detail is None
+
+    def test_from_dict_partial_payload_raises_keyerror(self) -> None:
+        """只有 id 的残缺 payload 会 KeyError —— 没有兜底，这里钉住现状。"""
+        with pytest.raises(KeyError):
+            GDSongInfo.from_dict({"id": 467339})
+
+    def test_from_server_response_parses_a_real_song(self) -> None:
+        song = GDSongInfo.from_server_response(SONG_467339)
+        assert song.id == 467339
+        assert song.name == "At the Speed of Light"
+        assert song.artist_id == 50531
+        assert song.artist_name == "Dimrain47"
+        assert song.size == 9.56
+
+    def test_from_server_response_minus_one_is_a_blank_instance(self) -> None:
+        """GD 用 "-1" 表示「没有这首歌」，返回值必须能安全读 .name。"""
+        song = GDSongInfo.from_server_response("-1")
+        assert isinstance(song, GDSongInfo)
+        assert song.name is None
+
+    def test_from_string_is_an_alias(self) -> None:
+        assert (
+            GDSongInfo.from_string(SONG_467339).to_dict()
+            == GDSongInfo.from_server_response(SONG_467339).to_dict()
+        )
+
+    def test_to_dict_is_a_copy(self) -> None:
+        song = GDSongInfo.from_server_response(SONG_467339)
+        dumped = song.to_dict()
+        assert dumped is not song.__dict__
+        assert dumped["name"] == "At the Speed of Light"
+        dumped["name"] = "changed"
+        assert song.name == "At the Speed of Light"
+
+
+def usage_grid(cells: dict[tuple[int, int], int]) -> list[list[int]]:
+    """造 get_song_usage 返回的那张 5x7 矩阵：{(稀有度下标, 难度下标): 次数}。"""
+    grid = [[0] * 7 for _ in range(5)]
+    for (rarity, difficulty), value in cells.items():
+        grid[rarity][difficulty] = value
+    return grid
+
+
+# ==========================================================================
+# get_song_usage
+# ==========================================================================
+class TestGetSongUsage:
+    def test_request_payload(self, stub_requests: Any) -> None:
+        stub_requests.post(GD_SONGUSAGE_URL, text="5,1,100#")
+        gdapi.get_song_usage(467339)
+
+        call = stub_requests.calls[0]
+        assert call["method"] == "POST"
+        assert call["url"] == GD_SONGUSAGE_URL
+        assert call["headers"] == {"User-Agent": gdapi.USER_AGENT}
+        assert call["timeout"] == gdapi.GD_TIMEOUT
+        # 注意：这儿的 songID 是 int，get_song_info 那边发的是 str（两个接口不一致）
+        assert call["data"] == {"secret": GD_SECRET, "songID": 467339}
+
+    def test_counts_and_grid(self, stub_requests: Any) -> None:
+        stub_requests.post(GD_SONGUSAGE_URL, text="128,64,34567#0:0:12|1:6:3|4:3:9")
+
+        assert gdapi.get_song_usage(1) == (
+            128,
+            64,
+            34567,
+            usage_grid({(0, 0): 12, (1, 6): 3, (4, 3): 9}),
+        )
+
+    @pytest.mark.parametrize("text", ["5,1,100", "5,1,100#", "5,1,100#||"])
+    def test_missing_or_empty_usage_section_gives_a_zero_grid(
+        self, stub_requests: Any, text: str
+    ) -> None:
+        """没有 usage 段时回的是 5x7 全零矩阵，不是 None。"""
+        stub_requests.post(GD_SONGUSAGE_URL, text=text)
+
+        assert gdapi.get_song_usage(1) == (5, 1, 100, usage_grid({}))
+
+    def test_blank_segments_are_skipped(self, stub_requests: Any) -> None:
+        stub_requests.post(GD_SONGUSAGE_URL, text="5,1,100#|  |0:0:7|")
+
+        assert gdapi.get_song_usage(1) == (5, 1, 100, usage_grid({(0, 0): 7}))
+
+    def test_repeated_cell_last_one_wins(self, stub_requests: Any) -> None:
+        stub_requests.post(GD_SONGUSAGE_URL, text="5,1,100#0:0:1|0:0:2")
+
+        assert gdapi.get_song_usage(1) == (5, 1, 100, usage_grid({(0, 0): 2}))
+
+    def test_response_is_stripped(self, stub_requests: Any) -> None:
+        stub_requests.post(GD_SONGUSAGE_URL, text="  5,1,100#0:0:1\n")
+
+        assert gdapi.get_song_usage(1) == (5, 1, 100, usage_grid({(0, 0): 1}))
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "",             # 空响应
+            "-1",           # GD 的「这首歌没有 usage 数据」哨兵
+            "1,2",          # 汇总段缺一列
+            "1,2,3,4",      # 汇总段多一列
+            "a,b,c",        # 汇总段不是数字
+            "1,2,3#0:0",    # usage 段缺一列
+            "1,2,3#x:0:1",  # usage 段的坐标不是数字
+            "1,2,3#5:0:1",  # 稀有度下标越界
+            "1,2,3#0:7:1",  # 难度下标越界
+        ],
+    )
+    def test_malformed_payload_returns_none(
+        self, stub_requests: Any, text: str
+    ) -> None:
+        """畸形响应一律当成「没有 usage 数据」，不往调用方抛异常。
+
+        尤其 "-1"：get_song_info 是无条件调这个函数的，以前这里抛 ValueError
+        会把整条 *gdsong 命令带崩，连**存在**的歌曲也查不了。
+        """
+        stub_requests.post(GD_SONGUSAGE_URL, text=text)
+
+        assert gdapi.get_song_usage(1) is None
+
+    def test_request_failure_returns_none(
+        self, stub_requests: Any, monkeypatch: Any
+    ) -> None:
+        monkeypatch.setattr(http_transport.time, "sleep", lambda _seconds: None)
+        stub_requests.post(GD_SONGUSAGE_URL, requests.Timeout("boomlings 又死了"))
+
+        assert gdapi.get_song_usage(1) is None
+        assert len(stub_requests.calls) == gdapi.GD_RETRIES
+
+    def test_non_text_response_returns_none(self, monkeypatch: Any) -> None:
+        """防御分支：httpx 的 .text 永远是 str，只能用替身触发。"""
+        monkeypatch.setattr(
+            gdapi, "http_request", lambda *_a, **_k: SimpleNamespace(text=None)
+        )
+
+        assert gdapi.get_song_usage(1) is None
+
+
+# ==========================================================================
+# get_song_info
+# ==========================================================================
+class TestGetSongInfo:
+    def test_request_payload_and_call_order(self, stub_requests: Any) -> None:
+        stub_requests.post(GD_SONGINFO_URL, text=SONG_467339)
+        stub_requests.post(GD_SONGUSAGE_URL, text="1,2,3#")
+        gdapi.get_song_info(467339)
+
+        call = stub_requests.calls[0]
+        assert call["method"] == "POST"
+        assert call["url"] == GD_SONGINFO_URL
+        assert call["headers"] == {"User-Agent": gdapi.USER_AGENT}
+        assert call["timeout"] == gdapi.GD_TIMEOUT
+        # 这个接口要字符串 id（get_song_usage 那边是 int，见上）
+        assert call["data"] == {"secret": GD_SECRET, "songID": "467339"}
+        # 先拿歌曲信息，再去补 usage
+        assert stub_requests.urls == [GD_SONGINFO_URL, GD_SONGUSAGE_URL]
+
+    def test_merges_song_info_and_usage(self, stub_requests: Any) -> None:
+        stub_requests.post(GD_SONGINFO_URL, text=SONG_467339)
+        stub_requests.post(GD_SONGUSAGE_URL, text="128,64,34567#0:0:12|2:3:5")
+
+        song = gdapi.get_song_info(467339)
+
+        assert song is not None
+        assert (song.id, song.name, song.artist_id, song.artist_name, song.size) == (
+            467339,
+            "At the Speed of Light",
+            50531,
+            "Dimrain47",
+            9.56,
+        )
+        assert (song.level_count, song.rated_count, song.downloads) == (128, 64, 34567)
+        assert song.usage_detail == usage_grid({(0, 0): 12, (2, 3): 5})
+
+    def test_unknown_song_is_a_readable_not_found(self, stub_requests: Any) -> None:
+        """查不到的 id：GD 回 "-1"，返回值必须能安全读 .name 和 .id。
+
+        `*gdsong` 就靠 `song.name is None` 回「没有找到对应的歌曲」；
+        以前这里返回的对象一个属性都没有，命令直接 AttributeError 崩掉。
+        """
+        stub_requests.post(GD_SONGINFO_URL, text="-1")
+        stub_requests.post(GD_SONGUSAGE_URL, text="0,0,0#")
+
+        song = gdapi.get_song_info(999999999)
+
+        assert song is not None
+        assert song.id is None
+        assert song.name is None
+        assert song.artist_name is None
+        # usage 字段和歌曲信息无关，照常补进来
+        assert (song.level_count, song.rated_count, song.downloads) == (0, 0, 0)
+        assert song.usage_detail == usage_grid({})
+
+    def test_usage_failure_still_returns_the_song(
+        self, stub_requests: Any, monkeypatch: Any
+    ) -> None:
+        """usage 请求挂了不能把已经拿到的歌曲信息一起丢掉。"""
+        monkeypatch.setattr(http_transport.time, "sleep", lambda _seconds: None)
+        stub_requests.post(GD_SONGINFO_URL, text=SONG_467339)
+        stub_requests.post(GD_SONGUSAGE_URL, requests.Timeout("usage down"))
+
+        song = gdapi.get_song_info(467339)
+
+        assert song is not None
+        assert song.name == "At the Speed of Light"
+        assert (
+            song.level_count,
+            song.rated_count,
+            song.downloads,
+            song.usage_detail,
+        ) == (None, None, None, None)
+
+    def test_malformed_usage_response_leaves_the_usage_unset(
+        self, stub_requests: Any
+    ) -> None:
+        """usage 响应畸形（GD 用 "-1" 表示这首歌没有数据）时只丢 usage，歌曲照常返回。"""
+        stub_requests.post(GD_SONGINFO_URL, text=SONG_467339)
+        stub_requests.post(GD_SONGUSAGE_URL, text="-1")
+
+        song = gdapi.get_song_info(467339)
+
+        assert song is not None
+        assert song.name == "At the Speed of Light"
+        assert (
+            song.level_count,
+            song.rated_count,
+            song.downloads,
+            song.usage_detail,
+        ) == (None, None, None, None)
+
+    def test_non_text_song_response_returns_none(self, monkeypatch: Any) -> None:
+        """防御分支，同 get_song_usage；非文本响应连 usage 都不去查。"""
+        monkeypatch.setattr(
+            gdapi, "http_request", lambda *_a, **_k: SimpleNamespace(text=None)
+        )
+
+        assert gdapi.get_song_info(1) is None
 
 
 # ==========================================================================

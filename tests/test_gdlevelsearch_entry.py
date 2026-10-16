@@ -22,12 +22,13 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from tests.conftest import DEFAULT_USER_ID, FakeBot, run_handler, sent_texts
+from tests.conftest import DEFAULT_USER_ID, FakeBot, only_text, run_handler, sent_texts
 from xiaozu_bot.plugins import gdlevelsearch
 from xiaozu_bot.plugins.gdlevelsearch import SearchResult, icons
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
     GDAPIUnavailable,
     GDLevel,
+    GDSongInfo,
     GDUser,
 )
 from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import GDDLSearchEntry
@@ -41,6 +42,9 @@ from xiaozu_bot.plugins.gdlevelsearch.commands import (
 )
 from xiaozu_bot.plugins.gdlevelsearch.commands import (
     gdicon as cmd_gdicon,
+)
+from xiaozu_bot.plugins.gdlevelsearch.commands import (
+    gdsong as cmd_gdsong,
 )
 from xiaozu_bot.plugins.gdlevelsearch.commands import (
     gduser as cmd_gduser,
@@ -1235,6 +1239,271 @@ class TestHandleGduser:
         assert len(texts) == 1
         for value in range(20, 32):
             assert str(value) in texts[0], value
+
+
+# ==========================================================================
+# *gdsong
+# ==========================================================================
+GD_SONGINFO_URL = "http://www.boomlings.com/database/getGJSongInfo.php"
+GD_SONGUSAGE_URL = "http://www.boomlings.com/database/getGJSongUsage.php"
+
+# getGJSongInfo 的真实响应形状：字段之间用 ~|~ 分隔
+SONG_467339 = (
+    "1~|~467339~|~2~|~At the Speed of Light~|~3~|~50531~|~4~|~Dimrain47"
+    "~|~5~|~9.56~|~10~|~https%3A%2F%2Faudio.ngfiles.com%2F467339.mp3"
+)
+
+
+def make_song(**over: Any) -> GDSongInfo:
+    """一个 GDSongInfo，把 *gdsong 一定会读的字段填上。"""
+    song = GDSongInfo()
+    song.id = 467339
+    song.name = "At the Speed of Light"
+    song.artist_name = "Dimrain47"
+    song.size = 9.56
+    for key, value in over.items():
+        setattr(song, key, value)
+    return song
+
+
+def song_usage(cells: dict[tuple[int, int], int]) -> list[list[int]]:
+    """造 usage_detail 那张 5x7 矩阵：{(稀有度下标, 难度下标): 次数}。"""
+    grid = [[0] * 7 for _ in range(5)]
+    for (rarity, difficulty), value in cells.items():
+        grid[rarity][difficulty] = value
+    return grid
+
+
+class TestParseSongId:
+    """parse_song_id(): 用户输入 -> int；不是数字就 None"""
+
+    def test_plain_id(self) -> None:
+        assert cmd_gdsong.parse_song_id("467339") == 467339
+
+    def test_surrounding_spaces_are_fine(self) -> None:
+        """handler 先 strip 再解析，这里也认两边带空格的写法。"""
+        assert cmd_gdsong.parse_song_id(" 467339 ") == 467339
+
+    def test_negative_id_is_kept(self) -> None:
+        """官方歌曲在 GD 里是用负数 id 引用的，不能按 isdigit 一刀切掉。"""
+        assert cmd_gdsong.parse_song_id("-1") == -1
+
+    @pytest.mark.parametrize("text", ["", "abc", "467339a", "4.5", "1 2"])
+    def test_junk_is_none(self, text: str) -> None:
+        """这些输入以前会让 handler 里的 int() 抛 ValueError，把整条命令带崩。"""
+        assert cmd_gdsong.parse_song_id(text) is None
+
+
+class TestHandleGdsong:
+    async def test_no_arguments_does_not_hit_gdapi(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """空参数只回一句提示，不去打 gdapi —— 提示词怎么写不算行为"""
+        monkeypatch.setattr(
+            cmd_gdsong, "get_song_info",
+            lambda _i: pytest.fail("没给 id 就不该去查歌曲"),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg=""
+        )
+
+        assert len(sent_texts(fake_bot)) == 1
+
+    @pytest.mark.parametrize("arg", ["abc", "467339a", "4.5"])
+    async def test_non_numeric_id_does_not_hit_gdapi(
+        self, arg: str, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """非数字 id 以前是 int() 抛 ValueError，现在只回一句提示、不打网络"""
+        monkeypatch.setattr(
+            cmd_gdsong, "get_song_info",
+            lambda _i: pytest.fail("非数字 id 不该去查歌曲"),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg=arg
+        )
+
+        assert len(sent_texts(fake_bot)) == 1
+
+    async def test_unknown_song_replies_instead_of_crashing(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GD 对不存在的 id 回 "-1"，这里必须回一句「没找到」。
+
+        替身给的是真的 `GDSongInfo.from_server_response("-1")`，不复刻它的形状：
+        以前那是个一个属性都没有的对象，`song.name` 直接 AttributeError。
+        """
+        monkeypatch.setattr(
+            cmd_gdsong, "get_song_info",
+            lambda _i: GDSongInfo.from_server_response("-1"),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"),
+            arg="999999999",
+        )
+
+        assert len(sent_texts(fake_bot)) == 1
+
+    async def test_gdapi_failure_kills_neither_the_reply_nor_the_song(
+        self, fake_bot: FakeBot, make_group_event: Any, stub_requests: Any
+    ) -> None:
+        """不换 get_song_info 替身、走真的 gdapi + 打桩 HTTP。
+
+        usage 接口回 "-1"（这首歌没有 usage 数据）时，歌曲信息照样要发出去：
+        「usage 解析失败」不能变成「查不到歌」。换替身是盖不住这条的。
+        """
+        stub_requests.post(GD_SONGINFO_URL, text=SONG_467339)
+        stub_requests.post(GD_SONGUSAGE_URL, text="-1")
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg="467339"
+        )
+
+        text = only_text(fake_bot)
+        assert "At the Speed of Light" in text
+        for token in ("Dimrain47", "467339"):
+            assert token in text, token
+
+    async def test_none_result_replies_once(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """get_song_info 也可能是 None（非文本响应那条防御分支）"""
+        monkeypatch.setattr(cmd_gdsong, "get_song_info", lambda _i: None)
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg="1"
+        )
+
+        assert len(sent_texts(fake_bot)) == 1
+
+    async def test_gdapi_receives_the_parsed_int(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """查的是 int id，不是用户原样输入的字符串"""
+        seen: list[Any] = []
+
+        def fake_get_song_info(song_id: Any) -> GDSongInfo:
+            seen.append(song_id)
+            return make_song()
+
+        monkeypatch.setattr(cmd_gdsong, "get_song_info", fake_get_song_info)
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg=" 467339 "
+        )
+
+        assert seen == [467339]
+
+    async def test_song_without_usage_still_sends_the_song(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """usage_detail 为空时歌名 / 作者 / id 照样得发出去，不能提前 return"""
+        monkeypatch.setattr(
+            cmd_gdsong, "get_song_info", lambda _i: make_song(usage_detail=None)
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg="467339"
+        )
+
+        text = only_text(fake_bot)
+        for token in ("At the Speed of Light", "Dimrain47", "467339"):
+            assert token in text, token
+
+    async def test_song_counts_are_shown(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """关卡数 / 评分数 / 下载数三个数字都要出现"""
+        monkeypatch.setattr(
+            cmd_gdsong, "get_song_info",
+            lambda _i: make_song(level_count=1234, rated_count=56, downloads=789),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg="467339"
+        )
+
+        text = only_text(fake_bot)
+        for token in ("1234", "56", "789"):
+            assert token in text, token
+
+    @pytest.mark.parametrize(
+        ("level_count", "shown", "hidden"),
+        [(200000, "200000", "200K+"), (200001, "200K+", "200001")],
+    )
+    async def test_level_count_is_capped_at_200k(
+        self, level_count: int, shown: str, hidden: str,
+        fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """20 万是截断的分界线：正好 200000 还是原数字，200001 起换成 200K+"""
+        monkeypatch.setattr(
+            cmd_gdsong, "get_song_info", lambda _i: make_song(level_count=level_count)
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg="467339"
+        )
+
+        text = only_text(fake_bot)
+        assert shown in text
+        assert hidden not in text
+
+    async def test_zero_level_count_omits_the_counts(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """level_count 是 0（falsy）时那一整段数字都不印：只剩歌名行 + usage 行"""
+        monkeypatch.setattr(
+            cmd_gdsong, "get_song_info",
+            lambda _i: make_song(level_count=0, rated_count=0, downloads=0),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg="467339"
+        )
+
+        assert len(only_text(fake_bot).splitlines()) == 2
+
+    async def test_each_non_empty_usage_row_takes_one_line(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """usage_detail 里非空的稀有度各占一行，难度名和次数都在"""
+        monkeypatch.setattr(
+            cmd_gdsong, "get_song_info",
+            lambda _i: make_song(
+                level_count=1,
+                usage_detail=song_usage({(0, 0): 11, (4, 6): 99}),
+            ),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg="467339"
+        )
+
+        text = only_text(fake_bot)
+        # 11 在 (star-rate, Auto)，99 在 (Mythic, Demon)
+        assert "11" in text and "Auto" in text
+        assert "99" in text and "Demon" in text
+        # 歌名行 + 计数行 + "Usage detail:" + 2 个非空行
+        assert len(text.splitlines()) == 3 + 2
+
+    async def test_all_zero_usage_rows_are_skipped(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """整行都是 0 的稀有度不印，但全零矩阵本身是 truthy，表头还是会出来"""
+        monkeypatch.setattr(
+            cmd_gdsong, "get_song_info",
+            lambda _i: make_song(level_count=1, usage_detail=song_usage({})),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsong, fake_bot, make_group_event("*gdsong"), arg="467339"
+        )
+
+        # 歌名行 + 计数行 + 表头，一行数据都没有
+        assert len(only_text(fake_bot).splitlines()) == 3
 
 
 # ==========================================================================

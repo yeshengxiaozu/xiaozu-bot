@@ -494,8 +494,26 @@ class GDSongInfo:
     downloads: int | None
     usage_detail: list | None
 
+    #: Every attribute above, reset to None by __init__. An unknown song id makes
+    #: GD answer "-1", which parse_song_object turns into None, so from_dict()
+    #: builds the instance without touching any field. Without this reset the
+    #: result would have no attributes at all and `song.name` would raise
+    #: AttributeError instead of reporting "not found".
+    FIELDS: Final = (
+        "id",
+        "name",
+        "artist_id",
+        "artist_name",
+        "size",
+        "level_count",
+        "rated_count",
+        "downloads",
+        "usage_detail",
+    )
+
     def __init__(self) -> None:
-        pass
+        for attr in self.FIELDS:
+            setattr(self, attr, None)
 
     @classmethod
     def from_dict(cls, song_dict: dict[str, Any] | None) -> "GDSongInfo":
@@ -511,10 +529,10 @@ class GDSongInfo:
 
     @classmethod
     def from_server_response(cls, response: str) -> "GDSongInfo":
-        """Parse a single user server response string into a GDUser."""
+        """Parse a single getGJSongInfo response string into a GDSongInfo."""
         instance = cls()
-        dict = parse_song_object(response)
-        return instance.from_dict(dict)
+        song_dict = parse_song_object(response)
+        return instance.from_dict(song_dict)
 
     @classmethod
     def from_string(cls, response: str) -> "GDSongInfo":
@@ -522,7 +540,7 @@ class GDSongInfo:
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
-    
+
 
 def parse_song_object(song_str: str) -> dict[str, Any] | None:
     tokens = song_str.split("~|~")
@@ -904,6 +922,14 @@ def search_user(
 def get_song_usage(
     song_id: int
 ) -> tuple[int,int,int,list[list[int]]|None] | None:
+    """Fetch the per-difficulty usage counts of one Newgrounds song.
+
+    Returns None when the request fails or the payload cannot be parsed: GD
+    answers "-1" for a song it has no usage data for, and a malformed body must
+    not take the caller down with it. On success the tuple is
+    (level_count, rated_count, downloads, grid), the grid being 5 rarities x
+    7 difficulties.
+    """
     url = "http://www.boomlings.com/database/getGJSongUsage.php"
     headers = {"User-Agent": USER_AGENT}
 
@@ -931,10 +957,14 @@ def get_song_usage(
     logger.info(f"get_song_usage({song_id}): {text}")
     #schema: level,rated,download#usageinfo
     main, _, usage_str = text.strip().partition('#')
-    level_count_str, rated_count_str, downloads_str = main.split(',')
-    level_count = int(level_count_str)
-    rated_count = int(rated_count_str)
-    downloads = int(downloads_str)
+    try:
+        level_count_str, rated_count_str, downloads_str = main.split(',')
+        level_count = int(level_count_str)
+        rated_count = int(rated_count_str)
+        downloads = int(downloads_str)
+    except ValueError:
+        logger.warning("[gdapi] get_song_usage(%s) 汇总段解析失败: %r", song_id, main)
+        return None
 
     # 动态创建二维数组，初始值为 0
     usage = [[0] * 7 for _ in range(5)]
@@ -945,11 +975,15 @@ def get_song_usage(
             if not part:
                 continue
 
-            i, j, value = map(int, part.split(':'))
-            usage[i][j] = value
+            try:
+                i, j, value = map(int, part.split(':'))
+                usage[i][j] = value
+            except (ValueError, IndexError):
+                logger.warning("[gdapi] get_song_usage(%s) 格子解析失败: %r", song_id, part)
+                return None
 
     return level_count, rated_count, downloads, usage
-    
+
 
 def get_song_info(
     song_id: int
