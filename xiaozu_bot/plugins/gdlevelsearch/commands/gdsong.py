@@ -17,28 +17,27 @@ async def handle_gduser(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
     if not song_id:
         await gdsong.finish("请输入想要搜索的歌曲id")
     song = await asyncio.to_thread(get_song_info, int(song_id))
-    if song is None:
+    if song is None or getattr(song, "name") is None:
         await gdsong.finish("没有找到对应的歌曲")
-    song_basic_info = f"{song.name} By {song.artist_name} [{song_id}]"
-    song_data = ""
+    song_basic_info = f"{song.name} By {song.artist_name} [{song_id}]\n"
+    # await gdsong.send(str(song.to_dict()))
     if song.level_count:
-        song_data += f"⬆️{song.level_count if song.level_count <= 200000 else '200K+'}"
-    if song.rated_count:
-        song_data += f"⭐{song.rated_count}"
-    if song.downloads:
-        song_data += f"↓{song.downloads}"
-    if song_data:
-        song_data += '\n'
+        song_data = f"⬆️{song.level_count if song.level_count <= 200000 else '200K+'} ⭐{song.rated_count} ⬇️{song.downloads}\n"
+    else:
+        song_data = ""
     if song.usage_detail:
-        song_usage_info = "Usage detail:"
+        song_usage_info = "Usage detail:\n"
         DIFFICULTY = ["Auto", "Easy", "Normal", "Hard", "Harder", "Insane", "Demon"]
         RARITY = ["", "Featured ", "Epic ", "Legendary ", "Mythic "]
         for i in range(0,5):
-            for j in range(0,7):
-                if song.usage_detail[i][j]:
-                    song_usage_info +=f"\n{RARITY[i]}{DIFFICULTY[j]} * {song.usage_detail[i][j]}"
+            if sum(song.usage_detail[i]) > 0:
+                song_usage_info += f"{RARITY[i]}: "
+                for j in range(0,7):
+                    if song.usage_detail[i][j]:
+                        song_usage_info +=f"{DIFFICULTY[j]}*{song.usage_detail[i][j]} "
+                song_usage_info += "\n"
     else:
         song_usage_info = "Usage detail info not found"
 
-    user_info = song_basic_info + "\n" + song_usage_info
+    user_info = song_basic_info + song_data + song_usage_info
     await gdsong.finish(user_info)
