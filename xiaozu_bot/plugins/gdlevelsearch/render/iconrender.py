@@ -1,4 +1,4 @@
-"""本地渲染 Geometry Dash 图标：从 ./resources/icons 按 plist 拼出图标。
+"""本地渲染 Geometry Dash 图标：从随插件发布的图集 zip 按 plist 拼出图标。
 
 对照 gdbrowser iconkit 的 icon.js 重写合成逻辑，修掉原来几个问题：
 
@@ -12,13 +12,15 @@
 5. tint 用逐通道乘法（PIXI tint 语义），不再用亮度近似。
 """
 
-import os
+import io
 import math
 import plistlib
 import re
+import zipfile
 
 from PIL import Image, ImageColor
 
+from ..paths import ICONS_ZIP
 
 # 颜色索引表（GD 颜色 id -> 十六进制色值）
 color_map = {
@@ -51,10 +53,6 @@ color_map = {
     104: "#470134", 105: "#d2ff32", 106: "#76bdff",
 }
 FALLBACK_COLOR = "#ffffff"
-
-# 配置（保持原文件位置不变）
-RESOURCE_DIR = "./resources/icons"
-OUTPUT_DIR = "./"
 
 # 静态渲染时把图标在画布里的纵向位置对齐到和游戏一致
 Y_OFFSETS = {"player_ball": -10, "bird": 30, "spider": 7, "swing": -15}
@@ -162,17 +160,38 @@ def crop_frame(atlas, frame):
     return img
 
 
+def _read_archive() -> dict[str, bytes]:
+    """Decompress the icon atlas zip into memory.
+
+    It holds 1207 plists plus 1207 atlases (~11 MB raw). Re-opening the zip for
+    every plist and every atlas lookup was the slow path, and the archive never
+    changes while the bot runs, so it is read once here, at import time
+    (plugin load == bot startup).
+    """
+    with zipfile.ZipFile(ICONS_ZIP) as zf:
+        return {name: zf.read(name) for name in zf.namelist()}
+
+
+#: ICONS_ZIP entry name -> raw bytes, filled once at startup.
+ICON_ARCHIVE: dict[str, bytes] = _read_archive()
+
+
+def _read_entry(name: str) -> bytes:
+    """Read one archive entry; a missing name reports like a missing file."""
+    try:
+        return ICON_ARCHIVE[name]
+    except KeyError:
+        raise FileNotFoundError(f"{name} is not in {ICONS_ZIP.name}") from None
+
+
 def _load_plist(plist_file):
-    plist_path = os.path.join(RESOURCE_DIR, plist_file)
-    with open(plist_path, "rb") as f:
-        return plistlib.load(f)
+    return plistlib.loads(_read_entry(plist_file))
 
 
 def _load_atlas(data):
-    png_name = data["metadata"]["textureFileName"]
-    # textureFileName 一般以 "icons/" 前缀开头，去掉后拼到 RESOURCE_DIR
-    atlas_path = os.path.join(RESOURCE_DIR, png_name[6:])
-    return Image.open(atlas_path).convert("RGBA")
+    # textureFileName looks like "icons/player_01-uhd.png"; archive entries are flat.
+    png_name = data["metadata"]["textureFileName"].removeprefix("icons/")
+    return Image.open(io.BytesIO(_read_entry(png_name))).convert("RGBA")
 
 
 # ---------- 图层合成 ----------
@@ -279,10 +298,9 @@ def _section(frames, atlas, prefix, suffix):
             after = rest[len(suffix):]
             if after and not after.startswith("_"):
                 continue
-        else:
-            if (rest.startswith("_2") or rest.startswith("_extra")
-                    or rest.startswith("_glow")):
-                continue
+        elif (rest.startswith("_2") or rest.startswith("_extra")
+                or rest.startswith("_glow")):
+            continue
         img = crop_frame(atlas, frame)
         ox, oy = parse_offset(frame["spriteOffset"])
         return img, float(ox), float(-oy)
@@ -297,7 +315,6 @@ def _build_simple(plist_file, color1, color2, extra_color, glow_on, glow_color, 
     frames = data["frames"]
     atlas = _load_atlas(data)
     prefix = _detect_prefix(frames)
-    print("检测到角色:", prefix)
 
     # 顺序跟 icon.js 一致：glow → (dome) → col2 → col1 → white(extra)
     layers = []
@@ -334,7 +351,6 @@ def _build_complex(plist_file, color1, color2, glow_on, glow_color,
     frames = data["frames"]
     atlas = _load_atlas(data)
     prefix = _detect_prefix_complex(frames, fallback_prefix)
-    print("检测到角色:", prefix)
     layout = ROBOT_PARTS[form]
 
     def part_section(part_no, suffix, tint_hex):
@@ -407,18 +423,13 @@ def get_icon_from_cols(type, icon, color1, color2, glow, glowc=-1):
     glow_id = (color1 if color2 == 15 else color2) if glowc is None else glowc
     glow_on = bool(glow) or color1 == 15
 
-    plist_file = f"{type}_{icon_id}-uhd.plist"
+    # Archive entries are zero-padded to two digits: player_01-uhd.plist
+    plist_file = f"{type}_{icon_id:02d}-uhd.plist"
     c1 = color_map.get(color1, FALLBACK_COLOR)
     c2 = color_map.get(color2, FALLBACK_COLOR)
     cg = color_map.get(glow_id, FALLBACK_COLOR)
 
     if type in ROBOT_PARTS:
         return _build_complex(plist_file, c1, c2, glow_on, cg, type,
-                              f"{type}_{icon_id}")
+                              f"{type}_{icon_id:02d}")
     return _build_simple(plist_file, c1, c2, "#FFFFFF", glow_on, cg, type)
-
-
-if __name__ == "__main__":
-    result = get_icon_from_cols("player", 141, 19, 12, True, 51)
-    result.save(os.path.join(OUTPUT_DIR, "output.png"))
-    print("已输出:", os.path.join(OUTPUT_DIR, "output.png"))
