@@ -38,6 +38,7 @@ from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import (
     SubmissionPage,
 )
 from xiaozu_bot.plugins.gdlevelsearch.commands import fullsearch, ratings
+from xiaozu_bot.utils.gd_args import SORT_ALIASES
 
 # ---------------------------------------------------------------------------
 # 公共小工具
@@ -241,7 +242,7 @@ class _ModSpec(NamedTuple):
 
 
 MOD_SPECS = [
-    pytest.param(_ModSpec(fullsearch, "query", "-a -d", "-a"), id="fullsearch"),
+    pytest.param(_ModSpec(fullsearch, "query", "-a", "-a"), id="fullsearch"),
     pytest.param(_ModSpec(ratings, "target", "-asc -v", "-asc"), id="ratings"),
 ]
 
@@ -305,24 +306,24 @@ class TestSortAliases:
         gddlapi.getsubmissions 会把不认识的 sort 直接丢掉（只 warning），
         所以别名表写错了不会报错，只是排序悄悄失效 —— 必须在这里拦住。
         """
-        assert set(ratings.SORT_ALIASES.values()) <= SUBMISSION_SORTS
+        assert set(SORT_ALIASES.values()) <= SUBMISSION_SORTS
 
     def test_every_field_has_a_chinese_alias(self) -> None:
         """这张表就是给用户看的 UI，每个字段的中文别名都不能漏"""
         with_chinese = {
-            field for alias, field in ratings.SORT_ALIASES.items() if not alias.isascii()
+            field for alias, field in SORT_ALIASES.items() if not alias.isascii()
         }
 
-        assert with_chinese == set(ratings.SORT_ALIASES.values())
+        assert with_chinese == set(SORT_ALIASES.values())
 
     def test_username_sort_is_deliberately_not_exposed(self) -> None:
         """注释说 API 的 username 排序实测无效，所以别名表里不该有它"""
         assert "username" in SUBMISSION_SORTS
-        assert "username" not in ratings.SORT_ALIASES.values()
+        assert "username" not in SORT_ALIASES.values()
 
     def test_alias_table_has_no_uppercase_keys(self) -> None:
         """parse_args 是拿 lower() 之后的词去查表的，表里有大写就永远命不中"""
-        assert all(key == key.lower() for key in ratings.SORT_ALIASES)
+        assert all(key == key.lower() for key in SORT_ALIASES)
 
 
 class TestRatingsParseArgs:
@@ -343,10 +344,11 @@ class TestRatingsParseArgs:
     def test_desc_flag(self) -> None:
         assert ratings.parse_args("bloodbath -desc").sort_direction == "desc"
 
-    def test_direction_flags_last_one_wins(self) -> None:
-        """-asc / -desc 都能给，最后出现的那个说了算（两个方向是同一个字段）"""
-        assert ratings.parse_args("bloodbath -asc -desc").sort_direction == "desc"
-        assert ratings.parse_args("bloodbath -desc -asc").sort_direction == "asc"
+    def test_asc_and_desc_conflict(self) -> None:
+        """两个方向开关是互斥的：同时写就报错，不猜用户想要哪个"""
+        for text in ("bloodbath -asc -desc", "bloodbath -desc -asc"):
+            with pytest.raises(ratings.ArgError):
+                ratings.parse_args(text)
 
     def test_sort_flag_alone_without_target_raises(self) -> None:
         """`-s tier` 把 tier 吃掉当排序字段了，剩下的关键词是空的"""
@@ -355,7 +357,7 @@ class TestRatingsParseArgs:
 
     def test_every_alias_parses(self) -> None:
         """-s 后面接表里任意一个别名都能解析出对应字段（表加了别名自动跟着测）"""
-        for alias, api_field in ratings.SORT_ALIASES.items():
+        for alias, api_field in SORT_ALIASES.items():
             assert ratings.parse_args(f"bloodbath -s {alias}").sort == api_field
 
     def test_flags_are_case_insensitive(self) -> None:
@@ -394,12 +396,11 @@ class TestRatingsParseArgs:
         assert a.sort_direction == "asc"
         assert a.victors_only is True
 
-    def test_repeated_flags_last_one_wins(self) -> None:
-        assert ratings.parse_args("bloodbath -s tier -s enj").sort == "enjoyment"
-        # 重复给同一个方向是幂等的，victors 那个开关也是
-        query = ratings.parse_args("bloodbath -asc -asc -v -v")
-        assert query.sort_direction == "asc"
-        assert query.victors_only is True
+    def test_repeated_flags_raise(self) -> None:
+        """每个开关只能写一次：重复了直接报错，不猜用户想要哪个"""
+        for text in ("bloodbath -s tier -s enj", "bloodbath -asc -asc", "bloodbath -v -victors"):
+            with pytest.raises(ratings.ArgError):
+                ratings.parse_args(text)
 
     def test_numeric_id_target_is_kept_as_text(self) -> None:
         """parse_args 不负责解析 id，原样留给 resolve_level"""
@@ -1217,72 +1218,6 @@ class TestRatingsAgainstStubbedHttp:
 # ===========================================================================
 
 
-class TestDifficultyTables:
-    """两张难度别名表。
-
-    表是纯数据，逐行抄一遍等于把表写两份 —— 只守住必须成立的那几条不变式。
-    """
-
-    def test_demon_values_are_within_the_api_range(self) -> None:
-        """demonFilter 只认 1-5，超了服务器一条都不返回"""
-        assert set(fullsearch.DEMON_DIFFICULTIES.values()) == {1, 2, 3, 4, 5}
-
-    def test_nondemon_values(self) -> None:
-        """0 是 auto，对应请求参数 diff=-3"""
-        assert fullsearch.NONDEMON_DIFFICULTIES["0"] == -3
-        assert fullsearch.NONDEMON_DIFFICULTIES["auto"] == -3
-        assert set(fullsearch.NONDEMON_DIFFICULTIES.values()) == {-3, 1, 2, 3, 4, 5}
-
-    def test_tables_have_no_uppercase_keys(self) -> None:
-        """查表前都 lower() 过，表里有大写键就永远命不中"""
-        assert all(k == k.lower() for k in fullsearch.DEMON_DIFFICULTIES)
-        assert all(k == k.lower() for k in fullsearch.NONDEMON_DIFFICULTIES)
-
-    def test_demon_sentinel(self) -> None:
-        assert fullsearch.DIFF_DEMON == -2
-
-    def test_numeric_keys_map_to_themselves(self) -> None:
-        """用户直接写数字时必须原样传给服务器（"0" 是唯一例外，见上）"""
-        for table in (fullsearch.DEMON_DIFFICULTIES, fullsearch.NONDEMON_DIFFICULTIES):
-            for key, value in table.items():
-                if key.isdigit() and key != "0":
-                    assert value == int(key)
-
-    def test_named_aliases_follow_the_ingame_order(self) -> None:
-        """名字和数字对错位不会报错，只是搜出来的难度悄悄不对"""
-        demon = fullsearch.DEMON_DIFFICULTIES
-        assert [demon[k] for k in ("easy", "medium", "hard", "insane", "extreme")] == [
-            1, 2, 3, 4, 5
-        ]
-        # 缩写和全称必须指向同一个难度
-        assert demon["med"] == demon["medium"]
-        assert demon["ex"] == demon["extreme"]
-
-        nondemon = fullsearch.NONDEMON_DIFFICULTIES
-        assert [
-            nondemon[k] for k in ("auto", "easy", "normal", "hard", "harder", "insane")
-        ] == [-3, 1, 2, 3, 4, 5]
-
-
-class TestAliasName:
-    """_alias_name()：反查一个人类看得懂的名字"""
-
-    def test_demon_names_skip_numeric_keys(self) -> None:
-        """纯数字的 key 要跳过，取表里第一个非数字别名"""
-        names = [fullsearch._alias_name(fullsearch.DEMON_DIFFICULTIES, v) for v in range(1, 6)]
-
-        assert names == ["easy", "medium", "hard", "insane", "extreme"]
-
-    def test_nondemon_names(self) -> None:
-        values = (-3, 1, 2, 3, 4, 5)
-        names = [fullsearch._alias_name(fullsearch.NONDEMON_DIFFICULTIES, v) for v in values]
-
-        assert names == ["auto", "easy", "normal", "hard", "harder", "insane"]
-
-    def test_unknown_value_falls_back_to_the_number(self) -> None:
-        assert fullsearch._alias_name(fullsearch.DEMON_DIFFICULTIES, 99) == "99"
-
-
 class TestFullSearchParseArgs:
     """*gdfullsearch <关键词> [-a] [-d [难度]] [-u <难度>] 的解析。
 
@@ -1307,11 +1242,17 @@ class TestFullSearchParseArgs:
         assert query.rated_only is False
         assert query.demon_filter == 5
 
-    def test_bare_demon_flag_sets_diff_only(self) -> None:
-        query = fullsearch.parse_args("bloodbath -d")
+    def test_any_difficulty_word_sets_diff_only(self) -> None:
+        """`-d any`：只要 demon，不限难度（-d 必须带值，所以这是唯一写法）"""
+        query = fullsearch.parse_args("bloodbath -d any")
 
         assert query.diff == fullsearch.DIFF_DEMON
         assert query.demon_filter is None
+
+    def test_bare_demon_flag_raises(self) -> None:
+        """-d 后面没有值就报错，不再有「只写 -d」这种形式"""
+        with pytest.raises(fullsearch.ArgError):
+            fullsearch.parse_args("bloodbath -d")
 
     def test_every_demon_alias_is_consumed(self) -> None:
         """-d 后面接表里任意一个别名都会被吃掉（表加了别名自动跟着测）"""
@@ -1322,26 +1263,21 @@ class TestFullSearchParseArgs:
             assert query.diff == fullsearch.DIFF_DEMON
             assert query.query == "bloodbath"
 
-    def test_demon_flag_keeps_a_non_difficulty_word_as_a_keyword(self) -> None:
-        """-d 后面不是合法难度就不吃掉，留给关键词（docstring 明说的行为）"""
-        query = fullsearch.parse_args("-d bloodbath")
-
-        assert query.query == "bloodbath"
-        assert query.diff == fullsearch.DIFF_DEMON
-        assert query.demon_filter is None
+    def test_demon_flag_always_takes_the_next_word(self) -> None:
+        """-d 后面那个词一定是难度：不是合法难度就报错，不会被留给关键词"""
+        with pytest.raises(fullsearch.ArgError):
+            fullsearch.parse_args("-d bloodbath")
 
     def test_demon_scale_six_is_not_a_valid_filter(self) -> None:
-        """响应字段 43 里 6=extreme，但 demonFilter 只到 5，
-        所以 `-d 6` 的 6 会被当成关键词 —— 这正是注释警告的那个坑。
-        """
-        query = fullsearch.parse_args("nine circles -d 6")
+        """响应字段 43 里 6=extreme，但 demonFilter 只到 5，所以 -d 6 直接报错"""
+        with pytest.raises(fullsearch.ArgError) as exc:
+            fullsearch.parse_args("nine circles -d 6")
 
-        assert query.demon_filter is None
-        assert query.query == "nine circles 6"
+        assert "6" in str(exc.value)
 
     def test_keyword_before_flag_survives(self) -> None:
-        """docstring 举的例子：想搜名字里带 extreme 的就把关键词写前面"""
-        query = fullsearch.parse_args("extreme demon -d")
+        """关键词写前面、-d 写最后：难度用 any 表示不限"""
+        query = fullsearch.parse_args("extreme demon -d any")
 
         assert query.query == "extreme demon"
         assert query.demon_filter is None
@@ -1379,20 +1315,28 @@ class TestFullSearchParseArgs:
             fullsearch.parse_args("bloodbath -u demon")
 
     def test_nondemon_flag_always_eats_the_next_token(self) -> None:
-        """和 -d 不一样，-u 后面那个词一定会被当成难度（不合法就直接报错）"""
+        """-u 后面那个词一定会被当成难度（不合法就直接报错）"""
         with pytest.raises(fullsearch.ArgError):
             fullsearch.parse_args("-u bloodbath")
 
     def test_demon_and_nondemon_together_raise(self) -> None:
         """两个开关谁先谁后都要拦住（难度本身都是合法的，只可能是冲突炸的）"""
-        for text in ("bloodbath -d -u 3", "bloodbath -u 3 -d", "bloodbath -d 5 -u 3"):
+        for text in ("bloodbath -d any -u 3", "bloodbath -u 3 -d any", "bloodbath -d 5 -u 3"):
             with pytest.raises(fullsearch.ArgError):
                 fullsearch.parse_args(text)
 
-    def test_repeated_flags_last_one_wins(self) -> None:
-        assert fullsearch.parse_args("x -d 1 -d 5").demon_filter == 5
-        assert fullsearch.parse_args("x -u 1 -u 5").diff == 5
-        assert fullsearch.parse_args("x -a -a").rated_only is False
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "x -d 1 -d 5",
+            "x -u 1 -u 5",
+            "x -a -a",
+        ],
+    )
+    def test_repeated_flags_raise(self, text: str) -> None:
+        """每个开关只能写一次：重复了直接报错，不猜用户想要哪个"""
+        with pytest.raises(fullsearch.ArgError):
+            fullsearch.parse_args(text)
 
 
 class TestFullSearchQueryApiKwargs:
@@ -1433,12 +1377,12 @@ class TestFullSearchDescribe:
 
     def test_every_filter_combo_gets_its_own_summary(self) -> None:
         texts = [
-            "bloodbath",        # 默认只搜 rated
-            "bloodbath -a",     # 全部关卡
-            "bloodbath -d",     # 只说 demon，没具体难度
-            "bloodbath -d 2",   # 有 demon_filter 就走它那一支
+            "bloodbath",         # 默认只搜 rated
+            "bloodbath -a",      # 全部关卡
+            "bloodbath -d any",  # 只说 demon，没具体难度
+            "bloodbath -d 2",    # 有 demon_filter 就走它那一支
             "bloodbath -a -d ex",
-            "bloodbath -u 0",   # 非 demon，0 就是 auto
+            "bloodbath -u 0",    # 非 demon，0 就是 auto
             "bloodbath -u 4",
         ]
 

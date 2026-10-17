@@ -546,11 +546,14 @@ class Gddl:
         high: int = -1,
         enjoyment_min: float | None = None,
         enjoyment_max: float | None = None,
+        difficulty: str | None = None,
     ) -> GDDLSearchEntry | None:
-        """在指定 tier 区间里随机取一关，可以再按 enjoyment 卡一道。
+        """在指定 tier 区间里随机取一关，可以再按 enjoyment / 难度卡一道。
 
         tier 用 ±0.5 展开成区间，这样传 20 能把 19.5-20.5 的都算进去。
-        enjoyment 是 0-10，不传就不筛。
+        enjoyment 是 0-10，不传就不筛。difficulty 是搜索接口的难度枚举
+        （Easy/Medium/Hard/Insane/Extreme），不传就不筛；远端失败时退到本地
+        快照，走的是同一套筛选条件。
         """
         if high == -1:
             high = low
@@ -565,6 +568,7 @@ class Gddl:
             maxRating=high_exact,
             minEnjoyment=enjoyment_min,
             maxEnjoyment=enjoyment_max,
+            difficulty=difficulty,
         )
         if not payload:
             return None

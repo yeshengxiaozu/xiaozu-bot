@@ -8,6 +8,8 @@ from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 
 from xiaozu_bot.utils.adapter_compat import send_image
+from xiaozu_bot.utils.args import Flag
+from xiaozu_bot.utils.gd_args import ArgError, parse_flags
 
 from ..api.gdapi import get_user_by_name
 from ..render import icons
@@ -16,34 +18,40 @@ from ..render import icons
 # 挂在 gduser 上会把那条命令拖慢。
 gdicon = on_command("gdicon")
 
+USAGE = (
+    "用法：*gdicon 用户名 [gamemode]\n"
+    f"gamemode 可选：{icons.form_names()}，不写默认 cube\n"
+    "加 -a 把九个 gamemode 拼成一张图\n"
+    "例：*gdicon RobTop ship / *gdicon RobTop -a"
+)
+
+GDICON_FLAGS = (Flag(("-a", "-all")),)
+
 
 @gdicon.handle()
 async def handle_gdicon(bot: Bot, event: Event, arg: Message = CommandArg()) -> None:
     """*gdicon 用户名 [gamemode]，加 -a 出全部九个"""
-    args = arg.extract_plain_text().strip().split()
-    if not args:
-        await gdicon.finish(
-            "用法：*gdicon 用户名 [gamemode]\n"
-            f"gamemode 可选：{icons.form_names()}，不写默认 cube\n"
-            "加 -a 把九个 gamemode 拼成一张图\n"
-            "例：*gdicon RobTop ship / *gdicon RobTop -a"
-        )
+    tokens = arg.extract_plain_text().strip().split()
+    if not tokens:
+        await gdicon.finish(USAGE)
 
-    show_all = False
+    try:
+        flags, words = parse_flags(tokens, GDICON_FLAGS, USAGE)
+    except ArgError as e:
+        await gdicon.finish(str(e))
+
+    show_all = bool(flags.get("-a"))
     form_name = ""
-    words: list[str] = []
-    for token in args:
-        lowered = token.lower()
-        if lowered in ("-a", "-all"):
-            show_all = True
-        elif icons.resolve_form(lowered) is not None and words:
-            # 名字后面跟的那个词能对上 gamemode 才当 gamemode，
-            # 否则当成用户名的一部分（有人 ID 就叫 wave）
-            form_name = lowered
+    name_words: list[str] = []
+    for token in words:
+        # 名字后面跟的那个词能对上 gamemode 才当 gamemode，
+        # 否则当成用户名的一部分（有人 ID 就叫 wave）
+        if icons.resolve_form(token.lower()) is not None and name_words:
+            form_name = token.lower()
         else:
-            words.append(token)
+            name_words.append(token)
 
-    name = " ".join(words).strip()
+    name = " ".join(name_words).strip()
     if not name:
         await gdicon.finish("请给一个 GD 用户名")
 

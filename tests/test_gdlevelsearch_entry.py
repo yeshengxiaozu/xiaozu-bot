@@ -130,6 +130,7 @@ class FakeGddl:
     def __init__(self, levels: list[GDDLSearchEntry] | None = None) -> None:
         self.levels = levels
         self.names: list[str] = []
+        # 每次调用记成 (tier低, tier高, enj低, enj高, difficulty)
         self.random_calls: list[tuple] = []
         self.random_result: Any = None
 
@@ -137,8 +138,8 @@ class FakeGddl:
         self.names.append(name)
         return self.levels
 
-    def getrandomlevelbytier(self, *args: Any) -> Any:
-        self.random_calls.append(args)
+    def getrandomlevelbytier(self, *args: Any, **kwargs: Any) -> Any:
+        self.random_calls.append((*args, kwargs.get("difficulty")))
         return self.random_result
 
 
@@ -1509,6 +1510,74 @@ class TestHandleGdsong:
 # ==========================================================================
 # *gdrandom 的参数校验
 # ==========================================================================
+class TestRandomParseArgs:
+    """*gd随机推关 的参数解析：位置参数和 -d 混在一起"""
+
+    def test_plain_tier(self) -> None:
+        query = cmd_random.parse_args("20")
+        assert (query.tier_low, query.tier_high) == (20, -1)
+        assert query.difficulty is None
+
+    def test_all_positional_bounds(self) -> None:
+        query = cmd_random.parse_args("15 20 7 9")
+        assert (query.tier_low, query.tier_high) == (15, 20)
+        assert (query.enjoyment_min, query.enjoyment_max) == (7.0, 9.0)
+
+    def test_swapped_bounds_are_put_back_in_order(self) -> None:
+        query = cmd_random.parse_args("20 15 9 7")
+        assert (query.tier_low, query.tier_high) == (15, 20)
+        assert (query.enjoyment_min, query.enjoyment_max) == (7.0, 9.0)
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("15 -d 5", "Extreme"),
+            ("15 -d easy", "Easy"),
+            ("15 -d MEDIUM", "Medium"),
+            ("-d hard 15", "Hard"),
+            ("15 20 7 -d insane", "Insane"),
+            ("15 -d med", "Medium"),
+        ],
+    )
+    def test_difficulty_forms(self, text: str, expected: str) -> None:
+        """数字 1-5 和英文名都认、不分大小写、放哪儿都行"""
+        query = cmd_random.parse_args(text)
+        assert query.difficulty == expected
+        assert query.tier_low == 15
+
+    def test_difficulty_does_not_eat_positional_bounds(self) -> None:
+        """-d 夹在中间时，它后面的数字还是 tier / enjoyment"""
+        query = cmd_random.parse_args("15 20 -d extreme 7")
+        assert (query.tier_low, query.tier_high) == (15, 20)
+        assert query.enjoyment_min == 7.0
+        assert query.difficulty == "Extreme"
+
+    def test_repeated_difficulty_raises(self) -> None:
+        """-d 只能写一次：重复了直接报错"""
+        with pytest.raises(cmd_random.ArgError):
+            cmd_random.parse_args("15 -d easy -d extreme")
+
+    @pytest.mark.parametrize("text", ["", "   ", "-d extreme"])
+    def test_missing_tier_raises(self, text: str) -> None:
+        """只有 -d 没有 tier 也是错的：tier 下限必填"""
+        with pytest.raises(cmd_random.ArgError):
+            cmd_random.parse_args(text)
+
+    def test_missing_difficulty_value_raises(self) -> None:
+        with pytest.raises(cmd_random.ArgError):
+            cmd_random.parse_args("15 -d")
+
+    def test_unknown_difficulty_raises_and_echoes_the_word(self) -> None:
+        with pytest.raises(cmd_random.ArgError) as exc:
+            cmd_random.parse_args("15 -d legendary")
+        assert "legendary" in str(exc.value)
+
+    @pytest.mark.parametrize("text", ["0", "40", "x", "15 20 11"])
+    def test_bad_numbers_raise(self, text: str) -> None:
+        with pytest.raises(cmd_random.ArgError):
+            cmd_random.parse_args(text)
+
+
 class TestHandleGdrandom:
     async def test_no_arguments_replies_without_searching(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
@@ -1560,7 +1629,7 @@ class TestHandleGdrandom:
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"),
             arg="20 15 8 3",
         )
-        assert fake.random_calls == [(15, 20, 3.0, 8.0)]
+        assert fake.random_calls == [(15, 20, 3.0, 8.0, None)]
 
     async def test_omitted_upper_bound_becomes_minus_one(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
@@ -1571,7 +1640,75 @@ class TestHandleGdrandom:
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg="15"
         )
-        assert fake.random_calls == [(15, -1, None, None)]
+        assert fake.random_calls == [(15, -1, None, None, None)]
+
+    async def test_difficulty_is_passed_as_the_gddl_enum(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """-d 的数字写法也要换算成搜索接口的枚举值再传下去"""
+        fake = FakeGddl()
+        monkeypatch.setattr(cmd_random, "Gddl", fake)
+
+        await run_handler(
+            gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"),
+            arg="15 20 -d 3",
+        )
+        assert fake.random_calls == [(15, 20, None, None, "Hard")]
+
+    @pytest.mark.parametrize("arg", ["15 -d", "15 -d nope", "-d easy"])
+    async def test_bad_difficulty_replies_without_searching(
+        self, arg: str, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake = FakeGddl()
+        monkeypatch.setattr(cmd_random, "Gddl", fake)
+
+        await run_handler(
+            gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg=arg
+        )
+        assert len(sent_texts(fake_bot)) == 1
+        assert fake.random_calls == []
+
+    async def test_difficulty_reaches_the_wire(
+        self, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch, stub_requests: Any, make_response: Any,
+    ) -> None:
+        """不换 Gddl 替身，确认 difficulty 关键字真能进真函数、真出现在请求参数里。
+
+        FakeGddl 收 `**kwargs` 是宽松的，关键字名字写错只有走真函数才会炸。
+        """
+        sent: list[int] = []
+
+        async def fake_send_result(_bot: Any, _event: Any, level_id: int) -> None:
+            sent.append(level_id)
+
+        monkeypatch.setattr(cmd_random, "send_result", fake_send_result)
+        stub_requests.get(
+            "https://gdladder.com/api/levels",
+            make_response(
+                json_data={
+                    "total": 1,
+                    "data": [{
+                        "id": 1000,
+                        "rating": 20.5,
+                        "enjoyment": 7.5,
+                        "name": "Random Pick",
+                        "difficulty": "Extreme",
+                        "rarity": 0,
+                        "publisherName": "RobTop",
+                        "songName": "Stereo Madness",
+                    }],
+                }
+            ),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"),
+            arg="15 20 -d extreme",
+        )
+
+        assert stub_requests.calls[-1]["params"]["difficulty"] == "Extreme"
+        assert sent == [1000]
 
     async def test_no_match_replies_without_an_image(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch

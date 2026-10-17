@@ -19,6 +19,8 @@ from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.rule import Rule
 
+from xiaozu_bot.utils.gd_args import NEXT_WORDS, PREV_WORDS, STOP_WORDS
+
 from .. import paths
 
 try:
@@ -36,9 +38,6 @@ PAGE_SIZE = 10
 # 会话 10 分钟没动静就失效（惰性检查，不开 asyncio 任务）
 SESSION_SECONDS = 10 * 60
 
-EXIT_WORDS = {"结束", "取消", "退出", "q"}
-NEXT_WORDS = {"n", "next", "下一页", "下页"}
-PREV_WORDS = {"p", "prev", "上一页", "上页"}
 HELP_WORDS = {"help", "-h", "帮助"}
 
 REASON_LABELS = {
@@ -151,7 +150,7 @@ async def _process_input(event: Event, text: str) -> str | None:
     """处理一次管理输入；返回要发的文本，None 表示看不懂（调用方决定怎么回）。"""
     session_id = event.get_session_id()
 
-    if text in EXIT_WORDS:
+    if text in STOP_WORDS:
         _drop_session(session_id)
         return "已退出管理会话"
 

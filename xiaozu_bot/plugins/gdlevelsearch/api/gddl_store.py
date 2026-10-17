@@ -70,6 +70,13 @@ def _matches(level: dict[str, Any], filters: dict[str, Any]) -> bool:
     if name is not None and str(level.get("name") or "").strip().lower() != str(name).strip().lower():
         return False
 
+    difficulty = filters.get("difficulty")
+    if difficulty is not None and (
+        str(level.get("difficulty") or "").strip().lower()
+        != str(difficulty).strip().lower()
+    ):
+        return False
+
     rating = _number(level.get("rating"))
     enjoyment = _number(level.get("enjoyment"))
     bounds = (
@@ -95,9 +102,15 @@ def search_levels(
     sort_direction: str | None = None,
     **filters: Any,
 ) -> dict[str, Any] | None:
-    """Run the subset of GDDL search supported by the local snapshot."""
+    """Run the subset of GDDL search supported by the local snapshot.
+
+    The payload uses the same keys as the remote search endpoint (notably the
+    rows under "data"), because Gddl.searchlevels hands either source to the
+    same callers.
+    """
     supported = {
         "name",
+        "difficulty",
         "minRating",
         "maxRating",
         "minEnjoyment",
@@ -125,7 +138,7 @@ def search_levels(
         "total": len(result),
         "limit": limit,
         "page": page,
-        "levels": result[start : start + limit],
+        "data": result[start : start + limit],
     }
 
 

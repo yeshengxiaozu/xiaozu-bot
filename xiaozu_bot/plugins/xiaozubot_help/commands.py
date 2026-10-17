@@ -53,18 +53,19 @@ COMMANDS: dict[str, Cmd] = {
         examples=("*gdsearch Acu", "*gdsearch 61079355"),
     ),
     "gdfullsearch": Cmd(
-        usage="*gdfullsearch 关键词 [-a] [-d [难度]] [-u 难度]",
+        usage="*gdfullsearch 关键词 [-a] [-d 难度] [-u 难度]",
         summary="基于GD服务器的关卡搜索",
         category="gd",
         detail=(
             "从gd服务器直接获取数据进行关卡搜索\n"
             "默认只搜索 rated 关卡\n"
             "-a　　　搜索全部关卡，包括unrate\n"
-            "-d [难度]　只搜 demon。难度可省略，也可写 1-5 或\n"
-            "　　　　　easy / medium / hard / insane / extreme\n"
+            "-d 难度　只搜 demon。写 1-5 或\n"
+            "　　　　　easy / medium / hard / insane / extreme，\n"
+            "　　　　　写 any 就是不限难度\n"
             "-u 难度　只搜非 demon。写 0-5 或\n"
             "　　　　　auto / easy / normal / hard / harder / insane\n"
-            "-d 和 -u 不能同时使用（废话）。\n"
+            "-d 和 -u 不能同时使用（废话），每个开关只能写一次。\n"
             "一页列出 10 条内容：回复序号选中、回复下一页/上一页翻页，回复结束取消。"
         ),
         examples=("*gdfullsearch bloodbath", "*gdfullsearch stereo -a -u 0"),
@@ -78,7 +79,7 @@ COMMANDS: dict[str, Cmd] = {
             "列出这关在 GDDL 上每个人提交的 tier 和 enjoyment，\n"
             "完全的vibe coding产物！\n"
             "-s 排序　tier / enj / date / progress / attempts\n"
-            "-asc / -desc　正序 / 倒序，不写就用接口自己的默认顺序\n"
+            "-asc / -desc　正序 / 倒序，不写就用接口自己的默认顺序，两个只能选一个\n"
             "-v　　　只看通关的人\n"
             "一页列出 10 条内容：回复序号选中、回复下一页/上一页翻页，回复结束取消。\n"
             "如果有多个关卡重名，会列出所有相关关卡的id，请使用id重新搜索"
@@ -124,20 +125,23 @@ COMMANDS: dict[str, Cmd] = {
         examples=("*gdsong 467339",),
     ),
     "gd随机推关": Cmd(
-        usage="*gd随机推关 (最低)tier [最高tier] [最低enj] [最高enj]",
-        summary="按 tier / enjoyment 随机推一关",
+        usage="*gd随机推关 (最低)tier [最高tier] [最低enj] [最高enj] [-d 难度]",
+        summary="按 tier / enjoyment / 难度 随机推一关",
         category="gd",
         detail=(
             "在指定条件里随机挑一关推给你。\n"
             "第 1 个是 tier 下限（1-39），必填；只给一个参数时视为上下界相同。\n"
             "第 2 个是 tier 上限\n"
             "第 3、4 个是 enjoyment 的下限和上限（0-10，可选）\n"
+            "-d 难度　只推这个难度的关卡：1-5 或\n"
+            "　　　　　easy / medium / hard / insane / extreme（不分大小写）\n"
         ),
         examples=(
             "*gd随机推关 20",
             "*gd随机推关 15 20",
             "*gd随机推关 15 20 7",
             "*gd随机推关 0 15 0 6",
+            "*gd随机推关 15 20 -d extreme",
         ),
     ),
     "plat随机推关": Cmd(

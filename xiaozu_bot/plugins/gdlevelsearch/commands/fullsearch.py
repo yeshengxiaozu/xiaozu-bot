@@ -13,6 +13,21 @@ from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
+from xiaozu_bot.utils.args import Flag
+from xiaozu_bot.utils.gd_args import (
+    DEMON_DIFFICULTIES,
+    DIFF_DEMON,
+    NEXT_WORDS,
+    NONDEMON_DIFFICULTIES,
+    PREV_WORDS,
+    STOP_WORDS,
+    ArgError,
+    alias_name,
+    parse_demon_filter,
+    parse_diff,
+    parse_flags,
+)
+
 from ..api.gdapi import (
     DEMON_STARS,
     GD_PAGE_SIZE,
@@ -25,38 +40,19 @@ from ..services.search import _clear_all_sessions, send_result
 # 会话多久没人动就丢掉。原来 gdsearch 是 30 秒，翻页要慢慢看，放宽一点。
 SESSION_TIMEOUT = 120
 
-# -d 的难度：对应请求参数 demonFilter，取值 1-5。
-# 注意别和响应字段 43 的刻度搞混（那套是 0=hard 3=easy 4=medium 5=insane 6=extreme）。
-DEMON_DIFFICULTIES: dict[str, int] = {
-    "1": 1, "easy": 1,
-    "2": 2, "medium": 2, "med": 2,
-    "3": 3, "hard": 3,
-    "4": 4, "insane": 4,
-    "5": 5, "extreme": 5, "ex": 5,
-}
-
-# -u 的难度：对应请求参数 diff。0 是 auto，映射到 -3。
-NONDEMON_DIFFICULTIES: dict[str, int] = {
-    "0": -3, "auto": -3,
-    "1": 1, "easy": 1,
-    "2": 2, "normal": 2,
-    "3": 3, "hard": 3,
-    "4": 4, "harder": 4,
-    "5": 5, "insane": 5,
-}
-
-DIFF_DEMON = -2  # diff=-2 表示只搜 demon
-
-USAGE = """用法：*gdfullsearch <关键词> [-a] [-d [难度]] [-u <难度>]
+USAGE = """用法：*gdfullsearch <关键词> [-a] [-d 难度] [-u 难度]
   默认只搜 rated 关卡
-  -a          搜全部关卡（包括没评级的）
-  -d [难度]   只搜 demon，难度可选：1-5 或 easy/medium/hard/insane/extreme
-  -u <难度>   只搜非 demon，难度：0-5 或 auto/easy/normal/hard/harder/insane（0 就是 auto）
-  -d 和 -u 不能一起用"""
+  -a        搜全部关卡（包括没评级的）
+  -d 难度   只搜 demon。难度：1-5 或 easy/medium/hard/insane/extreme，
+            写 any 就是不限难度
+  -u 难度   只搜非 demon。难度：0-5 或 auto/easy/normal/hard/harder/insane
+  每个开关只能写一次，-d 和 -u 不能一起用"""
 
-
-class ArgError(ValueError):
-    """参数有问题，消息直接发给用户看"""
+FULLSEARCH_FLAGS = (
+    Flag(("-a",)),
+    Flag(("-d",), True, parse_demon_filter, conflicts=("-u",)),
+    Flag(("-u",), True, parse_diff),
+)
 
 
 @dataclass
@@ -84,90 +80,43 @@ class FullSearchQuery:
         """给用户看的筛选条件摘要"""
         bits = ["rated" if self.rated_only else "全部关卡"]
         if self.demon_filter is not None:
-            name = _alias_name(DEMON_DIFFICULTIES, self.demon_filter)
+            name = alias_name(DEMON_DIFFICULTIES, self.demon_filter)
             bits.append(f"{name} demon")
         elif self.diff == DIFF_DEMON:
             bits.append("demon")
         elif self.diff is not None:
-            name = _alias_name(NONDEMON_DIFFICULTIES, self.diff)
+            name = alias_name(NONDEMON_DIFFICULTIES, self.diff)
             bits.append(f"非 demon / {name}")
         return "、".join(bits)
-
-
-def _alias_name(table: dict[str, int], value: int) -> str:
-    """从别名表里挑一个人类看得懂的名字（跳过纯数字的那些 key）"""
-    for key, val in table.items():
-        if val == value and not key.isdigit():
-            return key
-    return str(value)
 
 
 def parse_args(text: str) -> FullSearchQuery:
     """解析 *gdfullsearch 后面跟的那串东西。
 
-    -d 的难度是可选的，所以只有当它后面紧跟着一个合法难度时才吃掉那个词，
-    否则就当成搜索关键词的一部分。也就是说想搜名字里带 "extreme" 的关卡，
-    把关键词写在前面：`*gdfullsearch extreme demon -d`
+    -a 是开关；-d / -u 都要带一个难度值，所以它们后面那个词一定会被吃掉。
+    想搜名字里带难度词的关卡时，把 -d 写在最后并写明难度，或者用 `-d any`。
     """
     tokens = text.split()
     if not tokens:
         raise ArgError("请提供要搜索的关卡名\n\n" + USAGE)
 
-    rated_only = True
-    diff: int | None = None
-    demon_filter: int | None = None
-    saw_demon_flag = False
-    saw_nondemon_flag = False
-    words: list[str] = []
-
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        lowered = token.lower()
-
-        if lowered == "-a":
-            rated_only = False
-            i += 1
-
-        elif lowered == "-d":
-            saw_demon_flag = True
-            diff = DIFF_DEMON
-            # 后面那个词是合法 demon 难度才吃掉，否则留给关键词
-            if i + 1 < len(tokens) and tokens[i + 1].lower() in DEMON_DIFFICULTIES:
-                demon_filter = DEMON_DIFFICULTIES[tokens[i + 1].lower()]
-                i += 2
-            else:
-                i += 1
-
-        elif lowered == "-u":
-            saw_nondemon_flag = True
-            if i + 1 >= len(tokens):
-                raise ArgError("-u 后面要跟难度（0-5 或 auto/easy/normal/hard/harder/insane）\n\n" + USAGE)
-            key = tokens[i + 1].lower()
-            if key not in NONDEMON_DIFFICULTIES:
-                raise ArgError(
-                    f"看不懂的非 demon 难度：{tokens[i + 1]}\n"
-                    "可以用 0-5，或者 auto/easy/normal/hard/harder/insane（0 就是 auto）"
-                )
-            diff = NONDEMON_DIFFICULTIES[key]
-            i += 2
-
-        else:
-            words.append(token)
-            i += 1
-
-    if saw_demon_flag and saw_nondemon_flag:
-        raise ArgError("-d 和 -u 不能一起用：一个是只搜 demon，一个是只搜非 demon")
+    flags, words = parse_flags(tokens, FULLSEARCH_FLAGS, USAGE)
 
     query = " ".join(words).strip()
     if not query:
         raise ArgError("请提供要搜索的关卡名\n\n" + USAGE)
 
+    diff: int | None = None
+    if "-d" in flags:
+        diff = DIFF_DEMON
+    elif "-u" in flags:
+        diff = flags["-u"]
+
     return FullSearchQuery(
         query=query,
-        rated_only=rated_only,
+        rated_only="-a" not in flags,
         diff=diff,
-        demon_filter=demon_filter,
+        demon_filter=flags.get("-d"),
     )
 
 
@@ -324,10 +273,6 @@ gdfullsearch = on_command("gdfullsearch")
 # commands/search.py 的 search_cache 只按 user_id，同一个人在两个群里搜会串，新的不继承这毛病。
 fullsearch_sessions: dict[str, FullSearchSession] = {}
 fullsearch_timeouts: dict[str, asyncio.Task] = {}
-
-NEXT_WORDS = {"n", "next", "下一页", "下页"}
-PREV_WORDS = {"p", "prev", "上一页", "上页"}
-STOP_WORDS = {"结束", "取消", "退出", "q"}
 
 
 def _drop_fullsearch(session_id: str) -> None:

@@ -13,32 +13,34 @@ from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
+from xiaozu_bot.utils.args import Flag
+from xiaozu_bot.utils.gd_args import (
+    NEXT_WORDS,
+    PREV_WORDS,
+    STOP_WORDS,
+    ArgError,
+    parse_flags,
+    parse_sort,
+)
+
 from ..api.gddlapi import GDDL_SUBMISSION_LIMIT, Gddl, Submission, SubmissionPage
 from ..services.search import _clear_all_sessions
-from .fullsearch import NEXT_WORDS, PREV_WORDS, STOP_WORDS
 
 SESSION_TIMEOUT = 120
 
-# 用户写的排序名 -> API 的字段名。
-# API 的 username 排序实测是不起作用的（正倒序结果一样），所以不放出来。
-SORT_ALIASES: dict[str, str] = {
-    "tier": "rating", "rating": "rating", "评分": "rating",
-    "enj": "enjoyment", "enjoyment": "enjoyment", "体验": "enjoyment",
-    "date": "dateAdded", "time": "dateAdded", "时间": "dateAdded",
-    "progress": "progress", "进度": "progress",
-    "attempts": "attempts", "att": "attempts", "次数": "attempts",
-    "rr": "refreshRate", "refreshrate": "refreshRate", "帧率": "refreshRate",
-}
-
-USAGE = """用法：*gdratings <关卡名或id> [-s <排序>] [-asc] [-v]
+USAGE = """用法：*gdratings <关卡名或id> [-s <排序>] [-asc|-desc] [-v]
   -s <排序>  排序依据：tier / enj / date / progress / attempts
-  -asc / -desc 正序/倒序（覆盖默认）
+  -asc / -desc 正序/倒序（覆盖默认），两个只能选一个
   -v         只看通关的人
+  每个开关只能写一次
 翻页：n 下一页 / p 上一页 / 结束 取消"""
 
-
-class ArgError(ValueError):
-    """参数有问题，消息直接发给用户看"""
+RATINGS_FLAGS = (
+    Flag(("-s",), True, parse_sort),
+    Flag(("-asc",), conflicts=("-desc",)),
+    Flag(("-desc",)),
+    Flag(("-v", "-victors")),
+)
 
 
 @dataclass
@@ -79,45 +81,24 @@ def parse_args(text: str) -> RatingsQuery:
     if not tokens:
         raise ArgError("请提供关卡名或 id\n\n" + USAGE)
 
-    sort: str | None = None
-    sort_direction = None
-    victors = False
-    words: list[str] = []
-
-    i = 0
-    while i < len(tokens):
-        lowered = tokens[i].lower()
-        if lowered == "-asc":
-            sort_direction = "asc"
-            i += 1
-        elif lowered == "-desc":
-            sort_direction = "desc"
-            i += 1
-        elif lowered in ("-v", "-victors"):
-            victors = True
-            i += 1
-        elif lowered == "-s":
-            if i + 1 >= len(tokens):
-                raise ArgError(
-                    "-s 后面请输入排序字段：" + " / ".join(sorted(set(SORT_ALIASES.values())))
-                )
-            key = tokens[i + 1].lower()
-            if key not in SORT_ALIASES:
-                raise ArgError(
-                    f"无法解析的排序字段：{tokens[i + 1]}\n"
-                    "可以用：tier / enj / date / progress / attempts / rr"
-                )
-            sort = SORT_ALIASES[key]
-            i += 2
-        else:
-            words.append(tokens[i])
-            i += 1
+    flags, words = parse_flags(tokens, RATINGS_FLAGS, USAGE)
 
     target = " ".join(words).strip()
     if not target:
         raise ArgError("请提供关卡名或 id\n\n" + USAGE)
 
-    return RatingsQuery(target=target, sort_direction=sort_direction, sort=sort, victors_only=victors)
+    direction: str | None = None
+    if flags.get("-asc"):
+        direction = "asc"
+    elif flags.get("-desc"):
+        direction = "desc"
+
+    return RatingsQuery(
+        target=target,
+        sort_direction=direction,
+        sort=flags.get("-s"),
+        victors_only=bool(flags.get("-v")),
+    )
 
 
 MIN_ID_LEN = 4

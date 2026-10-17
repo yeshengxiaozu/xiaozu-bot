@@ -1133,6 +1133,56 @@ class TestGddlSearch:
         )
         assert Gddl.getrandomlevelbytier(39, high=39) is None
 
+    def test_random_by_tier_difficulty_reaches_the_request(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        """-d 换算出来的枚举值要原样作为 difficulty 查询参数发出去"""
+        stub_requests.get(
+            GDDL_SEARCH_URL,
+            make_response(json_data={"total": 1, "data": [make_search_payload()]}),
+        )
+        Gddl.getrandomlevelbytier(10, difficulty="Extreme")
+        assert stub_requests.calls[-1]["params"]["difficulty"] == "Extreme"
+
+    def test_random_by_tier_omits_unset_difficulty(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        stub_requests.get(
+            GDDL_SEARCH_URL,
+            make_response(json_data={"total": 1, "data": [make_search_payload()]}),
+        )
+        Gddl.getrandomlevelbytier(10)
+        assert "difficulty" not in stub_requests.calls[-1]["params"]
+
+    def test_random_local_fallback_filters_difficulty(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        """远端挂了就走本地快照，难度条件在本地也得生效。
+
+        这条同时守着本地分支返回的 payload 形状：以前快照用 "levels" 键、
+        调用方读 "data"，本地兜底永远拿不到东西。
+        """
+        monkeypatch.setattr(gddl_store, "levels", [])
+        monkeypatch.setattr(gddl_store, "by_id", {})
+        monkeypatch.setattr(gddl_store, "_by_name", {})
+        monkeypatch.setattr(gddl_store, "fetched_at", None)
+        gddl_store._rebuild_indexes(
+            [
+                make_search_payload(id=1, name="easy one", difficulty="Easy"),
+                make_search_payload(id=2, name="extreme one", difficulty="Extreme"),
+            ],
+            "test",
+        )
+        stub_requests.get(GDDL_SEARCH_URL, make_response(500, json_data={}))
+
+        level = Gddl.getrandomlevelbytier(20, difficulty="Extreme")
+
+        assert level is not None
+        assert level.ID == 2
+
 
 # ==========================================================================
 # nlwapi
