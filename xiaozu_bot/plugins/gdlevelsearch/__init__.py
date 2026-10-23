@@ -21,6 +21,7 @@ from .api import (  # noqa: F401
     listsapi,
     nlwapi,
     platapi,
+    ratedplusapi,
 )
 from .api.http import close_async_clients, close_sync_client
 from .render import draw, iconrender, icons  # noqa: F401
@@ -48,6 +49,7 @@ def reload_all() -> None:
         ("plat", platapi),
         ("aredl", aredlapi),
         ("lists", listsapi),
+        ("ratedplus", ratedplusapi),
     ):
         try:
             module.reload()

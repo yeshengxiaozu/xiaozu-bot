@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -34,6 +35,7 @@ from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
 from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import GDDLSearchEntry
 from xiaozu_bot.plugins.gdlevelsearch.api.nlwapi import Level as NlwLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.platapi import PlatInfo
+from xiaozu_bot.plugins.gdlevelsearch.api.ratedplusapi import RatedplusLevel
 from xiaozu_bot.plugins.gdlevelsearch.commands import (
     dailydemon as cmd_dailydemon,
 )
@@ -75,6 +77,7 @@ def gddl_level(
     rating: float | None = None,
     difficulty: str = "Extreme",
     rarity: int = 0,
+    publisher: str | None = "OniLink",
 ) -> GDDLSearchEntry:
     """搜索接口返回的精简 GDDL 条目。"""
     return GDDLSearchEntry(
@@ -85,7 +88,7 @@ def gddl_level(
             "name": name,
             "difficulty": difficulty,
             "rarity": rarity,
-            "publisherName": "OniLink",
+            "publisherName": publisher,
             "songName": "Stereo Madness",
         }
     )
@@ -115,6 +118,28 @@ def plat_info(level_id: str, name: str, **over: Any) -> PlatInfo:
     row = {"id": level_id, "name": name, "creator": "PlatGuy", "tier": "9 - CRUEL"}
     row.update(over)
     return PlatInfo.from_dict(row)
+
+
+def ratedplus_level(
+    level_id: int,
+    name: str,
+    *,
+    creator: str | None = "OniLink",
+    position: int | None = 3,
+    rated: bool = True,
+) -> RatedplusLevel:
+    """一条 pointercrate 榜单条目（带榜单名次，没有 tier）。"""
+    return RatedplusLevel(
+        {
+            "id": level_id,
+            "position": position,
+            "name": name,
+            "creator": creator,
+            "requirement": None,
+            "video": None,
+            "rated": rated,
+        }
+    )
 
 
 def gd_level(**attrs: Any) -> GDLevel:
@@ -161,6 +186,30 @@ class FakePlatapi:
     def getlevelbyname(self, name: str) -> PlatInfo | None:
         self.names.append(name)
         return self.info
+
+
+class FakeRatedplus:
+    """替掉 pointercrate 榜单门面（api/ratedplusapi.py 的 Ratedplus）。"""
+
+    def __init__(self, levels: list[RatedplusLevel] | None = None) -> None:
+        self.levels = levels or []
+        self.names: list[str] = []
+
+    def getlevelbyname(self, name: str) -> list[RatedplusLevel]:
+        self.names.append(name)
+        return self.levels
+
+
+class FakeGdServer:
+    """替掉 gdapi.search_levels_by_name：GD 服务器本体那一路的模糊搜索结果。"""
+
+    def __init__(self, levels: list[GDLevel] | None = None) -> None:
+        self.levels = levels or []
+        self.names: list[str] = []
+
+    def __call__(self, name: str) -> list[GDLevel]:
+        self.names.append(name)
+        return self.levels
 
 
 class RecordingLogger:
@@ -364,20 +413,32 @@ class TestAddSearchResult:
 # ==========================================================================
 @pytest.fixture
 def sources(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """一次把三个数据源门面都换掉，返回它们方便断言"""
+    """一次把五个数据源门面都换掉，返回它们方便断言"""
 
     def _install(
         gddl: list[GDDLSearchEntry] | None = None,
         nlw: list[NlwLevel] | None = None,
         plat: PlatInfo | None = None,
-    ) -> tuple[FakeGddl, FakeNlw, FakePlatapi]:
+        ratedplus: list[RatedplusLevel] | None = None,
+        gd: list[GDLevel] | None = None,
+    ) -> SimpleNamespace:
         fake_gddl = FakeGddl(gddl)
         fake_nlw = FakeNlw(nlw)
         fake_plat = FakePlatapi(plat)
+        fake_rated = FakeRatedplus(ratedplus)
+        fake_gd = FakeGdServer(gd)
         monkeypatch.setattr(svc_search, "Gddl", fake_gddl)
         monkeypatch.setattr(svc_search, "Nlw", fake_nlw)
         monkeypatch.setattr(svc_search, "Platapi", fake_plat)
-        return fake_gddl, fake_nlw, fake_plat
+        monkeypatch.setattr(svc_search, "Ratedplus", fake_rated)
+        monkeypatch.setattr(svc_search, "search_levels_by_name", fake_gd)
+        return SimpleNamespace(
+            gddl=fake_gddl,
+            nlw=fake_nlw,
+            plat=fake_plat,
+            ratedplus=fake_rated,
+            gd=fake_gd,
+        )
 
     return _install
 
@@ -390,7 +451,7 @@ class TestSearchByName:
     def test_gddl_failure_does_not_hide_local_source_matches(
         self, sources: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _gddl, _nlw, _plat = sources(
+        sources(
             nlw=[nlw_level("42", "Fallback", creator="Cached")]
         )
 
@@ -408,7 +469,7 @@ class TestSearchByName:
     def test_nlw_failure_does_not_hide_gddl_matches(
         self, sources: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _gddl, _nlw, _plat = sources(gddl=[gddl_level(7, "Stable")])
+        sources(gddl=[gddl_level(7, "Stable")])
 
         def _broken(_name: str) -> Any:
             raise RuntimeError("temporary NLW outage")
@@ -422,7 +483,7 @@ class TestSearchByName:
     def test_plat_failure_does_not_hide_nlw_matches(
         self, sources: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _gddl, _nlw, _plat = sources(
+        sources(
             nlw=[nlw_level("8", "Stable Plat Fallback")]
         )
 
@@ -522,6 +583,113 @@ class TestSearchByName:
             999, "Platty", "PlatGuy", "9 - CRUEL",
         )
 
+    def test_ratedplus_result_is_included(self, sources: Any) -> None:
+        """pointercrate 榜单只给 id / 名字 / 作者，没有 tier"""
+        sources(ratedplus=[ratedplus_level(500, "Tidal Wave")])
+        got = gdlevelsearch.search_by_name("Tidal Wave")
+        assert [(item.id, item.name, item.creator, item.tier) for item in got] == [
+            (500, "Tidal Wave", "OniLink", None)
+        ]
+
+    def test_ratedplus_fills_a_creator_the_indexes_missed(
+        self, sources: Any
+    ) -> None:
+        sources(
+            gddl=[gddl_level(500, "Tidal Wave", rating=35.0, publisher=None)],
+            ratedplus=[ratedplus_level(500, "Tidal Wave", creator="OniLink")],
+        )
+        got = gdlevelsearch.search_by_name("Tidal Wave")
+
+        assert len(got) == 1
+        assert got[0].creator == "OniLink"
+        assert got[0].tier == "35.0"
+
+    def test_ratedplus_keeps_every_same_named_entry(self, sources: Any) -> None:
+        """同名不同关（一个已 rated、一个还没有）要【同时】出现在结果里。
+
+        真事：pointercrate 同时挂着 #4 的 Thinking Space II 和 #39 的同名新关，
+        后者 `rated: false`。少掉哪个都等于让用户选不到那一关。
+        """
+        sources(
+            ratedplus=[
+                ratedplus_level(
+                    119544028, "Thinking Space II", creator="Nisha", position=4
+                ),
+                ratedplus_level(
+                    132854166,
+                    "Thinking Space II",
+                    creator="SomeoneNew",
+                    position=39,
+                    rated=False,
+                ),
+            ]
+        )
+        got = gdlevelsearch.search_by_name("Thinking Space II")
+
+        assert [(item.id, item.name, item.creator) for item in got] == [
+            (119544028, "Thinking Space II", "Nisha"),
+            (132854166, "Thinking Space II", "SomeoneNew"),
+        ]
+        # 两条都还没有 tier / difficulty：候选列表里靠 ID 和作者区分
+        assert [item.tier for item in got] == [None, None]
+        assert [item.difficulty for item in got] == [None, None]
+
+    def test_gd_server_keeps_only_exact_demon_names(self, sources: Any) -> None:
+        """GD 服务器是模糊搜索：非 demon 和名字对不上的都丢掉"""
+        sources(
+            gd=[
+                gd_level(
+                    level_id=1,
+                    level_name="Bloodbath",
+                    is_demon=1,
+                    stars=10,
+                    demon_difficulty=6,
+                ),
+                gd_level(level_id=2, level_name="Bloodbath II", is_demon=1, stars=10),
+                gd_level(level_id=3, level_name="Bloodbath", is_demon=0, stars=8),
+            ]
+        )
+        got = gdlevelsearch.search_by_name("bloodbath")
+
+        assert [item.id for item in got] == [1]
+        assert got[0].difficulty == "Extreme Demon"
+        assert got[0].tier is None
+
+    def test_gd_server_only_match_carries_its_own_difficulty(
+        self, sources: Any
+    ) -> None:
+        sources(
+            gd=[
+                gd_level(
+                    level_id=77,
+                    level_name="Fresh Level",
+                    is_demon=1,
+                    stars=10,
+                    demon_difficulty=4,
+                    creator_name="Mapper",
+                )
+            ]
+        )
+        got = gdlevelsearch.search_by_name("fresh level")
+
+        assert [
+            (item.id, item.name, item.creator, item.difficulty) for item in got
+        ] == [(77, "Fresh Level", "Mapper", "Medium Demon")]
+
+    def test_gd_server_failure_does_not_hide_index_matches(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sources(nlw=[nlw_level("42", "Fallback", creator="Cached")])
+
+        def _broken(_name: str) -> Any:
+            raise RuntimeError("boomlings down")
+
+        monkeypatch.setattr(svc_search, "search_levels_by_name", _broken)
+
+        got = gdlevelsearch.search_by_name("Fallback")
+
+        assert [(item.id, item.name) for item in got] == [(42, "Fallback")]
+
     def test_same_level_from_three_sources_is_merged_once(self, sources: Any) -> None:
         """去重的键是 id：GDDL 给难度和 tier，NLW 补作者，plat 不再覆盖"""
         sources(
@@ -540,21 +708,28 @@ class TestSearchByName:
         assert got[0].difficulty == "Extreme Demon"
 
     def test_every_source_gets_the_raw_name(self, sources: Any) -> None:
-        """三个源拿到的都是原始入参，不是 normalized 之后的"""
-        gddl, nlw, plat = sources()
+        """五个源拿到的都是原始入参，不是 normalized 之后的"""
+        installed = sources()
         gdlevelsearch.search_by_name("  MiXeD  ")
-        assert gddl.names == ["  MiXeD  "]
-        assert nlw.names == ["  MiXeD  "]
-        assert plat.names == ["  MiXeD  "]
+        assert installed.gddl.names == ["  MiXeD  "]
+        assert installed.nlw.names == ["  MiXeD  "]
+        assert installed.plat.names == ["  MiXeD  "]
+        assert installed.ratedplus.names == ["  MiXeD  "]
+        assert installed.gd.names == ["  MiXeD  "]
 
     def test_result_order_follows_insertion(self, sources: Any) -> None:
-        """返回的是 dict.values()，Python 3.7+ 保证是插入序：GDDL -> NLW -> plat"""
+        """返回的是 dict.values()，Python 3.7+ 保证是插入序。
+
+        榜单索引在前，GD 服务器本体兜底排最后：它是唯一没有名次来源的。
+        """
         sources(
             gddl=[gddl_level(1, "N")],
             nlw=[nlw_level("2", "N")],
             plat=plat_info("3", "N"),
+            ratedplus=[ratedplus_level(4, "N")],
+            gd=[gd_level(level_id=5, level_name="N", is_demon=1, stars=10)],
         )
-        assert [r.id for r in gdlevelsearch.search_by_name("N")] == [1, 2, 3]
+        assert [r.id for r in gdlevelsearch.search_by_name("N")] == [1, 2, 3, 4, 5]
 
     def test_nlw_log_line_says_unknown_tier_when_there_is_no_tier(
         self, sources: Any, monkeypatch: pytest.MonkeyPatch
@@ -612,8 +787,8 @@ class TestSearchByName:
             release.wait(10)
             return []
 
-        _gddl, _nlw, _plat = sources(nlw=[nlw_level("42", "Fast", creator="Cached")])
-        monkeypatch.setattr(_gddl, "getlevelsbyname", _slow)
+        installed = sources(nlw=[nlw_level("42", "Fast", creator="Cached")])
+        monkeypatch.setattr(installed.gddl, "getlevelsbyname", _slow)
         monkeypatch.setattr(svc_search, "SOURCE_LOOKUP_TIMEOUT", 0.2)
 
         try:
@@ -642,9 +817,9 @@ class TestSearchByName:
             gate.set()
             return [nlw_level("42", "Parallel", creator="Cached")]
 
-        _gddl, _nlw, _plat = sources()
-        monkeypatch.setattr(_gddl, "getlevelsbyname", _gddl_waiting)
-        monkeypatch.setattr(_nlw, "getlevelbyname", _nlw_releases)
+        installed = sources()
+        monkeypatch.setattr(installed.gddl, "getlevelsbyname", _gddl_waiting)
+        monkeypatch.setattr(installed.nlw, "getlevelbyname", _nlw_releases)
         monkeypatch.setattr(svc_search, "SOURCE_LOOKUP_TIMEOUT", 5)
 
         got = gdlevelsearch.search_by_name("Parallel")
@@ -658,7 +833,7 @@ class TestSearchByName:
 # reload_all
 # ==========================================================================
 class TestReloadAll:
-    def test_reloads_all_three_sources_in_order(
+    def test_reloads_all_sources_in_order(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         order: list[str] = []
@@ -666,13 +841,14 @@ class TestReloadAll:
             ("nlw", gdlevelsearch.nlwapi),
             ("plat", gdlevelsearch.platapi),
             ("aredl", gdlevelsearch.aredlapi),
+            ("ratedplus", gdlevelsearch.ratedplusapi),
         ):
             monkeypatch.setattr(
                 module, "reload", (lambda n: lambda: order.append(n))(name)
             )
 
         gdlevelsearch.reload_all()
-        assert order == ["nlw", "plat", "aredl"]
+        assert order == ["nlw", "plat", "aredl", "ratedplus"]
 
     def test_one_broken_source_does_not_stop_the_others(
         self, monkeypatch: pytest.MonkeyPatch

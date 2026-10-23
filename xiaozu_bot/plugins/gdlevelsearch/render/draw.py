@@ -16,6 +16,7 @@ from ..api.listsapi import Lists
 from ..api.nlwapi import Level as NLWLevel
 from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi, PlatInfo
+from ..api.ratedplusapi import Ratedplus
 from ..api.thumbnail import fetch_thumbnail
 from ..paths import PLUGIN_DIR, RES_DIR
 
@@ -306,6 +307,7 @@ class FetchedData:
     nlw_info: NLWLevel | None = None
     plat_info: PlatInfo | None = None
     list_rank: str | None = None
+    ratedplus_rank: int | None = None
     nong_song: dict | None = None
 
 
@@ -629,6 +631,8 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
     if isinstance(gddl_info, GDDLLevel) and gddl_tags:
         gddl_info.Tags = gddl_tags
 
+    ratedplus_rank = Ratedplus.get_position(level_id)
+
     list_rank = None
     if aredl_info is None and plat_info is None:
         list_rank = Lists.search_level(level_id)
@@ -644,6 +648,7 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
         nlw_info=nlw_info,
         plat_info=plat_info,
         list_rank=list_rank,
+        ratedplus_rank=ratedplus_rank,
         nong_song=nong_song
     )
 
@@ -712,6 +717,8 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
             rank_parts.append(f"EDEL {edel:.1f}")
     elif data.list_rank:
         rank_parts.append(data.list_rank)
+    elif data.ratedplus_rank:
+        rank_parts.append(f"Rated+ #{data.ratedplus_rank}")
     rank_line = " | ".join(rank_parts) if rank_parts else ""
 
     tier_prefix = ""

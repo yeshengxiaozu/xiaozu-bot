@@ -28,6 +28,7 @@ PUBLISHED_FILES = (
     "edl.json",
     "plat_combined.json",
     "nong_index.json",
+    "ratedplus.json",
 )
 
 # Intermediate inputs for platbatch; they are intentionally not published.

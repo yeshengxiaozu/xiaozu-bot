@@ -8,7 +8,7 @@ xiaozu-bot 是一个基于 NoneBot 的模块化机器人仓库示例，包含 AI
 
 - **AI 聊天（`ai`）**：对接本地 LLM（LM Studio 风格 API），支持多轮上下文对话与简单会话管理。
 - **语音合成 / TTS（`say`）**：使用 `mlx_audio` 生成语音，并通过当前消息适配器发送群/私聊语音消息。
-- **Geometry Dash 关卡检索（`gdlevelsearch`）**：整合 AREDL、GDDL、NLW、IDS、LW、HDS、plat chart 等数据源，结果渲染成一张图片发出；带本地缓存和每日自动更新（见下面「数据更新」）。
+- **Geometry Dash 关卡检索（`gdlevelsearch`）**：整合 AREDL、GDDL、NLW、IDS、LW、HDS、plat chart、pointercrate（rated+）等数据源，并直连 GD 官方服务器兜底，结果渲染成一张图片发出；带本地缓存和每日自动更新（见下面「数据更新」）。
 - **猜图 / 猜关卡（`guess`）**：带题库与图片资源的互动小游戏。
 - **抓图 / 表情包（`zhua`）**：从本地图库随机/指定发送图片与描述。
 - **随机小工具（`roulette`）**：`*map` 随机来张地图、`*random` 在给的选项里随机挑一个。轮盘和蓝莓经济已下线。
@@ -154,7 +154,7 @@ pytest 的 `tmp_path`，干净 checkout 上照样全绿。
 ## 数据更新
 
 `gdlevelsearch` 的关卡数据来自 `xiaozu_bot/plugins/gdlevelsearch/data/*.json`，
-由 `updater/` 下的十二个抓取任务生成：
+由 `updater/` 下的十三个抓取任务生成：
 
 - 每天凌晨 3 点自动跑一次（在 NoneBot startup 阶段注册，沿用 APScheduler 配置的服务器时区）
 - 超级用户可以发 `*gdsearch_update` 手动触发
@@ -172,7 +172,7 @@ pytest 的 `tmp_path`，干净 checkout 上照样全绿。
 任务按依赖分成两层，同一层并发跑（都是网络 IO，丢线程池里）：
 
 ```
-第 1 层： nlw  ids  lw  hds  idl  lists  tpl  pemonlist  platdiff  sfh
+第 1 层： nlw  ids  lw  hds  idl  lists  tpl  pemonlist  platdiff  sfh  ratedplus
 第 2 层： platbatch（要 tpl/pemonlist/platdiff）  getmetadata（要 nlw/ids/lw/hds）
 ```
 
@@ -183,7 +183,9 @@ pytest 的 `tmp_path`，干净 checkout 上照样全绿。
 （runner 默认遇错即停）都会让 bot 读到缺 metadata 的半成品，把好数据冲掉。
 现在任一任务失败就不发布，`data/` 保持上一次的样子，中间产物留在 `.staging/` 方便排查。
 GDDL 不在这个流水线里：它作为独立后台任务与主更新同时启动，失败只上报管理员，
-不影响主流水线。
+不影响主流水线。`ratedplus` 抓的是 pointercrate 的 `/api/v2/demons/listed/`
+（全表约 700+ 条，8 页），落成 `data/ratedplus.json`；`position` 必须从 1 开始连续，
+否则这一轮不发布，线上保留上一份快照。
 
 `gddlapi.py` 查询时优先访问 GDDL 在线接口；按名称或搜索条件查询会在在线失败后回退到
 `data/gddl_levels.json` 快照。`getlevelbyid` 默认保持远端失败返回 `None`，
@@ -216,7 +218,7 @@ GDDL 不在这个流水线里：它作为独立后台任务与主更新同时启
 
 - `ai <文本>` — 与本地 LLM 对话（插件 `ai`）
 - `say <文本>` — 文本转语音并发送（插件 `say`）
-- `gdsearch <id/name>` — 查询 GD 关卡，数据来自本地收录的榜单（插件 `gdlevelsearch`）
+- `gdsearch <id/name>` — 查询 GD 关卡；名字搜索会同时查本地收录的榜单和 GD 官方服务器本体（插件 `gdlevelsearch`）
 - `gdfullsearch <关键词> [-a] [-d [难度]] [-u <难度>]` — 直连 GD 服务器搜索，能搜到服务器上的任意关卡；
   默认只搜 rated，`-a` 连未评级的一起搜，`-d` 只搜 demon，`-u` 只搜非 demon。
   结果分页显示，输入序号选中、`n` 下一页、`p` 上一页、`结束` 取消

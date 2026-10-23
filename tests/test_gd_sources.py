@@ -40,6 +40,7 @@ from xiaozu_bot.plugins.gdlevelsearch import (
     nlwapi,
     paths,
     platapi,
+    ratedplusapi,
 )
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import GDUser
 from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import (
@@ -64,6 +65,7 @@ from xiaozu_bot.plugins.gdlevelsearch.api.nlwapi import (
     NLWlevel,
 )
 from xiaozu_bot.plugins.gdlevelsearch.api.platapi import Platapi, PlatData, PlatInfo
+from xiaozu_bot.plugins.gdlevelsearch.api.ratedplusapi import Ratedplus, RatedplusLevel
 
 dailydemon = import_module("xiaozu_bot.plugins.gdlevelsearch.commands.dailydemon")
 
@@ -2141,6 +2143,265 @@ class TestPlatapiFacade:
             platapi.platdata_by_name
             is platapi.platdata.by_name
         )
+
+
+# ==========================================================================
+# ratedplusapi —— pointercrate 榜单快照 + 按名字精确查
+# ==========================================================================
+def make_ratedplus_row(
+    level_id: Any = 10565740,
+    name: str = "Bloodbath",
+    **over: Any,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "id": level_id,
+        "position": 1,
+        "rated_position": 1,
+        "name": name,
+        "creator": "Riot",
+        "verifier": "Riot",
+        "requirement": 53,
+        "video": "https://youtu.be/x",
+        "rated": True,
+    }
+    row.update(over)
+    return row
+
+
+@pytest.fixture
+def ratedplus_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """把 ratedplusapi 的快照指到 tmp_path，收尾时把内存索引原样还回去。
+
+    levels / by_name / by_id 是被 `Ratedplus` 直接引用的模块级对象，reload() 是
+    原地 clear + 重建，所以只能原地还原。
+    """
+    levels_backup = list(ratedplusapi.levels)
+    names_backup = {key: list(value) for key, value in ratedplusapi.by_name.items()}
+    ids_backup = dict(ratedplusapi.by_id)
+    monkeypatch.setattr(ratedplusapi, "DATA_PATH", tmp_path / "ratedplus.json")
+
+    def _write(payload: Any) -> Path:
+        path = ratedplusapi.DATA_PATH
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    try:
+        yield _write
+    finally:
+        ratedplusapi.levels[:] = levels_backup
+        ratedplusapi.by_name.clear()
+        ratedplusapi.by_name.update(names_backup)
+        ratedplusapi.by_id.clear()
+        ratedplusapi.by_id.update(ids_backup)
+
+
+class TestRatedplusLoading:
+    def test_reload_按名字建索引(self, ratedplus_workspace: Any) -> None:
+        ratedplus_workspace(
+            {
+                "timestamp": 0,
+                "levels": [
+                    make_ratedplus_row(),
+                    make_ratedplus_row(2, "Sonic Wave", position=2, creator=None),
+                ],
+            }
+        )
+
+        ratedplusapi.reload()
+
+        assert [level.id for level in ratedplusapi.levels] == [10565740, 2]
+        got = Ratedplus.getlevelbyname("  sonic WAVE ")
+        assert [level.id for level in got] == [2]
+        assert got[0].creator is None
+
+    def test_同名多条会全部返回(self, ratedplus_workspace: Any) -> None:
+        ratedplus_workspace(
+            {
+                "levels": [
+                    make_ratedplus_row(1, "Legacy"),
+                    make_ratedplus_row(2, "Legacy", position=2),
+                ]
+            }
+        )
+        ratedplusapi.reload()
+
+        assert [level.id for level in Ratedplus.getlevelbyname("legacy")] == [1, 2]
+
+    def test_未_rated_的同名词条也要进索引(
+        self, ratedplus_workspace: Any
+    ) -> None:
+        """重名关：一个已 rated，一个还在等 placement，两条都得能搜到。
+
+        真事：pointercrate 上同时挂着 #4 的 Thinking Space II（已 rated）和
+        #39 的同名新关（rated: false）。
+        """
+        ratedplus_workspace(
+            {
+                "levels": [
+                    make_ratedplus_row(119544028, "Thinking Space II"),
+                    make_ratedplus_row(
+                        132854166,
+                        "Thinking Space II",
+                        position=39,
+                        rated_position=None,
+                        rated=False,
+                    ),
+                ]
+            }
+        )
+
+        ratedplusapi.reload()
+
+        got = Ratedplus.getlevelbyname("thinking space ii")
+        assert [level.id for level in got] == [119544028, 132854166]
+        assert [level.rated for level in got] == [True, False]
+        assert [level.position for level in got] == [1, 39]
+
+    def test_查不到和空名字都返回空列表(
+        self, ratedplus_workspace: Any
+    ) -> None:
+        ratedplus_workspace({"levels": [make_ratedplus_row()]})
+        ratedplusapi.reload()
+
+        assert Ratedplus.getlevelbyname("Nope") == []
+        assert Ratedplus.getlevelbyname("   ") == []
+
+    def test_返回的是副本_外部改不动索引(
+        self, ratedplus_workspace: Any
+    ) -> None:
+        ratedplus_workspace({"levels": [make_ratedplus_row()]})
+        ratedplusapi.reload()
+
+        Ratedplus.getlevelbyname("Bloodbath").clear()
+
+        assert len(Ratedplus.getlevelbyname("Bloodbath")) == 1
+
+    def test_格式不对的行跳过其余照常(
+        self, ratedplus_workspace: Any
+    ) -> None:
+        ratedplus_workspace(
+            {
+                "levels": [
+                    make_ratedplus_row(),
+                    {"name": "NoId"},
+                    {"id": "not-a-number", "name": "BadId"},
+                    "junk",
+                    make_ratedplus_row(3, "Other", position=3),
+                ]
+            }
+        )
+
+        ratedplusapi.reload()
+
+        assert [level.id for level in ratedplusapi.levels] == [10565740, 3]
+
+    def test_文件不存在时保留旧索引(
+        self, ratedplus_workspace: Any
+    ) -> None:
+        path = ratedplus_workspace({"levels": [make_ratedplus_row()]})
+        ratedplusapi.reload()
+        path.unlink()
+
+        ratedplusapi.reload()
+
+        assert [level.id for level in ratedplusapi.levels] == [10565740]
+
+    def test_文件损坏时保留旧索引(
+        self, ratedplus_workspace: Any
+    ) -> None:
+        path = ratedplus_workspace({"levels": [make_ratedplus_row()]})
+        ratedplusapi.reload()
+        path.write_text("{ 不是 json", encoding="utf-8")
+
+        ratedplusapi.reload()
+
+        assert [level.id for level in ratedplusapi.levels] == [10565740]
+
+    def test_顶层不是对象时保留旧索引(
+        self, ratedplus_workspace: Any
+    ) -> None:
+        path = ratedplus_workspace({"levels": [make_ratedplus_row()]})
+        ratedplusapi.reload()
+        path.write_text(json.dumps([make_ratedplus_row()]), encoding="utf-8")
+
+        ratedplusapi.reload()
+
+        assert [level.id for level in ratedplusapi.levels] == [10565740]
+
+    def test_没有_levels_键时索引清空(self, ratedplus_workspace: Any) -> None:
+        ratedplus_workspace({"levels": [make_ratedplus_row()]})
+        ratedplusapi.reload()
+        ratedplus_workspace({"timestamp": 0})
+
+        ratedplusapi.reload()
+
+        assert ratedplusapi.levels == []
+        assert ratedplusapi.by_name == {}
+        assert ratedplusapi.by_id == {}
+
+
+class TestRatedplusPosition:
+    """按游戏内 level id 查名次（出图那行 "Rated+ #N" 用的就是它）"""
+
+    def test_按_id_查名次(self, ratedplus_workspace: Any) -> None:
+        ratedplus_workspace(
+            {
+                "levels": [
+                    make_ratedplus_row(10565740, "Bloodbath"),
+                    make_ratedplus_row(132854166, "Thinking Space II", position=39),
+                ]
+            }
+        )
+        ratedplusapi.reload()
+
+        assert Ratedplus.get_position(10565740) == 1
+        assert Ratedplus.get_position(132854166) == 39
+        assert Ratedplus.get_position("132854166") == 39
+
+    def test_查不到的_id_返回_None(self, ratedplus_workspace: Any) -> None:
+        ratedplus_workspace({"levels": [make_ratedplus_row()]})
+        ratedplusapi.reload()
+
+        assert Ratedplus.get_position(999) is None
+        assert Ratedplus.get_position(None) is None
+        assert Ratedplus.get_position("abc") is None
+
+    def test_reload_清掉不再出现的_id(
+        self, ratedplus_workspace: Any
+    ) -> None:
+        """旧快照里的 id 不能一直留着，否则出图会印上一个早就没了的名次"""
+        ratedplus_workspace(
+            {
+                "levels": [
+                    make_ratedplus_row(1, "Alpha"),
+                    make_ratedplus_row(2, "Beta", position=2),
+                ]
+            }
+        )
+        ratedplusapi.reload()
+        assert Ratedplus.get_position(2) == 2
+
+        ratedplus_workspace({"levels": [make_ratedplus_row(1, "Alpha")]})
+        ratedplusapi.reload()
+
+        assert Ratedplus.get_position(2) is None
+        assert Ratedplus.get_position(1) == 1
+
+
+class TestRatedplusLevel:
+    def test_缺省字段落成_None_名字裁空白(self) -> None:
+        level = RatedplusLevel({"id": 7, "name": "  Alpha  "})
+        assert (level.id, level.name, level.creator) == (7, "Alpha", None)
+        assert (level.position, level.requirement, level.video) == (None, None, None)
+
+    def test_rated_缺省视为已_rated(self) -> None:
+        assert RatedplusLevel({"id": 1, "name": "A"}).rated is True
+        assert RatedplusLevel({"id": 1, "name": "A", "rated": True}).rated is True
+        assert RatedplusLevel({"id": 1, "name": "A", "rated": False}).rated is False
+
+    def test_id_必须是数字(self) -> None:
+        with pytest.raises(ValueError):
+            RatedplusLevel({"id": "abc", "name": "Alpha"})
 
 
 # ==========================================================================

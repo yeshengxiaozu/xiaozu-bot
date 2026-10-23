@@ -32,4 +32,6 @@ HTTP_RETRY_STATUS_CODES = frozenset(
 
 # 查询源和渲染源都必须在有限时间内失败，不能拖住整个 matcher。
 SOURCE_LOOKUP_TIMEOUT = 5
-SEARCH_MAX_WORKERS = 3
+# One worker per name-lookup source (gddl / nlw / plat / ratedplus / gd), so a
+# stalled network source never queues the in-memory indexes behind it.
+SEARCH_MAX_WORKERS = 5

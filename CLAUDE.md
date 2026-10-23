@@ -42,9 +42,9 @@ python scripts/try_search.py Tartarus  # 走完整搜索+出图，结果写到 t
 ## gdlevelsearch 分层
 
 ```
-api/       数据源客户端：gdapi（GD 官方服务器协议）、gddlapi、aredlapi、nlwapi、platapi
+api/       数据源客户端：gdapi（GD 官方服务器协议）、gddlapi、aredlapi、nlwapi、platapi、ratedplusapi
 render/    出图：draw（合图，create_image_from_gdlevel）、icons + iconrender（本地图标渲染）
-services/  跨命令共享业务：search_by_name、send_result 等
+services/  跨命令共享业务：search_by_name（gddl/nlw/plat/ratedplus/GD 服务器五路并发聚合）、send_result 等
 commands/  每个命令一个文件：matcher + handler，import 即注册
 updater/   定时数据更新：runner + jobs + notify
 ```
@@ -55,7 +55,7 @@ updater/   定时数据更新：runner + jobs + notify
 
 ## updater 流水线
 
-`updater/runner.py` 的 `JOBS` / `STAGES` 定义两层并发任务图：第 1 层纯抓取（nlw/ids/lw/hds/plat*/sfh），第 2 层 platbatch + getmetadata 依赖第 1 层产出。产物先写 `data/.staging/`，**整条流水线全绿才原子发布**（`updater/paths.py::publish`，逐文件有 50% 下限检查，防止上游表格改格式导致空文件盖掉好数据），中途失败 `data/` 保持原样。触发路径：每天凌晨 3 点 apscheduler 定时任务 + `*gdsearch_update` 命令，跑完都调 `gdlevelsearch.reload_all()`（api 模块 import 期只读一次，少了这步新数据要等重启才生效）。
+`updater/runner.py` 的 `JOBS` / `STAGES` 定义两层并发任务图：第 1 层纯抓取（nlw/ids/lw/hds/plat*/sfh/ratedplus），第 2 层 platbatch + getmetadata 依赖第 1 层产出。产物先写 `data/.staging/`，**整条流水线全绿才原子发布**（`updater/paths.py::publish`，逐文件有 50% 下限检查，防止上游表格改格式导致空文件盖掉好数据），中途失败 `data/` 保持原样。触发路径：每天凌晨 3 点 apscheduler 定时任务 + `*gdsearch_update` 命令，跑完都调 `gdlevelsearch.reload_all()`（api 模块 import 期只读一次，少了这步新数据要等重启才生效）。
 
 ## 适配器兼容层（xiaozu_bot/utils/adapter_compat.py）
 

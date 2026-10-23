@@ -16,6 +16,7 @@ from .jobs import (
     pemonlist,
     platbatch,
     platdiff,
+    ratedplus,
     sfh,
     tpl,
 )
@@ -36,6 +37,7 @@ JOBS: dict[str, Callable[[], None]] = {
     "pemonlist": pemonlist.fetch,
     "platbatch": platbatch.batch,
     "sfh": sfh.fetch,
+    "ratedplus": ratedplus.fetch,
     "getmetadata": getmetadata.main,
 }
 
@@ -44,7 +46,7 @@ JOBS: dict[str, Callable[[], None]] = {
 STAGES: tuple[tuple[str, ...], ...] = (
     (
         "nlw", "ids", "lw", "hds", "idl", "lists", "tpl", "pemonlist",
-        "platdiff", "sfh",
+        "platdiff", "sfh", "ratedplus",
     ),
     ("platbatch", "getmetadata"),
 )

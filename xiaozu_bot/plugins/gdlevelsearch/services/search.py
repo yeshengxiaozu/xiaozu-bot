@@ -10,11 +10,12 @@ from nonebot.internal.adapter import Bot, Event
 
 from xiaozu_bot.utils.adapter_compat import send_image
 
-from ..api.gdapi import GDLevel, get_level_by_id
+from ..api.gdapi import GDLevel, get_level_by_id, search_levels_by_name
 from ..api.gddlapi import Gddl, GDDLSearchEntry
 from ..api.http import request as http_request
 from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi
+from ..api.ratedplusapi import Ratedplus
 from ..constants import SEARCH_MAX_WORKERS, SOURCE_LOOKUP_TIMEOUT
 from ..render.draw import create_image_from_gdlevel
 
@@ -99,17 +100,43 @@ def _collect_result(future, source: str, name: str):
         return None
 
 
+def _search_gd_by_name(name: str) -> list[GDLevel]:
+    """Exact-name demon hits from the official Geometry Dash server.
+
+    The endpoint is a fuzzy one-page search with no list ranking, so only
+    exact demon names survive; the rest is noise the indexes already cover.
+    """
+    normalized = name.strip().lower()
+    if not normalized:
+        return []
+    found: list[GDLevel] = []
+    for level in search_levels_by_name(name):
+        if not level.is_demon:
+            continue
+        if not isinstance(level.level_name, str):
+            continue
+        if level.level_name.strip().lower() != normalized:
+            continue
+        if _coerce_level_id(level.level_id) is None:
+            continue
+        found.append(level)
+    return found
+
+
 def _lookup_sources(name: str) -> dict[str, object | None]:
     """Query all optional indexes in parallel with one shared deadline.
 
     A provider that raises or exceeds the deadline contributes no result; the
     GDDL None status is preserved so callers can distinguish an outage from a
-    successful empty search.
+    successful empty search. The two network sources (GDDL, the GD server) are
+    queued last so a stalled request cannot delay the in-memory indexes.
     """
     futures = {
         "gddl": _SEARCH_EXECUTOR.submit(Gddl.getlevelsbyname, name),
         "nlw": _SEARCH_EXECUTOR.submit(Nlw.getlevelbyname, name),
         "plat": _SEARCH_EXECUTOR.submit(Platapi.getlevelbyname, name),
+        "ratedplus": _SEARCH_EXECUTOR.submit(Ratedplus.getlevelbyname, name),
+        "gd": _SEARCH_EXECUTOR.submit(_search_gd_by_name, name),
     }
     source_by_future = {future: source for source, future in futures.items()}
     values: dict[str, object | None] = {}
@@ -134,6 +161,14 @@ def _lookup_sources(name: str) -> dict[str, object | None]:
         if source not in values and future.done():
             values[source] = _collect_result(future, source, name)
     return values
+
+
+def _gd_difficulty(level: GDLevel) -> str | None:
+    """Difficulty label of a GD server record, tolerating odd field values."""
+    try:
+        return level.difficulty_label()
+    except (IndexError, KeyError, TypeError, ValueError):
+        return None
 
 
 def search_by_name(name: str) -> list[SearchResult] | None:
@@ -195,6 +230,34 @@ def search_by_name(name: str) -> list[SearchResult] | None:
             plat_info.tier,
             None,
         )
+
+    # pointercrate listed demons: every record with this name is kept, rated or
+    # not, because two different levels can share a name and both must stay
+    # selectable. The list position is logged instead of stored in the tier
+    # field, which belongs to the GDDL rating scale.
+    for level in source_values.get("ratedplus") or []:
+        _add_search_result(
+            results,
+            getattr(level, "id", None),
+            level.name,
+            getattr(level, "creator", None),
+        )
+        position = getattr(level, "position", None) or "?"
+        mark = "" if getattr(level, "rated", True) else " (unrated)"
+        logger.info(f"Find a result in RATEDPLUS: #{position}{mark}")
+
+    # The GD server goes last: it knows no ranking, so it only fills gaps.
+    for level in source_values.get("gd") or []:
+        difficulty = _gd_difficulty(level)
+        _add_search_result(
+            results,
+            getattr(level, "level_id", None),
+            level.level_name,
+            getattr(level, "creator_name", None),
+            None,
+            difficulty,
+        )
+        logger.info(f"Find a result in GD server: {difficulty or 'Unknown'}")
 
     if not results and source_values.get("gddl") is None:
         logger.warning(f"GDDL name lookup unavailable for {name!r}")

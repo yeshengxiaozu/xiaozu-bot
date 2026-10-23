@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import urllib.parse
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -47,6 +48,7 @@ from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
     pemonlist,
     platbatch,
     platdiff,
+    ratedplus,
     sfh,
     tpl,
 )
@@ -136,6 +138,7 @@ class TestPaths:
             "edl.json",
             "plat_combined.json",
             "nong_index.json",
+            "ratedplus.json",
         )
         assert paths.INTERMEDIATE_FILES == (
             "tpl.json",
@@ -305,6 +308,7 @@ class TestRunnerTables:
             "pemonlist": pemonlist.fetch,
             "platbatch": platbatch.batch,
             "sfh": sfh.fetch,
+            "ratedplus": ratedplus.fetch,
             "getmetadata": getmetadata.main,
         } == runner.JOBS
 
@@ -312,7 +316,7 @@ class TestRunnerTables:
         assert runner.STAGES == (
             ("nlw", "ids", "lw", "hds",
             "idl","lists","tpl","pemonlist",
-            "platdiff", "sfh"),
+            "platdiff", "sfh", "ratedplus"),
             ("platbatch", "getmetadata"),
         )
         flat = [name for stage in runner.STAGES for name in stage]
@@ -2455,6 +2459,343 @@ class TestFetchSfhMain:
         stub_requests.get("sfh-index.min.json", make_response(503))
         assert sfh.fetch() is None
         assert not (data_dirs.staging / "nong_index.json").exists()
+
+
+# ==========================================================================
+# jobs/ratedplus.py —— pointercrate 榜单：分页、游标自适应、完整性自证
+# ==========================================================================
+def _rated_record(
+    record_id: int,
+    position: int,
+    name: str,
+    level_id: Any,
+    **over: Any,
+) -> dict[str, Any]:
+    """一条 pointercrate 记录。两个 id 不一样：`id` 是站点自己的记录 id，
+    `level_id` 才是 bot 要用的游戏内关卡 id。"""
+    record: dict[str, Any] = {
+        "id": record_id,
+        "position": position,
+        "rated_position": position,
+        "name": name,
+        "level_id": level_id,
+        "requirement": 50,
+        "video": "https://youtu.be/v",
+        "publisher": {"id": 1, "name": "Publisher"},
+        "verifier": {"id": 2, "name": "Verifier"},
+        "rated": True,
+    }
+    record.update(over)
+    return record
+
+
+class FakeRatedplusEndpoint:
+    """按 `after` 游标分页的假接口；没登记的游标直接报错，防止用例偷偷发请求。"""
+
+    def __init__(
+        self,
+        pages: dict[Any, Any],
+        *,
+        rejected_limits: dict[int, int] | None = None,
+    ) -> None:
+        self.pages = pages
+        self.rejected_limits = rejected_limits or {}
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(
+        self, method: str, url: str, *, headers: Any = None, timeout: Any = None
+    ) -> Any:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        limit = int(query["limit"][0])
+        after = int(query["after"][0]) if "after" in query else None
+        self.calls.append(
+            {"method": method, "limit": limit, "after": after, "timeout": timeout}
+        )
+        status = self.rejected_limits.get(limit)
+        if status is not None:
+            return SimpleNamespace(status_code=status, json=lambda: None)
+        if after not in self.pages:
+            raise AssertionError(f"未登记的游标: {after!r}")
+        payload = self.pages[after]
+        if isinstance(payload, BaseException):
+            raise payload
+        return SimpleNamespace(status_code=200, json=lambda: payload)
+
+
+class TestRatedplusCollect:
+    def test_翻页直到_position_凑齐(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 第一页故意乱序给，验证返回前会按 position 重排
+        endpoint = FakeRatedplusEndpoint(
+            {
+                None: [
+                    _rated_record(3, 3, "Gamma", 300),
+                    _rated_record(1, 1, "Alpha", 100),
+                ],
+                3: [_rated_record(2, 2, "Beta", 200)],
+            }
+        )
+        monkeypatch.setattr(ratedplus, "http_request", endpoint)
+
+        got = ratedplus.collect(target=3, delay=0)
+
+        assert [item["name"] for item in got] == ["Alpha", "Beta", "Gamma"]
+        assert [call["after"] for call in endpoint.calls] == [None, 3]
+
+    def test_游标是记录_id_时自动切换并继续翻(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`after` 的语义没写进文档：按位置翻回同一页就说明它是记录 id。
+
+        检测到的那一页一条新记录都没有（全是重复），但这时不能当成「翻完了」，
+        否则整张表只会拿到第一页。
+        """
+        first = [
+            _rated_record(11, 1, "Alpha", 100),
+            _rated_record(12, 2, "Beta", 200),
+            _rated_record(13, 3, "Gamma", 300),
+        ]
+        endpoint = FakeRatedplusEndpoint(
+            {
+                None: first,
+                3: first,
+                13: [_rated_record(14, 4, "Delta", 400)],
+            }
+        )
+        monkeypatch.setattr(ratedplus, "http_request", endpoint)
+
+        got = ratedplus.collect(target=4, delay=0)
+
+        assert [item["name"] for item in got] == ["Alpha", "Beta", "Gamma", "Delta"]
+        assert [call["after"] for call in endpoint.calls] == [None, 3, 13]
+
+    def test_重复记录只收一次(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        first = [
+            _rated_record(1, 1, "Alpha", 100),
+            _rated_record(2, 2, "Beta", 200),
+        ]
+        endpoint = FakeRatedplusEndpoint(
+            {
+                None: first,
+                2: [_rated_record(2, 2, "Beta", 200), _rated_record(3, 3, "Gamma", 300)],
+                3: [],
+            }
+        )
+        monkeypatch.setattr(ratedplus, "http_request", endpoint)
+
+        got = ratedplus.collect(target=3, delay=0)
+
+        assert [item["name"] for item in got] == ["Alpha", "Beta", "Gamma"]
+
+    def test_limit_被拒时降级到更小的页(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        endpoint = FakeRatedplusEndpoint(
+            {None: [_rated_record(1, 1, "Alpha", 100)], 1: []},
+            rejected_limits={100: 422},
+        )
+        monkeypatch.setattr(ratedplus, "http_request", endpoint)
+
+        got = ratedplus.collect(target=1, delay=0)
+
+        assert [item["name"] for item in got] == ["Alpha"]
+        assert [call["limit"] for call in endpoint.calls] == [100, 50]
+
+    def test_其它状态码不降级直接失败(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        endpoint = FakeRatedplusEndpoint({None: []}, rejected_limits={100: 403})
+        monkeypatch.setattr(ratedplus, "http_request", endpoint)
+
+        with pytest.raises(ratedplus.RatedplusFetchError, match="HTTP 403"):
+            ratedplus.collect(target=1, delay=0)
+        assert [call["limit"] for call in endpoint.calls] == [100]
+
+    def test_请求异常包成_fetch_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _boom(*args: Any, **kwargs: Any) -> Any:
+            raise http_transport.ServiceUnavailable("boomlings down")
+
+        monkeypatch.setattr(ratedplus, "http_request", _boom)
+
+        with pytest.raises(ratedplus.RatedplusFetchError, match="request failed"):
+            ratedplus.collect(target=1, delay=0)
+
+
+class TestRatedplusVerify:
+    def test_位置稠密就通过(self) -> None:
+        ratedplus.verify(
+            [_rated_record(1, 1, "A", 1), _rated_record(2, 2, "B", 2)]
+        )
+
+    def test_有空档就不认(self) -> None:
+        with pytest.raises(ratedplus.RatedplusFetchError, match="not dense"):
+            ratedplus.verify(
+                [_rated_record(1, 1, "A", 1), _rated_record(3, 3, "C", 3)]
+            )
+
+    def test_缺_position_也不认(self) -> None:
+        """上游把 position 改名的话，每条都会缺位置，必须留住旧快照"""
+        with pytest.raises(ratedplus.RatedplusFetchError, match="no position"):
+            ratedplus.verify([_rated_record(1, 1, "A", 1), {"id": 2, "name": "B"}])
+
+    def test_空表不认(self) -> None:
+        with pytest.raises(ratedplus.RatedplusFetchError, match="empty"):
+            ratedplus.verify([])
+
+
+class TestRatedplusBuildLevels:
+    def test_落盘用的是游戏内关卡_id_不是站点记录_id(self) -> None:
+        out = ratedplus.build_levels([_rated_record(999, 1, "Bloodbath", 10565740)])
+
+        assert out == [
+            {
+                "id": 10565740,
+                "position": 1,
+                "rated_position": 1,
+                "name": "Bloodbath",
+                "creator": "Publisher",
+                "verifier": "Verifier",
+                "requirement": 50,
+                "rated": True,
+                "video": "https://youtu.be/v",
+            }
+        ]
+
+    def test_没有_level_id_的记录被丢掉(self) -> None:
+        out = ratedplus.build_levels(
+            [
+                _rated_record(1, 1, "Alpha", None),
+                _rated_record(2, 2, "Beta", 200),
+            ]
+        )
+        assert [row["name"] for row in out] == ["Beta"]
+
+    def test_未_rated_的词条也保留(self) -> None:
+        """还没拿到 placement 的关卡也要进快照，搜索时才看得见同名的那一关"""
+        out = ratedplus.build_levels(
+            [
+                _rated_record(1, 1, "Thinking Space II", 119544028),
+                _rated_record(
+                    2,
+                    39,
+                    "Thinking Space II",
+                    132854166,
+                    rated=False,
+                    rated_position=None,
+                ),
+            ]
+        )
+        assert [(row["id"], row["rated"], row["position"]) for row in out] == [
+            (119544028, True, 1),
+            (132854166, False, 39),
+        ]
+
+    def test_缺可选字段时落成_None_空格裁掉(self) -> None:
+        out = ratedplus.build_levels(
+            [{"id": 1, "position": 1, "name": "  Alpha  ", "level_id": "300"}]
+        )
+        assert out == [
+            {
+                "id": 300,
+                "position": 1,
+                "rated_position": None,
+                "name": "Alpha",
+                "creator": None,
+                "verifier": None,
+                "requirement": None,
+                "rated": False,
+                "video": None,
+            }
+        ]
+
+
+class TestRatedplusFetch:
+    def test_抓完之后写进_staging(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(ratedplus, "PAGE_DELAY", 0)
+        monkeypatch.setattr(
+            ratedplus,
+            "http_request",
+            FakeRatedplusEndpoint(
+                {
+                    None: [
+                        _rated_record(1, 1, "Alpha", 100),
+                        _rated_record(2, 2, "Beta", 200),
+                    ],
+                    2: [],
+                }
+            ),
+        )
+
+        ratedplus.fetch()
+
+        payload = _read_json(data_dirs.staging / "ratedplus.json")
+        assert isinstance(payload["timestamp"], float)
+        assert [row["id"] for row in payload["levels"]] == [100, 200]
+
+    def test_接口挂了就保留旧快照(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(ratedplus, "PAGE_DELAY", 0)
+        monkeypatch.setattr(
+            ratedplus,
+            "http_request",
+            FakeRatedplusEndpoint({None: RuntimeError("offline")}),
+        )
+
+        assert ratedplus.fetch() is None
+        assert not (data_dirs.staging / "ratedplus.json").exists()
+
+    def test_位置有空档就不落盘(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # position 2 永远没拿到：这种残缺表不能发布
+        monkeypatch.setattr(ratedplus, "PAGE_DELAY", 0)
+        monkeypatch.setattr(
+            ratedplus,
+            "http_request",
+            FakeRatedplusEndpoint(
+                {
+                    None: [
+                        _rated_record(1, 1, "Alpha", 100),
+                        _rated_record(3, 3, "Gamma", 300),
+                    ],
+                    3: [],
+                }
+            ),
+        )
+
+        ratedplus.fetch()
+
+        assert not (data_dirs.staging / "ratedplus.json").exists()
+
+    def test_一条可用关卡都没有时不落盘(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(ratedplus, "PAGE_DELAY", 0)
+        monkeypatch.setattr(
+            ratedplus,
+            "http_request",
+            FakeRatedplusEndpoint(
+                {None: [_rated_record(1, 1, "Alpha", None)], 1: []}
+            ),
+        )
+
+        ratedplus.fetch()
+
+        assert not (data_dirs.staging / "ratedplus.json").exists()
 
 
 # ==========================================================================

@@ -9,7 +9,7 @@
 | `test_harness_smoke.py` | 脚手架本身：nonebot 初始化、fixture、断网守卫 |
 | `test_json_storage.py` | `utils/json_storage.py` + `scripts/migrate_redis_to_json.py` |
 | `test_gdapi.py` | `gdlevelsearch/gdapi.py`（GD 官方服务器协议解析） |
-| `test_gd_sources.py` | GDDL / NLW / plat / icons / dailydemon 几个数据源 |
+| `test_gd_sources.py` | GDDL / NLW / plat / pointercrate（rated+）/ icons / dailydemon 几个数据源 |
 | `test_search_and_ratings.py` | `fullsearch.py` / `ratings.py` 两个分页会话 |
 | `test_gdlevelsearch_entry.py` | `gdlevelsearch/__init__.py`：`search_by_name`、`reload_all`、各命令 handler |
 | `test_draw.py` | `gdlevelsearch/draw.py` 里的纯函数与 `_fetch_thumbnail` |
