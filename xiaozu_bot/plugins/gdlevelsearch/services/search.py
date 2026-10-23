@@ -16,6 +16,7 @@ from ..api.http import request as http_request
 from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi
 from ..api.ratedplusapi import Ratedplus
+from ..api.unratedlevels import UnratedLevels
 from ..constants import SEARCH_MAX_WORKERS, SOURCE_LOOKUP_TIMEOUT
 from ..render.draw import create_image_from_gdlevel
 
@@ -245,6 +246,17 @@ def search_by_name(name: str) -> list[SearchResult] | None:
         position = getattr(level, "position", None) or "?"
         mark = "" if getattr(level, "rated", True) else " (unrated)"
         logger.info(f"Find a result in RATEDPLUS: #{position}{mark}")
+
+    # some randomly decided unrated level whitelist
+    unrated_result = UnratedLevels.getlevelbyname(name)
+    if unrated_result is not None:
+        _add_search_result(
+            results,
+            unrated_result.id,
+            unrated_result.name,
+            unrated_result.creator
+        )
+        logger.info(f"Find a result in UnratedLevels: {unrated_result.name}({unrated_result.id})")
 
     # The GD server goes last: it knows no ranking, so it only fills gaps.
     for level in source_values.get("gd") or []:

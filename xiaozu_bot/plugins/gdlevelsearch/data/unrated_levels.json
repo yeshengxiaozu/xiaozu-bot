@@ -1,0 +1,176 @@
+{
+    "levels": [
+        {"is_comment": true,
+            "id": 0,
+            "name": "TEMPLATE",
+            "creator": "COPY_THIS",
+            "note": ""
+        },
+        {"note": "----Challenges----","is_comment": true},
+        {
+            "id": 60805571,
+            "name": "VSC",
+            "creator": "BoBoBoBoBoBoBo",
+            "note": "The well-known former hardest challenge"
+        },
+
+        {"note": "----Impossible levels----","is_comment": true},
+        {
+            "id": 125456843,
+            "name": "Open Window",
+            "creator": "VoidNebulaGd",
+            "note": "The current ILL #1"
+        },
+
+        {"note": "----List-worthy levels----","is_comment": true},
+        {
+            "id": 150967946,
+            "name": "OG SARY NEVER CLEAR",
+            "creator": "Optic Sunflow",
+            "note": "(original at 609629) A really old impossible level"
+        },
+        {
+            "id": 137886942,
+            "name": "Lesopowal",
+            "creator": "cherryteam",
+            "note": ""
+        },
+        {
+            "id": 10887708,
+            "name": "Unnerfed Sakupen circles",
+            "creator": "Nick24",
+            "note": "The original version of Sakupen circles with more unbalanced gameplay and AN INSANE SPAM PART"
+        },
+        {
+            "id": 142529115,
+            "name": "Herr Machine",
+            "creator": "herrteam",
+            "note": ""
+        },
+        {
+            "id": 149290595,
+            "name": "Azure Flare",
+            "creator": "ItsHybrid",
+            "note": "An redecorated version of the well-known \"upcoming top 1\", verified by Diamond. Most likely being the rated version"
+        },
+        {
+            "id": 61775814,
+            "name": "Element 111 Rg",
+            "creator": "Compendium",
+            "note": "One of the impossible level which original version is lost."
+        },
+        {
+            "id": 141320499,
+            "name": "Centipede",
+            "creator": "zander12",
+            "note": "Named after the famous impossible Osu! chart, redecorated and reverified and still dont get RobTop's attention."
+        },
+
+        {
+            "id": 134734938,
+            "name": "you when bee crusher",
+            "creator": "Akunakunn",
+            "note": "Hardest 2p level created by no other than Akunakunn, being the sequel to me when machine gang. Has some ridiculous gameplay like every other Akunakunn level"
+        },
+
+        {"note": "----Hard Extremes----","is_comment": true},
+        
+        {
+            "id": 139636309,
+            "name": "WOODKID",
+            "creator": "jakerz95",
+            "note": "The famous, the originally impossible, the laggy. Nerfed to be verified"
+        },
+        {
+            "id": 145611586,
+            "name": "INTO THE NIGHT",
+            "creator": "frythiefgaming",
+            "note": "Your another reta level and i chose this \"Into The Night\" for its problaly most popular among some small group"
+        },
+
+        {"note": "----Medium Extremes----","is_comment": true},
+        
+        {
+            "id": 62152040,
+            "name": "Ocular Miracle",
+            "creator": "Davphla and more",
+            "note": "(Unrated NLW) Super Demon map that pushed 2.1 to its absolute limits, being a highly anticipated release before unfortunately being split into Reverie, Faith, and Diligence due to lag issues."
+        },
+        {
+            "id": 143564503,
+            "name": "MONHEIM",
+            "creator": "surveyor23",
+            "note": "A 19 minutes sequel to the famous XXXL level REDEEMER. Can be Mythic worthy"
+        },
+
+        {"note": "----Easy Extremes----","is_comment": true},
+        {
+            "id": 148219141,
+            "name": "Sakureta",
+            "creator": "mzstylol and more",
+            "note": "Mizureta v2"
+        },
+        {
+            "id": 148219141,
+            "name": "SHIP22",
+            "creator": "spark",
+            "note": "Whoever think this is a good idea"
+        },
+
+        {"note": "----Non-Extremes----","is_comment": true},
+        {
+            "id": 150000023,
+            "name": "Pop Culture",
+            "creator": "Zafkiel7",
+            "note": "Originally a sequel to IDOLS, eventually evolved into a really fancy level featuring pop cultures (who have been guessed). \nHigh-end Insane Demon"
+        },
+
+        {"note": "----Who do you think this will be rated----","is_comment": true},
+        {
+            "id": 129261286,
+            "name": "EATEOT",
+            "creator": "DarkFeind",
+            "note": "(Unrated NLW) Final boss of asinine patience test levels, this time dubiously representing the album Everywhere At The End Of Time. Also extremely laggy due to some poorly optimized effects"
+        },
+        
+        {"note": "----Unnerfed Extremes (without much gameplay change)----","is_comment": true},
+        {
+            "id": 54441585,
+            "name": "Unnerfed Zodiac",
+            "creator": "xander556",
+            "note": "The more chokeable version of Zodiac, verified by nebnoob. Wow the reaction"
+        },
+        
+        {"note": "----CNGD levels----","is_comment": true},
+        {
+            "id": 118951928,
+            "name": "Disturb",
+            "creator": "GmdCubercube and more",
+            "note": ""
+        },
+        {
+            "id": 58573964,
+            "name": "Cyber Chasm",
+            "creator": "Shemo and more",
+            "note": "Hope it rated"
+        },
+        {
+            "id": 46248393,
+            "name": "Vivid",
+            "creator": "Wusy and more",
+            "note": "tap for uldm"
+        },
+        {
+            "id": 146626252,
+            "name": "Hexagan Furce",
+            "creator": "Namized and more",
+            "note": "Someone suggested this obviously joke level to this database i guess"
+        },
+        {"is_comment": true,
+            "id": 0,
+            "name": "TEMPLATE",
+            "creator": "COPY_THIS",
+            "note": ""
+        }
+    ]
+}

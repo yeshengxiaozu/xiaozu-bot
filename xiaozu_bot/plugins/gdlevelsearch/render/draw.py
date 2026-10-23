@@ -717,7 +717,7 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
             rank_parts.append(f"EDEL {edel:.1f}")
     elif data.list_rank:
         rank_parts.append(data.list_rank)
-    elif data.ratedplus_rank:
+    elif data.ratedplus_rank and data.ratedplus_rank <= 150:
         rank_parts.append(f"Rated+ #{data.ratedplus_rank}")
     rank_line = " | ".join(rank_parts) if rank_parts else ""
 
