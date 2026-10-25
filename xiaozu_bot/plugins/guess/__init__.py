@@ -247,9 +247,9 @@ async def can_start(
     bot: Bot, matcher: Matcher, event: Event
 ) -> None:
     session_id = getid(event)
-    if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
-        await react(bot, event, "424")
-        await matcher.finish()
+    #if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
+    #    await react(bot, event, "424")
+    #    await matcher.finish()
 
     answer = r.hget(ANSWER_KEY, session_id)
     if answer is not None and answer != NOTHING_ANSWER and is_group_event(event):

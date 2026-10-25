@@ -51,7 +51,7 @@ jwz = on_command("jwz", rule=rule_notban)
 today = on_command("today")
 news = on_command("news", aliases={"公告", "新闻"})
 test = on_command("1145141919810", permission=SUPERUSER)
-snowluma = on_fullmatch("#sl")
+snowluma = on_fullmatch("#sl", None, True)
 group_poke = on_type(
     (PokeNotifyEvent,),
     rule=to_me(),
@@ -156,7 +156,7 @@ async def handle_function():
 借楼辱骂一下rubtap的api我看一次养胃一次""")
 
 @snowluma.handle()
-async def handle_function(event: Event, arg: Message = CommandArg()):
+async def handle_function():
      await snowluma.finish("""Xiaozu-bot 状态
 版本: 5.20.1314
 平台: macOS-ARM64
