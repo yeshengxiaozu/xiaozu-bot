@@ -1,6 +1,6 @@
 import random
 
-from nonebot import get_plugin_config, on_command, on_type
+from nonebot import get_plugin_config, on_command, on_type, on_fullmatch
 from nonebot.adapters.onebot.v11 import (
     PokeNotifyEvent,
 )
@@ -51,6 +51,7 @@ jwz = on_command("jwz", rule=rule_notban)
 today = on_command("today")
 news = on_command("news", aliases={"公告", "新闻"})
 test = on_command("1145141919810", permission=SUPERUSER)
+snowluma = on_fullmatch("#sl")
 group_poke = on_type(
     (PokeNotifyEvent,),
     rule=to_me(),
@@ -153,6 +154,14 @@ async def handle_function():
 翻修了help删除对应的内容
 增加了*gdlevelsearch功能因为小卒变成gd吃了
 借楼辱骂一下rubtap的api我看一次养胃一次""")
+
+@snowluma.handle()
+async def handle_function(event: Event, arg: Message = CommandArg()):
+     await snowluma.finish("""Xiaozu-bot 状态
+版本: 5.20.1314
+平台: macOS-ARM64
+运行时长: 114天 5小时 14分钟
+""")
 
 
 @test.handle()
