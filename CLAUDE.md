@@ -36,7 +36,9 @@ python scripts/try_search.py Tartarus  # 走完整搜索+出图，结果写到 t
 
 - `xiaozu_bot/` 和 `xiaozu_bot/plugins/` 是 PEP 420 命名空间包（无 `__init__.py`）；每个插件子目录**有** `__init__.py`。NoneBot 从 `pyproject.toml` 的 `plugin_dirs` 扫描，新插件放到 `xiaozu_bot/plugins/<名字>/` 即可，无需登记。
 - 每个插件导出 `__plugin_meta__` 与 `Config`（`Config` 加必填字段必须给默认值，否则所有插件 import 期崩、CI 收集阶段红）。
-- **模块级副作用是常态**：`r = JsonRedis(plugin_storage(__file__))` 在 import 期就建好 `data/storage.json`（`.gitignore` 用 `xiaozu_bot/plugins/*/data/` 通配盖住）；`gdlevelsearch/api/` 各模块在 import 期把 json 缓存读进模块级 list/dict。这直接决定了：抓完新数据必须调 `reload_all()` 才进内存、独立脚本必须用空壳包绕开 import。
+- **模块级副作用是常态**：`r = JsonRedis(plugin_storage(__file__))` 在 import 期就建好 `data/storage.json`（`.gitignore` 用 `xiaozu_bot/plugins/*/data/*` 通配盖住；
+      `gdlevelsearch/data/unrated_levels.json` 是唯一的例外 —— 它是手写数据，
+      靠 `.gitignore` 末尾一条 `!` 规则入库）；`gdlevelsearch/api/` 各模块在 import 期把 json 缓存读进模块级 list/dict。这直接决定了：抓完新数据必须调 `reload_all()` 才进内存、独立脚本必须用空壳包绕开 import。
 - `game` 插件目录只剩空壳（无 `__init__.py`，不会被加载）；roulette 轮盘/蓝莓经济已下线——不要恢复。
 
 ## gdlevelsearch 分层

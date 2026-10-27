@@ -271,7 +271,14 @@ xiaozu_bot/plugins/gdlevelsearch/data/.staging/
 # 以前这里是一个插件一行（zhua/ jrrp/ roulette/ game/ ...）。别再那样写：
 # 那样每加一个新插件，CI 的「干净检出守卫」都会在它第一次 push 时红一次，
 # 直到你想起来回来补一行。用通配符一次性覆盖掉这一整类。
+#
+# 注意：这一行必须是 `data/*`（忽略目录里的东西），不能图省事写 `data/`。
+# 目录整体被忽略之后 git 就不会再进去看里面的文件，下一行那条 `!` 也就
+# 永远轮不到生效 —— unrated_levels.json 会重新变成「被忽略」，
+# 但它其实是一份被跟踪的手写数据，改了不入库就是静默丢。
 xiaozu_bot/plugins/*/data/*
 
 # 这个文件是手动编辑的，因为我绞尽脑汁想不到任何自动化还能让我满意的方式
+# 想再放行一个手写文件，就照这一行再加一条 `!`，并且必须留在上面那条通配之后
+# （同一个文件命中多条规则时，git 取**最后**一条）
 !xiaozu_bot/plugins/gdlevelsearch/data/unrated_levels.json

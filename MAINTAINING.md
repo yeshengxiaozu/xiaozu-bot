@@ -31,6 +31,7 @@ python -m pytest tests -q
 
 - 新加的插件建了自己的 `data/` → 已经被 `xiaozu_bot/plugins/*/data/` 这条通配规则盖住了，
   不该红。如果还是红了，说明产物落在别的位置，把那个位置加进 `.gitignore`。
+  （例外：手写数据要入库，见 `.gitignore` 末尾那条 `!` 规则。）
 - 你给 pytest 加了新的报告参数（`--junitxml=xxx.xml` 之类）→ 把产物加进 `.gitignore`。
 - 某个用例往仓库里写东西了 → 改成写 `tmp_path`（见第 5 节）。
 
@@ -196,7 +197,8 @@ py -3.13 -m venv .venv313
 
 - [ ] 插件放在 `xiaozu_bot/plugins/<名字>/`，`pyproject.toml` 的 `plugin_dirs` 会自动扫到，不用登记
 - [ ] 要存数据就用 `JsonRedis(plugin_storage(__file__))`，数据会落在插件自己的 `data/` 下，
-      **`.gitignore` 已经用 `xiaozu_bot/plugins/*/data/` 通配盖住了，不用再加规则**
+      **`.gitignore` 已经用 `xiaozu_bot/plugins/*/data/*` 通配盖住了，不用再加规则**
+      （`.gitignore` 末尾有一条 `!` 专门放行手写的 `unrated_levels.json`）
 - [ ] 命令想出现在 `*help` 里，就往 `xiaozu_bot/plugins/xiaozubot_help/commands.py` 的 `COMMANDS` 里加一条；
       不加也不会有测试红（注册表只检查「文档里写了的命令确实存在」，不检查反过来）
 - [ ] **不用写测试**。新插件没有测试不会让 CI 红
@@ -242,7 +244,8 @@ python scripts/run_updater.py tpl
 
 1. **别在指定任务名的时候加 `--continue`。** `scripts/run_updater.py:81` 那个分支
    在「有任务失败但加了 --continue」的情况下**照样会发布**。
-2. **跑全量之前先备份 `data/`。** 那个目录在 `.gitignore` 里，被盖掉就找不回来了：
+2. **跑全量之前先备份 `data/`。** 那个目录基本都在 `.gitignore` 里，被盖掉就找不回来了
+   （只有 `gdlevelsearch/data/unrated_levels.json` 是入库的，删了还能 `git checkout` 救）：
    ```bash
    cp -r xiaozu_bot/plugins/gdlevelsearch/data ~/gd-data-backup
    ```

@@ -76,7 +76,8 @@ CI 中 `ruff check .` 是阻塞合并的门禁；大多数自动修复可以使�
 - 修改命令、插件、适配器或数据更新流程时，同时更新相关测试和 README/维护文档。
 - 不恢复已删除的 `game` 插件、旧的 Redis 运行时方案或已下线的 roulette/blueberry
   功能，除非需求明确要求恢复。
-- 提交前检查 `git status`，确认没有凭据、缓存、`data/` 文件或临时输出。
+- 提交前检查 `git status`，确认没有凭据、缓存、`data/` 下的运行时文件或临时输出。
+  （`gdlevelsearch/data/unrated_levels.json` 是手写数据、故意入库的，不算。）
 
 ## 注释规范
 

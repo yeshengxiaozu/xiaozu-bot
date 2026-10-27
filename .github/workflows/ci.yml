@@ -171,8 +171,9 @@ jobs:
       # 每个插件在**模块级**就 `r = JsonRedis(plugin_storage(__file__))`，
       # 而 JsonRedis 会把 xiaozu_bot/plugins/<x>/data/storage.json 连同目录
       # 一起建出来。开发机上这些 data/ 早就存在了，从来不会暴露问题；
-      # CI 上是全新检出，data/ 一个都没有（git 里没有任何 data/ 下的文件，
-      # 全被 .gitignore 挡掉了），所有目录都是这一刻现建的。
+          # CI 上是全新检出，data/ 是空的（git 里只有一份手写白名单
+          # gdlevelsearch/data/unrated_levels.json，其余全被 .gitignore 挡掉），
+          # 所有目录都是这一刻现建的。
       #
       # 只做收集（--collect-only）就足以 import 到每一个插件模块，
       # 比跑全量快得多，还顺带验证了这个 Python 版本上所有模块都 import 得动。
