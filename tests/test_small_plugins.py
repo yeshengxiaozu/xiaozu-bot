@@ -1725,9 +1725,14 @@ def guess_env(patch_storage, monkeypatch, tmp_path):
 
 
 class TestGuessCanStart:
-    async def test_cooldown_blocks_and_marks_the_message(
+    async def test_cooldown_does_not_block_starting_a_new_one(
         self, guess_env, fake_bot, make_group_event
     ):
+        """45 秒键现在只用来挡「刚出题就认输」，不再挡出新题
+
+        COOLDOWN_PREFIX 之所以还活着，是因为 handle_guess_giveup 那条分支在用它。
+        哪天有人把这个判断加回 can_start，这条会最先红。
+        """
         store, _, _ = guess_env
         session = "g" + str(DEFAULT_GROUP_ID)
         store.set(f"{guess.COOLDOWN_PREFIX}{session}", "x", ex=45)
@@ -1738,8 +1743,8 @@ class TestGuessCanStart:
             event,
             lambda: guess.can_start(fake_bot, guess.guess_start, event),
         )
-        assert finished is True
-        assert emoji_likes(fake_bot) == [(13, "424")]
+        assert finished is False
+        assert fake_bot.calls == []
 
     async def test_open_question_in_a_group_blocks_a_new_one(
         self, guess_env, fake_bot, make_group_event
@@ -1827,6 +1832,7 @@ class TestGuessStart:
     async def test_sets_a_45_second_cooldown(
         self, guess_env, fake_bot, make_group_event, monkeypatch
     ):
+        """出题会写一个 45 秒键，现在只有 handle_guess_giveup 会去读它"""
         store, _, _ = guess_env
         monkeypatch.setattr(random, "randint", lambda a, b: 0)
         monkeypatch.setattr(random, "choice", lambda seq: seq[0])
@@ -1834,6 +1840,29 @@ class TestGuessStart:
 
         await run_handler(guess.guess_start_ultra, fake_bot, make_group_event())
         assert 0 < store.ttl(f"{guess.COOLDOWN_PREFIX}{session}") <= 45
+
+    async def test_two_starts_in_a_row_are_allowed(
+        self, guess_env, fake_bot, make_private_event, monkeypatch
+    ):
+        """同一个会话可以连着出两道题 —— 限频已经交给官方 API 那一层
+
+        以前第二题会被 45 秒冷却挡回去一个 424。
+        """
+        store, _, _ = guess_env
+        monkeypatch.setattr(random, "randint", lambda a, b: 0)
+        monkeypatch.setattr(random, "choice", lambda seq: seq[0])
+        session = str(DEFAULT_USER_ID)
+
+        assert (
+            await run_handler(guess.guess_start, fake_bot, make_private_event()) is True
+        )
+        assert (
+            await run_handler(guess.guess_start, fake_bot, make_private_event()) is True
+        )
+
+        # 冷却键还在写（给认输用），但不再拦出新题
+        assert store.ttl(f"{guess.COOLDOWN_PREFIX}{session}") > 0
+        assert len(sent_texts(fake_bot)) == 2
 
     async def test_sends_the_crop_with_a_prompt(
         self, guess_env, fake_bot, make_group_event, monkeypatch

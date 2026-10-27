@@ -195,7 +195,6 @@ COMMANDS: dict[str, Cmd] = {
             "上一题没结束要先 *guess_giveup 才能出新题。"
         ),
         examples=("*guess_start",),
-        constraints="同一个群（或私聊）45 秒出题冷却，冷却中只会给你的消息回一个叉",
     ),
     "guess_start_hard": Cmd(
         usage="*guess_start_hard",
@@ -203,7 +202,6 @@ COMMANDS: dict[str, Cmd] = {
         category="guess",
         detail="和 *guess_start 一样，只是截图变成 128×128，面积只有四分之一。",
         examples=("*guess_start_hard",),
-        constraints="和 *guess_start 共用同一个 45 秒冷却",
     ),
     "guess_start_ultra": Cmd(
         usage="*guess_start_ultra",
@@ -211,7 +209,6 @@ COMMANDS: dict[str, Cmd] = {
         category="guess",
         detail="和 *guess_start 一样，截图 64×64，三档里最小的。",
         examples=("*guess_start_ultra",),
-        constraints="和 *guess_start 共用同一个 45 秒冷却",
     ),
     "guess": Cmd(
         usage="*guess 答案",
@@ -225,7 +222,7 @@ COMMANDS: dict[str, Cmd] = {
             "注意：大部分地图要用简称/别名才判对，写完整的官方全名多半不认。"
         ),
         examples=("*guess 序章", "*guess prologue"),
-        constraints="答题本身没有冷却，出题冷却期内也能答",
+        constraints="答题没有冷却限制，随时可以答",
     ),
     "guess_giveup": Cmd(
         usage="*guess_giveup",

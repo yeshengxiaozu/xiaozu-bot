@@ -246,11 +246,9 @@ def isnonsense(image: Image.Image) -> bool:
 async def can_start(
     bot: Bot, matcher: Matcher, event: Event
 ) -> None:
+    # 45 秒冷却现在只用来挡「刚出题就认输」（见 guessstart / handle_guess_giveup），
+    # 不再限制出新题的频率 —— 限频交给官方 API 那一层了。
     session_id = getid(event)
-    #if r.ttl(f"{COOLDOWN_PREFIX}{session_id}") > 0:
-    #    await react(bot, event, "424")
-    #    await matcher.finish()
-
     answer = r.hget(ANSWER_KEY, session_id)
     if answer is not None and answer != NOTHING_ANSWER and is_group_event(event):
         await matcher.finish("请先输入*guess_giveup结束目前的题目！", at_sender=True)
