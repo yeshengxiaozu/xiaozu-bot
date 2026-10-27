@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 from PIL import Image, ImageChops
 
+from tests.test_gdlevelsearch_entry import RecordingLogger
 from xiaozu_bot.plugins.gdlevelsearch import (
     gddl_store,
     gddlapi,
@@ -42,6 +43,7 @@ from xiaozu_bot.plugins.gdlevelsearch import (
     platapi,
     ratedplusapi,
 )
+from xiaozu_bot.plugins.gdlevelsearch.api import unratedlevels
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import GDUser
 from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import (
     GDDL_LIMIT_MAX,
@@ -3572,3 +3574,138 @@ class TestIconCompose:
             )
             is img
         )
+
+
+# ==========================================================================
+# unratedlevels —— 手写的 unrated 白名单
+#
+# 这个文件里的数据是人手敲的，复制粘贴漏改 id 属于正常操作失误，所以除了
+# 「加载器要能正确处理」之外，还得有一条直接读仓库里那份 json 的守卫用例。
+# ==========================================================================
+@pytest.fixture
+def unrated_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """把白名单指到 tmp_path，收尾把三个模块级容器原样还回去。
+
+    DATA_PATH 是 import 期就绑定好的常量，所以 patch 的是它本身而不是
+    paths.DATA_DIR —— 改后者对这个模块没用。
+    """
+    levels_backup = list(unratedlevels.levels)
+    names_backup = dict(unratedlevels.by_name)
+    ids_backup = dict(unratedlevels.by_id)
+    monkeypatch.setattr(unratedlevels, "DATA_PATH", tmp_path / "unrated_levels.json")
+
+    def _write(payload: Any) -> Path:
+        path = unratedlevels.DATA_PATH
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    try:
+        yield _write
+    finally:
+        unratedlevels.levels[:] = levels_backup
+        unratedlevels.by_name.clear()
+        unratedlevels.by_name.update(names_backup)
+        unratedlevels.by_id.clear()
+        unratedlevels.by_id.update(ids_backup)
+
+
+class TestUnratedLevelLoading:
+    def test_duplicate_id_warns_and_names_both_levels(
+        self, unrated_workspace: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """重复 id 必须报警，而且文案要能看出是谁覆盖了谁"""
+        rec = RecordingLogger()
+        monkeypatch.setattr(unratedlevels, "logger", rec)
+        unrated_workspace(
+            {
+                "levels": [
+                    {"id": 7, "name": "Sakureta", "creator": "mz", "note": "Mizureta v2"},
+                    {"id": 7, "name": "SHIP22", "creator": "spark", "note": "why"},
+                ]
+            }
+        )
+
+        unratedlevels.reload()
+
+        assert len(unratedlevels.levels) == 2
+        assert unratedlevels.by_id[7].name == "SHIP22"  # 后者覆盖前者
+        warned = [m for lvl, m in rec.lines if lvl == "warning"]
+        assert len(warned) == 1
+        assert "7" in warned[0]
+        assert "Sakureta" in warned[0]
+        assert "SHIP22" in warned[0]
+
+    def test_no_warning_when_ids_are_unique(
+        self, unrated_workspace: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rec = RecordingLogger()
+        monkeypatch.setattr(unratedlevels, "logger", rec)
+        unrated_workspace({"levels": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]})
+
+        unratedlevels.reload()
+
+        assert [m for lvl, m in rec.lines if lvl == "warning"] == []
+        assert set(unratedlevels.by_id) == {1, 2}
+
+    def test_comment_rows_are_not_indexed(self, unrated_workspace: Any) -> None:
+        """分节标题和 TEMPLATE 占位不进索引，也不该触发重复告警"""
+        unrated_workspace(
+            {
+                "levels": [
+                    {"note": "----Challenges----", "is_comment": True},
+                    {"id": 3, "name": "VSC", "creator": "bobo"},
+                    {"is_comment": True, "id": 0, "name": "TEMPLATE"},
+                ]
+            }
+        )
+
+        unratedlevels.reload()
+
+        assert len(unratedlevels.levels) == 1
+        assert list(unratedlevels.by_id) == [3]
+
+    def test_get_note_by_id(self, unrated_workspace: Any) -> None:
+        unrated_workspace(
+            {
+                "levels": [
+                    {"id": 9, "name": "x", "note": "为什么它能火"},
+                    {"id": 10, "name": "y"},
+                    {"id": 11, "name": "z", "note": ""},
+                ]
+            }
+        )
+        unratedlevels.reload()
+        facade = unratedlevels.UnratedLevels
+
+        assert facade.get_note(9) == "为什么它能火"
+        assert facade.get_note(10) is None  # 没写 note
+        assert facade.get_note(11) is None  # 空串当 None
+        assert facade.get_note(99) is None
+        assert facade.get_note("abc") is None  # type: ignore[arg-type]
+
+    def test_getlevelbyname_ignores_case_and_spaces(
+        self, unrated_workspace: Any
+    ) -> None:
+        unrated_workspace({"levels": [{"id": 12, "name": "Azure Flare"}]})
+        unratedlevels.reload()
+        facade = unratedlevels.UnratedLevels
+
+        assert facade.getlevelbyname("  azure FLARE ") is not None
+        assert facade.getlevelbyname("Azure Flare").id == 12  # type: ignore[union-attr]
+        assert facade.getlevelbyname("别瞎写") is None
+        assert facade.getlevelbyname("") is None
+
+
+class TestUnratedLevelDataFile:
+    def test_tracked_whitelist_has_no_duplicate_ids(self, repo_root: Path) -> None:
+        """仓库里那份 json 不能有重复 id —— 重复会让前者搜出后者的卡片"""
+        path = repo_root / "xiaozu_bot/plugins/gdlevelsearch/data/unrated_levels.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        ids = [row["id"] for row in payload["levels"] if not row.get("is_comment")]
+
+        assert ids, "白名单是空的？"
+        assert len(ids) == len(set(ids))
+
+    def test_index_size_agrees_with_the_tracked_file(self) -> None:
+        """import 期 load() 的结果：有重复 id 时 by_id 会比 levels 短"""
+        assert len(unratedlevels.by_id) == len(unratedlevels.levels)

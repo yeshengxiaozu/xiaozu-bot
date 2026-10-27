@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +70,15 @@ def _rebuild(payload: dict[str, Any]) -> int:
     by_id.clear()
     for level in levels:
         by_name[level.name.strip().lower()] = level
+        previous = by_id.get(level.id)
+        if previous is not None:
+            # 这个文件是手写的，复制粘贴漏改 id 是很正常的操作失误。
+            # 不叫出来的话，搜到前一个关卡会拿到后一个的卡片，而且看不出为什么。
+            logger.warning(
+                f"[UnratedLevel] 重复的关卡 id {level.id}："
+                f"{previous.name!r} 被 {level.name!r} 覆盖，"
+                f"查前者会拿到后者的 note"
+            )
         by_id[level.id] = level
     return len(levels)
 
@@ -108,7 +116,7 @@ class UnratedLevels:
         key = (name or "").strip().lower()
         if not key:
             return None
-        return by_name.get(key, None)
+        return by_name.get(key)
 
     @staticmethod
     def get_note(level_id: int) -> str | None:
