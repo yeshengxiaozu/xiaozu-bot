@@ -762,3 +762,97 @@ class TestCreateImageFromGdlevelRemoteFailures:
         assert rendered["song_line1"] == "Song: NONG Song"
         assert rendered["song_line2"] == "Artist: NONG Artist  ID: NONG"
         assert rendered["featured_fx_path"] == Path()
+
+
+# ==========================================================================
+# 侧边栏 detail_text 的段落拼装
+#
+# 侧边栏只画一个字符串，各段落靠空行分段。unrated 白名单那句手写 note 也走
+# 这里，位置必须稳定 —— 它是«为什么这关会被收进来»的唯一出口。
+# ==========================================================================
+class _Stub:
+    """只填了部分字段的替身；没填的一律当 None，省得每种分支各造一遍对象"""
+
+    def __init__(self, **attrs: Any) -> None:
+        self.__dict__.update(attrs)
+
+    def __getattr__(self, _name: str) -> None:
+        return None
+
+
+def _fetched(**overrides: Any) -> Any:
+    """造一个字段基本为空的 FetchedData，只往里塞本次要用的那几个"""
+    data = draw.FetchedData(level_id=123)
+    for name, value in overrides.items():
+        setattr(data, name, value)
+    return data
+
+
+class TestDetailTextSections:
+    def test_note_alone_has_no_leading_blank_line(self) -> None:
+        rendered = draw._build_render_data(_fetched(unrated_note="恒rd这张榜单第 7 名"))
+
+        assert rendered.detail_text == "Note: 恒rd这张榜单第 7 名"
+
+    def test_note_comes_right_after_the_description(self) -> None:
+        data = _fetched(
+            gdlevel=_Stub(description="desc"),
+            unrated_note="note",
+        )
+        rendered = draw._build_render_data(data)
+
+        assert rendered.detail_text == "Description: desc\n\nNote: note"
+
+    def test_without_a_note_the_text_is_unchanged(self) -> None:
+        """回归护栏：没有 note 时，输出必须和改动前一字不差"""
+        data = _fetched(gdlevel=_Stub(description="desc"))
+        rendered = draw._build_render_data(data)
+
+        assert rendered.detail_text == "Description: desc"
+
+    def test_sections_keep_their_order(self) -> None:
+        data = _fetched(
+            gdlevel=_Stub(description="desc"),
+            plat_info=_Stub(tags=["Chokepoint"]),
+            nlw_info=_Stub(source="NLW", description="nlw"),
+            aredl_info=_Stub(description="aredl", name="a", position=1),
+            unrated_note="note",
+        )
+        rendered = draw._build_render_data(data)
+
+        positions = [
+            rendered.detail_text.index("Description: "),
+            rendered.detail_text.index("Note: "),
+            rendered.detail_text.index("Difficulty Chart Tags: "),
+            rendered.detail_text.index("NLW Description: "),
+            rendered.detail_text.index("AREDL Description: "),
+        ]
+        assert positions == sorted(positions)
+
+    async def test_note_reaches_the_card_through_the_real_pipeline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_fetch_all_data 真的会把白名单里的 note 塞进 FetchedData"""
+        monkeypatch.setattr(draw, "get_level_by_id", lambda _id: None)
+        monkeypatch.setattr(draw.Gddl, "getlevelbyid", lambda *_args: None)
+        monkeypatch.setattr(draw.Gddl, "getleveltags", lambda _id: [])
+        monkeypatch.setattr(draw, "fetch_thumbnail", lambda *_args: _none())
+        monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Lists, "search_level", lambda _id: None)
+        monkeypatch.setattr(
+            draw.UnratedLevels, "get_note", staticmethod(lambda _id: "白名单里的留言")
+        )
+
+        rendered: dict[str, Any] = {}
+
+        def _fake_create_level_image(data: LevelRenderData) -> Image.Image:
+            rendered.update({item.name: getattr(data, item.name) for item in fields(data)})
+            return Image.new("RGB", (1, 1))
+
+        monkeypatch.setattr(draw, "create_level_image", _fake_create_level_image)
+
+        await create_image_from_gdlevel(123)
+
+        assert rendered["detail_text"] == "Note: 白名单里的留言"

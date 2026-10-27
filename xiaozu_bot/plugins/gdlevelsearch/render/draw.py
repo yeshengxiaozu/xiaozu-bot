@@ -18,6 +18,7 @@ from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi, PlatInfo
 from ..api.ratedplusapi import Ratedplus
 from ..api.thumbnail import fetch_thumbnail
+from ..api.unratedlevels import UnratedLevels
 from ..paths import PLUGIN_DIR, RES_DIR
 
 # Tier 颜色表
@@ -309,6 +310,7 @@ class FetchedData:
     list_rank: str | None = None
     ratedplus_rank: int | None = None
     nong_song: dict | None = None
+    unrated_note: str | None = None
 
 
 def _panel_rect() -> tuple[int, int, int, int]:
@@ -632,6 +634,8 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
         gddl_info.Tags = gddl_tags
 
     ratedplus_rank = Ratedplus.get_position(level_id)
+    # 手写白名单是纯内存查表，顺手带上；只有人工录入过的关卡才有值
+    unrated_note = UnratedLevels.get_note(level_id)
 
     list_rank = None
     if aredl_info is None and plat_info is None:
@@ -649,7 +653,8 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
         plat_info=plat_info,
         list_rank=list_rank,
         ratedplus_rank=ratedplus_rank,
-        nong_song=nong_song
+        nong_song=nong_song,
+        unrated_note=unrated_note,
     )
 
 
@@ -847,15 +852,25 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
         line1 = "sorry :("
         line2 = ""
 
-    description = getattr(gdlevel, "description", "") or getattr(gddl_meta, "Description", "")
-    detail_text = f"Description: {description}" if description else ""
+    # 侧边栏只有一个字符串，各段落用空行分隔。放进 list 里 join 是为了让
+    # 「第一段为空」时不会留下前导的 \n\n（以前 Description 为空、有 tags 时
+    # 侧栏顶部会多一条空行）。
+    sections: list[str] = []
+    description = (
+        getattr(gdlevel, "description", "") or getattr(gddl_meta, "Description", "")
+    )
+    if description:
+        sections.append(f"Description: {description}")
+    if data.unrated_note:
+        sections.append(f"Note: {data.unrated_note}")
     if plat_info and plat_info.tags:
         plat_info.tags = list(set(plat_info.tags) - {"On TPL", "On Pemonlist"})
-        detail_text += f"\n\nDifficulty Chart Tags: {', '.join(plat_info.tags)}"
+        sections.append(f"Difficulty Chart Tags: {', '.join(plat_info.tags)}")
     if nlw_info and getattr(nlw_info, "description", None):
-        detail_text += f"\n\n{nlw_info.source} Description: {nlw_info.description}"
+        sections.append(f"{nlw_info.source} Description: {nlw_info.description}")
     if aredl_info and getattr(aredl_info, "description", None):
-        detail_text += f"\n\nAREDL Description: {aredl_info.description}"
+        sections.append(f"AREDL Description: {aredl_info.description}")
+    detail_text = "\n\n".join(sections)
 
     return LevelRenderData(
         level_line=level_line,
