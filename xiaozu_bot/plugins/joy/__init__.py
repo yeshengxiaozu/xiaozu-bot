@@ -1,6 +1,6 @@
 import random
 
-from nonebot import get_plugin_config, on_command, on_type, on_fullmatch
+from nonebot import get_plugin_config, on_command, on_fullmatch, on_type
 from nonebot.adapters.onebot.v11 import (
     PokeNotifyEvent,
 )
@@ -51,7 +51,7 @@ jwz = on_command("jwz", rule=rule_notban)
 today = on_command("today")
 news = on_command("news", aliases={"公告", "新闻"})
 test = on_command("1145141919810", permission=SUPERUSER)
-snowluma = on_fullmatch("#sl", None, True)
+snowluma = on_fullmatch("#sl", ignorecase=True)
 group_poke = on_type(
     (PokeNotifyEvent,),
     rule=to_me(),
@@ -160,8 +160,7 @@ async def handle_function():
      await snowluma.finish("""Xiaozu-bot 状态
 版本: 5.20.1314
 平台: macOS-ARM64
-运行时长: 114天 5小时 14分钟
-""")
+运行时长: 114天 5小时 14分钟""")
 
 
 @test.handle()
