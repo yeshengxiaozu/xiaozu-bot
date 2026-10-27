@@ -72,8 +72,9 @@ def _rebuild(payload: dict[str, Any]) -> int:
         by_name[level.name.strip().lower()] = level
         previous = by_id.get(level.id)
         if previous is not None:
-            # 这个文件是手写的，复制粘贴漏改 id 是很正常的操作失误。
-            # 不叫出来的话，搜到前一个关卡会拿到后一个的卡片，而且看不出为什么。
+            # This file is hand-edited, so a duplicated id is an easy typo.
+            # Without a warning the two levels silently share one index entry
+            # and looking up the first one returns the second one's note.
             logger.warning(
                 f"[UnratedLevel] 重复的关卡 id {level.id}："
                 f"{previous.name!r} 被 {level.name!r} 覆盖，"

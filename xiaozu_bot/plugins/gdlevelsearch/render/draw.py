@@ -852,9 +852,9 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
         line1 = "sorry :("
         line2 = ""
 
-    # 侧边栏只有一个字符串，各段落用空行分隔。放进 list 里 join 是为了让
-    # 「第一段为空」时不会留下前导的 \n\n（以前 Description 为空、有 tags 时
-    # 侧栏顶部会多一条空行）。
+    # The sidebar renders one string; paragraphs are separated by blank lines.
+    # Building a list and joining it keeps a leading blank line from appearing
+    # when the first section (Description) is empty.
     sections: list[str] = []
     description = (
         getattr(gdlevel, "description", "") or getattr(gddl_meta, "Description", "")

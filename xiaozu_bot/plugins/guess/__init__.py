@@ -246,8 +246,9 @@ def isnonsense(image: Image.Image) -> bool:
 async def can_start(
     bot: Bot, matcher: Matcher, event: Event
 ) -> None:
-    # 45 秒冷却现在只用来挡「刚出题就认输」（见 guessstart / handle_guess_giveup），
-    # 不再限制出新题的频率 —— 限频交给官方 API 那一层了。
+    # The 45s key only gates "give up right after a new question" now
+    # (see guessstart / handle_guess_giveup). Starting is no longer throttled:
+    # rate limiting happens on the official API side.
     session_id = getid(event)
     answer = r.hget(ANSWER_KEY, session_id)
     if answer is not None and answer != NOTHING_ANSWER and is_group_event(event):
