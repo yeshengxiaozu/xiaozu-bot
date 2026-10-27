@@ -231,3 +231,55 @@ class TestGdsearchStatus:
         text = sent_texts(fake_bot)[-1]
         assert "待手动匹配关卡：0" in text
         assert "无" in text
+
+
+# ==========================================================================
+# reload 子命令
+# ==========================================================================
+class TestGdsearchManageReload:
+    async def test_reload_works_even_without_unmatched_entries(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """清单是空的时候也要能重载 —— 那才是最需要重载的时刻"""
+        calls: list[str] = []
+        monkeypatch.setattr(manage, "reload_all", lambda: calls.append("reload"))
+
+        await run_handler(
+            gdsearchmanage, fake_bot, make_group_event("*gdsearch_manage"), arg="reload"
+        )
+
+        assert calls == ["reload"]
+        assert "没有待手动匹配的关卡" not in sent_texts(fake_bot)[-1]
+        assert manage.manage_sessions == {}
+
+    async def test_reload_takes_precedence_over_the_list(
+        self, fake_bot: FakeBot, make_group_event: Any, manage_paths: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """有待匹配项时，reload 优先于渲染清单"""
+        _write_unmatched(manage_paths, _sample_entries())
+        calls: list[str] = []
+        monkeypatch.setattr(manage, "reload_all", lambda: calls.append("reload"))
+
+        await run_handler(
+            gdsearchmanage, fake_bot, make_group_event("*gdsearch_manage 重载"),
+            arg="重载",
+        )
+
+        assert calls == ["reload"]
+        assert "待手动匹配" not in sent_texts(fake_bot)[-1]
+
+    async def test_reload_failure_is_reported_not_raised(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom() -> None:
+            raise RuntimeError("缓存文件坏了")
+
+        monkeypatch.setattr(manage, "reload_all", boom)
+
+        result = await run_handler(
+            gdsearchmanage, fake_bot, make_group_event("*gdsearch_manage"), arg="reload"
+        )
+
+        assert result is True
+        assert "重载失败" in sent_texts(fake_bot)[-1]

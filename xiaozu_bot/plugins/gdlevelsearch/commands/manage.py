@@ -21,7 +21,7 @@ from nonebot.rule import Rule
 
 from xiaozu_bot.utils.gd_args import NEXT_WORDS, PREV_WORDS, STOP_WORDS
 
-from .. import paths
+from .. import paths, reload_all
 
 try:
     from ..updater.jobs import getmetadata
@@ -39,6 +39,7 @@ PAGE_SIZE = 10
 SESSION_SECONDS = 10 * 60
 
 HELP_WORDS = {"help", "-h", "帮助"}
+RELOAD_WORDS = {"reload", "重载"}
 
 REASON_LABELS = {
     "not-found": "查无此关",
@@ -49,6 +50,7 @@ USAGE = """*gdsearch_manage —— 手动给自动匹配失败的关卡补 id（
   不写参数：显示待匹配清单（每页 10 条，带序号）
   输入「序号 关卡id」：把 id 写进 metadata 缓存并从未匹配清单移除
   n / p：翻页；结束：退出会话
+  reload / 重载：只重读磁盘上的本地缓存，不抓网络（读坏了就保留旧数据）
 *gdsearch_status —— 查看待匹配数量、metadata 缓存与数据源状态（管理员）"""
 
 # session_id -> {"page": int, "expires_at": float}
@@ -156,6 +158,16 @@ async def _process_input(event: Event, text: str) -> str | None:
 
     if text in HELP_WORDS:
         return USAGE
+
+    # 必须放在 load_unmatched() 之前：待匹配清单为空时那边会提前 return，
+    # 于是「清单是空的」这种最常见的时刻反而重载不了。
+    if text in RELOAD_WORDS:
+        try:
+            await asyncio.to_thread(reload_all)
+        except Exception:
+            logger.exception("[gdsearch_manage] 重载本地缓存失败")
+            return "重载失败，详情见日志（内存里仍是旧数据）"
+        return "已重载本地缓存（没有抓取网络数据）"
 
     entries = load_unmatched()
     if not entries:

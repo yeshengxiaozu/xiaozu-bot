@@ -842,13 +842,14 @@ class TestReloadAll:
             ("plat", gdlevelsearch.platapi),
             ("aredl", gdlevelsearch.aredlapi),
             ("ratedplus", gdlevelsearch.ratedplusapi),
+            ("unrated", gdlevelsearch.unratedlevels),
         ):
             monkeypatch.setattr(
                 module, "reload", (lambda n: lambda: order.append(n))(name)
             )
 
         gdlevelsearch.reload_all()
-        assert order == ["nlw", "plat", "aredl", "ratedplus"]
+        assert order == ["nlw", "plat", "aredl", "ratedplus", "unrated"]
 
     def test_one_broken_source_does_not_stop_the_others(
         self, monkeypatch: pytest.MonkeyPatch
