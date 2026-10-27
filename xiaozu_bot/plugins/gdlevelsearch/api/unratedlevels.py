@@ -98,11 +98,11 @@ def reload() -> None:
     """Re-read the snapshot; a missing or broken file keeps the old index."""
     payload = _read_payload(DATA_PATH)
     if payload is None:
-        logger.warning("[ratedplus] 重新加载失败，保留旧数据")
+        logger.warning("[UnratedLevel] 重新加载失败，保留旧数据")
         return
     count = _rebuild(payload)
     logger.info(
-        f"[ratedplus] 已重新载入 {count} 条 unrated demon 白名单"
+        f"[UnratedLevel] 已重新载入 {count} 条 unrated demon 白名单"
     )
 
 load()
@@ -112,7 +112,7 @@ class UnratedLevels:
 
     @staticmethod
     def getlevelbyname(name: str) -> UnratedLevel | None:
-        """Return listed demons whose name matches exactly, ignoring case."""
+        """Return the whitelisted level whose name matches exactly, ignoring case."""
         key = (name or "").strip().lower()
         if not key:
             return None
@@ -120,7 +120,7 @@ class UnratedLevels:
 
     @staticmethod
     def get_note(level_id: int) -> str | None:
-        """Return the demonlist position for a level id, or None."""
+        """Return the hand-written note for a level id, or None."""
         try:
             level_id = int(level_id)
         except (TypeError, ValueError):
