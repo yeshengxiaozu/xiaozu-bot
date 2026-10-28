@@ -71,6 +71,19 @@
             "creator": "zander12",
             "note": "Named after the famous impossible Osu! chart, redecorated and reverified and still dont get RobTop's attention."
         },
+        {
+            "id": 146888428,
+            "name": "Bellatrix",
+            "creator": "Dan2D",
+            "note": "Sequel to Rigel"
+        },
+        {
+            "id": 149097501,
+            "name": "CHROMAFLUX",
+            "creator": "filqh",
+            "note": ""
+        },
+
 
         {
             "id": 134734938,
@@ -121,6 +134,12 @@
             "name": "SHIP22",
             "creator": "spark",
             "note": "Whoever think this is a good idea"
+        },
+        {
+            "id": 148024015,
+            "name": "DEADLY RAUCHKAMMER",
+            "creator": "Duque01",
+            "note": "Level made in 6 hours (it has no playtesting)"
         },
 
         {"note": "----Non-Extremes----","is_comment": true},
