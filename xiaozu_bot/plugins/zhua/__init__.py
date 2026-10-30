@@ -86,7 +86,7 @@ descriptions = {
     "黑脸卒.png": "生气了",
     "GD像素卒.png": "小卒来到GD世界直接硬刚这里的Plat Demon, 这是她发生的变化",
     "刺头卒.jpg": "事实证明刺头人身还是太反人类了",
-    "禁止卡卒.jpg": "禁止卡卡我启动了",
+    "禁止卡卒.png": "禁止卡卒卡我启动了",
     "钓鱼卒.jpg": "喜欢我总次数56空军5次吗",
     "强制play卒.jpg": "糟糕，一群黑衣人把你强制拉进了一个黑色酒馆，似乎你不满足他们的目标是出不来了！",
     "水印卒.png": "我要声明一下 真正的水印人打个盗图sm都要打成浮雕的",
@@ -100,25 +100,57 @@ show = on_command("show")
 zhua_test = on_command("zhua_test", permission=SUPERUSER)
 
 
+_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp"})
+
+
+def _available_files() -> list[str]:
+    """只在磁盘上真的存在的图片里抽。
+
+    descriptions 是手写的，曾经有一个键（"禁止卡卒.jpg"）指向的文件实际叫
+    .png，于是 *zhua 有 1/65 的概率抽中它、然后 send_image 抛
+    FileNotFoundError，用户什么都收不到。反过来磁盘上有而字典里没有的文件
+    也该能抓到（描述留空即可），所以候选项以目录为准、字典只作注解。
+    """
+    if not DATA_DIR.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in DATA_DIR.iterdir()
+        if path.is_file() and path.suffix.lower() in _IMAGE_SUFFIXES
+    )
+
+
 @zhua.handle()
 async def handle_zhua(bot: Bot, event: Event) -> None:
     user_id = get_user_id(event)
-    if r.get(f"zhua_cd_{user_id}") == "waiting":
-        t = r.ttl(f"zhua_cd_{user_id}")
+    cooldown_key = f"zhua_cd_{user_id}"
+    if r.get(cooldown_key) == "waiting":
+        t = r.ttl(cooldown_key)
         await zhua.finish(f"别抓啦，{t}秒后再来吧", at_sender=True)
-    folder_path = DATA_DIR
-    file_name = random.choice(list(descriptions.keys()))
-    name = file_name.split(".")[0]
-    image_path = folder_path / file_name
-    await send_image(
-        bot,
-        event,
-        image_path,
-        before="恭喜你抓到一个小卒！\n",
-        after=f"\n{name}\n{descriptions[file_name]}",
-        at_sender=True,
-    )
-    r.set(f"zhua_cd_{user_id}", "waiting", ex=600)
+
+    candidates = _available_files()
+    if not candidates:
+        await zhua.finish("小卒们都跑光了（目录里没有图片）")
+
+    file_name = random.choice(candidates)
+    name = file_name.rsplit(".", 1)[0]
+    image_path = DATA_DIR / file_name
+    # 冷却必须在发图**之前**写：放在后面时，连发两条都会在开头读到
+    # "没有冷却"，于是 10 分钟冷却被直接绕过。
+    r.set(cooldown_key, "waiting", ex=600)
+    try:
+        await send_image(
+            bot,
+            event,
+            image_path,
+            before="恭喜你抓到一个小卒！\n",
+            after=f"\n{name}\n{descriptions.get(file_name, '')}",
+            at_sender=True,
+        )
+    except Exception:
+        # 没发出去就别把冷却占着
+        r.delete(cooldown_key)
+        raise
     await zhua.finish()
 
 
@@ -150,8 +182,6 @@ async def handle_show(bot: Bot, event: Event, arg: Message = CommandArg()) -> No
 
 @zhua_test.handle()
 async def handle_zhua_test() -> None:
-    file_names = []
-    folder_path = DATA_DIR
-    file_names = [f.name for f in folder_path.iterdir() if f.is_file()]
+    file_names = _available_files()
     await zhua_test.send(str([f'["{i}"] = ""' for i in file_names]))
     await zhua_test.finish()

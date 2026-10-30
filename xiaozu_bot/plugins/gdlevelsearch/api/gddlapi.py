@@ -6,7 +6,7 @@ from nonebot import logger
 try:
     from ..constants import HTTP_OK, USER_AGENT
     from . import gddl_store
-    from .http import GDDL_RETRY_POLICY
+    from .http import GDDL_RETRY_POLICY, RetryPolicy
     from .http import request as http_request
 except ImportError:  # standalone updater script mode
     import gddl_store
@@ -14,6 +14,7 @@ except ImportError:  # standalone updater script mode
 
     from xiaozu_bot.plugins.gdlevelsearch.api.http import (
         GDDL_RETRY_POLICY,
+        RetryPolicy,
     )
     from xiaozu_bot.plugins.gdlevelsearch.api.http import (
         request as http_request,
@@ -25,6 +26,13 @@ GDDL_PLAT_LENGTH = 6
 GDDL_SUBMISSION_LIMIT = 10
 # gdladder 的请求超时
 GDDL_TIMEOUT = 15
+# 名称搜索跑在 SOURCE_LOOKUP_TIMEOUT 这条公共 deadline 底下，所以它的
+# 「单次超时 × 重试次数」总预算必须**小于**那条 deadline，否则这次调用必然在
+# 收集阶段被整轮丢弃：调用方只看到 gddl 没值，于是无论搜什么都回「GDDL 无法访问」，
+# 连函数末尾那份本地快照兜底都没机会执行。因此这里单独给一套更紧的预算，
+# 且不重试（重试会成倍放大耗时）。
+GDDL_SEARCH_TIMEOUT = 4
+GDDL_SEARCH_RETRY_POLICY = RetryPolicy(attempts=1)
 # 接口限制 limit 只能 1-30，超了直接 400
 GDDL_LIMIT_MIN = 1
 GDDL_LIMIT_MAX = 30
@@ -387,8 +395,8 @@ class Gddl:
                 url,
                 headers=headers,
                 params=data,
-                timeout=GDDL_TIMEOUT,
-                policy=GDDL_RETRY_POLICY,
+                timeout=GDDL_SEARCH_TIMEOUT,
+                policy=GDDL_SEARCH_RETRY_POLICY,
                 allow_retry=True,
             )
             if response.status_code == HTTP_OK:

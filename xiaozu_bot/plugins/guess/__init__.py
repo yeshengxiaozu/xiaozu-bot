@@ -2,7 +2,7 @@ import asyncio
 import random
 from pathlib import Path
 
-from nonebot import on_command
+from nonebot import logger, on_command
 from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
@@ -198,13 +198,22 @@ def get_variance(image) -> tuple[float, float, float]:
     return (red, green, blue)
 
 
+# 只认这些后缀：目录里混进 storage.json / 缩略图之类的非图片文件时，
+# 随机抽中它送进 Image.open 会抛 UnidentifiedImageError，整条出题路径就废了。
+_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"})
+
+
 async def _list_files(folder_path: Path) -> list[str]:
-    """异步获取文件夹下所有文件的名称列表"""
+    """异步获取文件夹下所有图片文件的名称列表"""
 
     def sync_list():
         if not folder_path.exists():
             return []
-        return [f.name for f in folder_path.iterdir() if f.is_file()]
+        return [
+            f.name
+            for f in folder_path.iterdir()
+            if f.is_file() and f.suffix.lower() in _IMAGE_SUFFIXES
+        ]
 
     return await asyncio.to_thread(sync_list)
 
@@ -264,23 +273,89 @@ def _crop_and_save(
     实在都很糊就用最后一次的结果。
     这函数是同步的，调用方负责丢线程池。
     """
-    image = Image.open(image_path)
-    width, height = image.size
+    # 用 with 兜住句柄：不关的话 Windows 上源截图会一直被占用，
+    # 而 CPython 什么时候回收是不确定的。
+    with Image.open(image_path) as image:
+        width, height = image.size
 
-    box = (0, 0, crop_width, crop_height)
-    for _ in range(MAX_CROP_RETRIES):
-        left = random.randint(0, max(0, width - crop_width))
-        top = random.randint(0, max(0, height - crop_height))
-        box = (left, top, left + crop_width, top + crop_height)
-        cropped = image.crop(box)
-        if not isnonsense(cropped):
-            break
-    else:
-        cropped = image.crop(box)
+        box = (0, 0, crop_width, crop_height)
+        for _ in range(MAX_CROP_RETRIES):
+            left = random.randint(0, max(0, width - crop_width))
+            top = random.randint(0, max(0, height - crop_height))
+            box = (left, top, left + crop_width, top + crop_height)
+            cropped = image.crop(box)
+            if not isnonsense(cropped):
+                break
+        else:
+            cropped = image.crop(box)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cropped.save(out_path)
     return box
+
+
+def _draw_answer_box(
+    image_path: Path, position: str | None, out_path: Path
+) -> None:
+    """在原图上把答案位置框出来存成文件。
+
+    打开的是全尺寸截图，decode + 画框 + 重新编码是几十到几百毫秒的纯 CPU，
+    和 `_crop_and_save` 一样必须丢线程池，否则整个 bot 会卡住。
+    """
+    box = _parse_position(position)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(image_path) as image:
+        if box is not None:
+            ImageDraw.Draw(image).rectangle(
+                box, fill=None, outline="red", width=4
+            )
+        image.save(out_path)
+
+
+def _parse_position(position: str | None) -> list[tuple[int, int]] | None:
+    """把存下来的 "left top right bottom" 解析成 Pillow 的矩形。
+
+    存的值可能被手工改过、或者三个 hash 字段写入不完整，所以这里全部按
+    「拿不到就退化成不画框」处理，不能让一次坏数据把命令整条打挂。
+    """
+    if not position:
+        return None
+    try:
+        values = [int(value) for value in position.split()]
+    except ValueError:
+        logger.warning("guess: 裁剪坐标不是整数，跳过画框: %r", position)
+        return None
+    if len(values) != 4:
+        logger.warning("guess: 裁剪坐标不是 4 个数，跳过画框: %r", position)
+        return None
+    left, top, right, bottom = values
+    return [(left, top), (right, bottom)]
+
+
+def _safe_hget(name: str, key: str) -> str | None:
+    """hget 拿到 None 时统一当「没这个字段」，别让调用方对 None 解引用。"""
+    value = r.hget(name, key)
+    return value if isinstance(value, str) else None
+
+
+def _bump_counter(key: str) -> None:
+    """自增计数。
+
+    `r.set(key, r.get(key) + 1)` 是跨两次加锁的读-改-写，并发时会丢计数，
+    所以用 storage 层的原子 incr。
+    """
+    r.incr(key)
+
+
+def _clear_session(session_id: str) -> None:
+    """结束/放弃时把三个字段真正删掉。
+
+    之前只是把答案改成 NOTHING，字段永远留着，于是每个玩过的群都会永久
+    占一条记录，storage.json 只增不减。
+    """
+    r.hdel(ANSWER_KEY, session_id)
+    r.hdel(ANSWER_ORI_KEY, session_id)
+    r.hdel(ANSWER_POSITION_KEY, session_id)
 
 
 async def guessstart(
@@ -374,17 +449,23 @@ async def handle_guess_giveup(
             await react(bot, event, "10068")
         await guess_giveup.finish()
 
-    r.hset(ANSWER_KEY, session_id, NOTHING_ANSWER)
-    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id))  # pyright: ignore[reportArgumentType]
-    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()]  # pyright: ignore[reportOptionalMemberAccess]
-    image = Image.open(image_path)
-    ImageDraw.Draw(image).rectangle(
-        [(pos[0], pos[1]), (pos[2], pos[3])], fill=None, outline="red", width=4
-    )
-
-    PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+    original_path = _safe_hget(ANSWER_ORI_KEY, session_id)
+    position = _safe_hget(ANSWER_POSITION_KEY, session_id)
+    _clear_session(session_id)
+    if original_path is None:
+        logger.warning("guess: 会话 %s 缺原图路径，跳过画框", session_id)
+        await guess_giveup.finish(
+            f"你放弃了！答案是：{answer}。",
+            at_sender=True,
+            keyboard=PLAY_AGAIN_KEYBOARD,
+        )
     cropped_path = PICTURES_DIR / f"{session_id}.png"
-    image.save(cropped_path)
+    await asyncio.to_thread(
+        _draw_answer_box,
+        Path(original_path),
+        position,
+        cropped_path,
+    )
 
     await send_image(
         bot,
@@ -421,7 +502,7 @@ async def handle_guess(
     if guess_input in accepted.get(answer, set()):
         guess_input = answer
 
-    r.set(TOTAL_TRIES_KEY, int(r.get(TOTAL_TRIES_KEY) or 0) + 1)
+    _bump_counter(TOTAL_TRIES_KEY)
 
     if guess_input != answer:
         await react(bot, event, "424")
@@ -444,19 +525,21 @@ async def handle_guess(
         )
         await guess.finish()
 
-    r.hset(ANSWER_KEY, session_id, NOTHING_ANSWER)
-    image_path = Path(r.hget(ANSWER_ORI_KEY, session_id))  # pyright: ignore[reportArgumentType]
-    pos = [int(value) for value in r.hget(ANSWER_POSITION_KEY, session_id).split()]  # pyright: ignore[reportOptionalMemberAccess]
-    image = Image.open(image_path)
-    ImageDraw.Draw(image).rectangle(
-        [(pos[0], pos[1]), (pos[2], pos[3])], fill=None, outline="red", width=4
-    )
-
-    PICTURES_DIR.mkdir(parents=True, exist_ok=True)
+    original_path = _safe_hget(ANSWER_ORI_KEY, session_id)
+    position = _safe_hget(ANSWER_POSITION_KEY, session_id)
+    _clear_session(session_id)
     cropped_path = PICTURES_DIR / f"{session_id}.png"
-    image.save(cropped_path)
+    if original_path is None:
+        logger.warning("guess: 会话 %s 缺原图路径，跳过画框", session_id)
+    else:
+        await asyncio.to_thread(
+            _draw_answer_box,
+            Path(original_path),
+            position,
+            cropped_path,
+        )
 
-    r.set(TOTAL_RIGHT_KEY, int(r.get(TOTAL_RIGHT_KEY) or 0) + 1)
+    _bump_counter(TOTAL_RIGHT_KEY)
     await send_image(
         bot,
         event,
@@ -470,8 +553,10 @@ async def handle_guess(
 
 @guess_count.handle()
 async def handle_guess_count() -> None:
-    t1 = r.get(TOTAL_TRIES_KEY)
-    t2 = r.get(TOTAL_RIGHT_KEY)
+    # 第一次用的时候这两个键还不存在，直接把 None 打进句子里就成了
+    # 「全服总共进行了None次猜测」。
+    t1 = r.get(TOTAL_TRIES_KEY) or 0
+    t2 = r.get(TOTAL_RIGHT_KEY) or 0
     await guess_count.finish(f"全服总共进行了{t1}次猜测，猜对了{t2}道题。")
 
 

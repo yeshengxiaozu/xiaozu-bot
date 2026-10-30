@@ -2,6 +2,7 @@ import asyncio
 import io
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
@@ -57,12 +58,16 @@ def select_tags(level: PlatInfo) -> list[str]:
 # ----------------- 常量 -----------------
 
 
+@lru_cache(maxsize=32)
 def _load_font(path: Path, size: int) -> ImageFont.FreeTypeFont:
     """加载字体，加载不了就退到 PIL 自带的默认字体。
 
     resources/ 没进仓库，新克隆一份是没有字体文件的；
     以前这里直接 truetype，缺文件就 OSError，整条出图路径全灭。
     宁可字丑也别整个功能不可用。
+
+    带 lru_cache：一张关卡图要加载同一个 ARIAL.TTF（1MB）好几次，
+    每次都重新读盘解析，缓存下来能省掉出图的一大块耗时。
     """
     try:
         return ImageFont.truetype(str(path), size)
@@ -864,8 +869,15 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
     if data.unrated_note:
         sections.append(f"Note: {data.unrated_note}")
     if plat_info and plat_info.tags:
-        plat_info.tags = list(set(plat_info.tags) - {"On TPL", "On Pemonlist"})
-        sections.append(f"Difficulty Chart Tags: {', '.join(plat_info.tags)}")
+        # Must stay a local: plat_info is the very object held in Platapi's
+        # module-level cache, so writing back here would permanently strip
+        # these tags for every later lookup in this process. set() would also
+        # shuffle the order the upstream API chose.
+        chart_tags = [
+            tag for tag in plat_info.tags if tag not in {"On TPL", "On Pemonlist"}
+        ]
+        if chart_tags:
+            sections.append(f"Difficulty Chart Tags: {', '.join(chart_tags)}")
     if nlw_info and getattr(nlw_info, "description", None):
         sections.append(f"{nlw_info.source} Description: {nlw_info.description}")
     if aredl_info and getattr(aredl_info, "description", None):
@@ -899,4 +911,9 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
 
 async def create_image_from_gdlevel(level_id: int) -> Image.Image:
     fetched = await _fetch_all_data(level_id)
-    return create_level_image(_build_render_data(fetched))
+    # Rendering is pure CPU work on a 1280x720 canvas (blur, resize, a
+    # per-row gradient loop). Running it inline freezes every matcher in the
+    # process for hundreds of milliseconds, so hand it to a worker thread.
+    return await asyncio.to_thread(
+        create_level_image, _build_render_data(fetched)
+    )

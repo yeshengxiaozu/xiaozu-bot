@@ -21,6 +21,7 @@ import os
 import random
 import re
 import sys
+import time
 import types
 import wave
 from collections.abc import Callable
@@ -238,7 +239,8 @@ class TestJrrp:
             (0, 0, 0, 86399),  # 刚过零点：离 24:00:00 其实还有 86400 秒，这里少了 1 秒
             (10, 30, 15, 48584),
             (23, 59, 58, 1),
-            (23, 59, 59, 0),  # 一天的最后一秒：ex=0 等于立刻过期，这次结果根本存不住
+            # 一天的最后一秒：delta 正好是 0，ex=0 会让键立刻过期，所以兜到 1
+            (23, 59, 59, 1),
         ],
     )
     async def test_expiry_seconds_until_midnight(
@@ -272,10 +274,13 @@ class TestJrrp:
         await run_handler(jrrp.jrrp, fake_bot, make_group_event("*jrrp"))
         assert recorded == [(f"jrrp_{DEFAULT_USER_ID}", "42", expected_ex)]
 
-    async def test_result_at_the_last_second_of_the_day_is_lost(
+    async def test_result_at_the_last_second_of_the_day_survives(
         self, store, fake_bot, make_group_event, monkeypatch
     ):
-        """23:59:59 摇出来的结果 ex=0，存进去立刻就过期了（真实行为，看着像 bug）"""
+        """23:59:59 摇出来的结果也存得住。
+
+        以前 delta 正好算成 0，`ex=0` 让键立刻过期，"每天一次"在那一秒失效。
+        """
         moment = real_datetime(2026, 7, 27, 23, 59, 59)
         monkeypatch.setattr(
             jrrp,
@@ -285,7 +290,7 @@ class TestJrrp:
         monkeypatch.setattr(random, "randint", lambda a, b: 42)
 
         await run_handler(jrrp.jrrp, fake_bot, make_group_event("*jrrp"))
-        assert store.get(f"jrrp_{DEFAULT_USER_ID}") is None
+        assert store.get(f"jrrp_{DEFAULT_USER_ID}") == "42"
 
 
 # ==========================================================================
@@ -516,14 +521,17 @@ class TestJoyMisc:
             ("group_poke", {"group_id": DEFAULT_GROUP_ID, "user_id": 777})
         ]
 
-    async def test_poke_self_guard_never_fires(self, fake_bot):
-        """`event.user_id is not bot.self_id` 拿 int 和 str 比身份，永远为真
+    async def test_poke_self_does_not_poke_back(self, fake_bot):
+        """自己戳自己不该回戳。
 
-        也就是说这个“别戳自己”的判断从来没生效过，戳自己也会回戳。
+        以前写的是 `event.user_id is not bot.self_id`：user_id 是 int、
+        self_id 是 str，`is not` 比的是对象身份，两者永远不相等，于是这个
+        守卫一直恒为真、从来没生效过。两边都转 str 才是真比较。
         """
         self_id = int(BOT_SELF_ID)
         assert await run_handler(joy.group_poke, fake_bot, self._poke(self_id)) is False
-        assert fake_bot.called_apis == ["group_poke"]
+        assert fake_bot.called_apis == []
+        assert fake_bot.calls == []
 
 
 # ==========================================================================
@@ -659,6 +667,25 @@ class TestZhuaCommand:
     def store(self, patch_storage):
         return patch_storage(zhua)
 
+    def test_every_description_key_points_to_a_real_file(self):
+        """descriptions 里不能有指向不存在文件的键。
+
+        曾经 "禁止卡卒.jpg" 在磁盘上其实叫 "禁止卡卒.png"，*zhua 抽中它就会
+        FileNotFoundError，用户什么都收不到。候选项现在以目录为准，这条断言
+        保证手写字典本身也不会再骗人。
+        """
+        missing = [
+            name for name in zhua.descriptions if not (zhua.DATA_DIR / name).exists()
+        ]
+        assert missing == []
+
+    def test_candidates_come_from_the_folder_not_the_dict(self):
+        """候选项是目录里真实存在的图片，不是手写字典的键"""
+        candidates = zhua._available_files()
+        assert candidates, "图库目录里应该有图片"
+        for name in candidates:
+            assert (zhua.DATA_DIR / name).is_file()
+
     async def test_picks_an_image_and_sets_cooldown(
         self, store, fake_bot, make_group_event, monkeypatch
     ):
@@ -666,10 +693,9 @@ class TestZhuaCommand:
         assert await run_handler(zhua.zhua, fake_bot, make_group_event()) is True
 
         message = sent_messages(fake_bot)[0]
-        first_key = next(iter(zhua.descriptions))
-        assert first_key.rsplit(".", 1)[0] in message.extract_plain_text()
-        assert zhua.descriptions[first_key] in message.extract_plain_text()
-        assert image_files(message)[0].endswith(first_key)
+        first_name = zhua._available_files()[0]
+        assert first_name.rsplit(".", 1)[0] in message.extract_plain_text()
+        assert image_files(message)[0].endswith(first_name)
         assert store.get(f"zhua_cd_{DEFAULT_USER_ID}") == "waiting"
 
     async def test_cooldown_ttl_is_600(
@@ -706,21 +732,20 @@ class TestZhuaCommand:
         # 换个人就照常发图，而不是那条冷却提示
         assert image_files(sent_messages(fake_bot)[0])
 
-    async def test_missing_image_library_degrades_silently(
+    async def test_missing_image_library_says_so_instead_of_a_broken_image(
         self, store, fake_bot, make_group_event, monkeypatch, tmp_path
     ):
-        """图库目录整个不存在时，*zhua 不会报错，照样发一条指向空路径的图片消息
+        """图库目录整个不存在时应该直说，而不是发一张指向空路径的裂图
 
         MessageSegment.image 只是把 Path 拼成 file:// URI，不检查文件在不在，
-        所以缺图的表现是“发出去一张裂图”，而不是异常。
+        所以以前缺图的表现是"发出去一张裂图"，用户看不出发生了什么。
         """
         monkeypatch.setattr(zhua, "DATA_DIR", tmp_path / "not-there")
         monkeypatch.setattr(random, "choice", lambda seq: seq[0])
 
         assert await run_handler(zhua.zhua, fake_bot, make_group_event()) is True
-        file_uri = image_files(sent_messages(fake_bot)[0])[0]
-        assert "not-there" in file_uri
-        assert not (tmp_path / "not-there").exists()
+        assert image_files(sent_messages(fake_bot)[0]) == []
+        assert "not-there" not in only_text(fake_bot)
 
 
 class TestZhuaShow:
@@ -802,13 +827,13 @@ class TestZhuaTest:
         assert "a.png" in text
         assert "sub" not in text
 
-    async def test_missing_folder_raises(
+    async def test_missing_folder_lists_nothing(
         self, fake_bot, make_group_event, monkeypatch, tmp_path
     ):
-        """图库目录不存在时 iterdir() 直接抛 FileNotFoundError（没有兜底）"""
+        """图库目录不存在时返回空列表，不再让 iterdir() 把命令打挂"""
         monkeypatch.setattr(zhua, "DATA_DIR", tmp_path / "nope")
-        with pytest.raises(FileNotFoundError):
-            await run_handler(zhua.zhua_test, fake_bot, make_group_event())
+        assert await run_handler(zhua.zhua_test, fake_bot, make_group_event()) is True
+        assert only_text(fake_bot) == "[]"
 
 
 # ==========================================================================
@@ -955,14 +980,20 @@ class TestSay:
     async def test_generation_error_is_reported(
         self, fake_bot, make_group_event, monkeypatch
     ):
-        """生成炸了的时候要把异常信息带出来，而不是闷声不响"""
+        """生成炸了的时候要说一声，不能闷声不响。
+
+        但也不再把 {e} 原样发出来 —— 异常信息里带着本机的绝对路径。
+        细节进日志，给用户的是一句能看懂的话。
+        """
 
         def boom(*_a, **_k):
             raise RuntimeError("模型炸了")
 
         monkeypatch.setattr(say, "sync_generate_audio", boom)
         await run_handler(say.say, fake_bot, make_group_event(), arg="喵")
-        assert "模型炸了" in only_text(fake_bot)
+        text = only_text(fake_bot)
+        assert text, "失败时不能什么都不发"
+        assert "生成音频失败" in text
 
     async def test_group_success_sends_a_record_and_deletes_the_file(
         self, fake_bot, make_group_event, fake_mlx_audio, tmp_path
@@ -1425,7 +1456,7 @@ class TestAiErrors:
             await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
             is True
         )
-        assert "failed after 1 attempts" in only_text(fake_bot)
+        assert "请求失败" in only_text(fake_bot)
         assert ai_context == {AI_GROUP_SESSION: []}
 
     async def test_connection_error_is_reported(
@@ -1433,38 +1464,58 @@ class TestAiErrors:
     ):
         stub_httpx.post(API_ENDPOINT, httpx.ConnectError("连不上"))
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
-        assert "failed after 1 attempts" in only_text(fake_bot)
+        assert "请求失败" in only_text(fake_bot)
 
-    async def test_non_json_body_reports_the_wrong_error(
+    async def test_non_json_body_is_reported_once(
         self, ai_context, fake_bot, make_group_event, stub_httpx, make_httpx_response
     ):
-        """BUG：非 JSON 响应会让用户连收两条消息，第二条是没意义的异常名
+        """非 JSON 响应只回一条能看懂的消息。
 
-        `Matcher.finish()` 是「先 send 再抛 FinishedException」，而
-        FinishedException 是 Exception 的子类；这句 finish 又正好写在 try 块里，
-        于是被同一个 try 的 `except Exception as e` 兜住，日志里打一条假的
-        "Request to AI API failed" 栈，再 finish 一次，把异常名当错误信息发出去。
-        （xiaozu_bot/plugins/ai/__init__.py:176 与 :218）
+        以前这个 finish 写在 try 里：`Matcher.finish()` 是「先 send 再抛
+        FinishedException」，而 FinishedException 是 Exception 的子类，于是被
+        同一个 try 的 `except Exception` 兜住，又 finish 一次，把异常名当错误
+        信息发出去 —— 用户连收两条，真正的原因还被覆盖了。
         """
         stub_httpx.post(API_ENDPOINT, make_httpx_response(200, text="<html>not json"))
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
         texts = sent_texts(fake_bot)
-        assert len(texts) == 2, "这个 bug 的症状就是「连收两条」，修好了这条会红"
-        assert "<html>not json" in texts[0]
-        assert "FinishedException" in texts[1]
+        assert len(texts) == 1, "只该回一条，第二条说明 finish 又被 except 兜住了"
+        assert "非JSON" in texts[0]
+        assert "FinishedException" not in texts[0]
 
-    async def test_unparseable_payload_reports_the_wrong_error(
+    async def test_unparseable_payload_is_reported_once(
         self, ai_context, fake_bot, make_group_event, stub_httpx, make_httpx_response
     ):
-        """同上：`无法解析 API 返回` 那条也被自己的 except Exception 追发了一条
-        （xiaozu_bot/plugins/ai/__init__.py:208 与 :218）
-        """
+        """同上：`无法解析 API 返回` 那条也不能被自己的 except 再追发一条"""
         stub_httpx.post(API_ENDPOINT, make_httpx_response(200, json={"choices": []}))
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="你好")
         texts = sent_texts(fake_bot)
-        assert len(texts) == 2, "这个 bug 的症状就是「连收两条」，修好了这条会红"
-        assert '{"choices": []}' in texts[0]
-        assert "FinishedException" in texts[1]
+        assert len(texts) == 1
+        assert "无法解析" in texts[0]
+        assert "FinishedException" not in texts[0]
+
+    async def test_context_map_does_not_grow_without_bound(self) -> None:
+        """长期没人说话的会话要被回收。
+
+        context_map 以前只增不减（只有管理员手动 clear 才会删），每个用过
+        .ai 的群都会永久留一条记录。
+        """
+        ai.context_map.clear()
+        ai._last_seen.clear()
+        try:
+            ai.context_map["old"] = []
+            ai._last_seen["old"] = time.time() - ai.CONTEXT_IDLE_TTL - 1
+            ai.context_map["fresh"] = []
+            ai._last_seen["fresh"] = time.time()
+
+            ai._evict_idle_sessions()
+
+            assert "old" not in ai.context_map
+            assert "old" not in ai._last_seen
+            assert "fresh" in ai.context_map
+        finally:
+            ai.context_map.clear()
+            ai._last_seen.clear()
 
     async def test_failed_turn_is_not_written_to_the_context(
         self, ai_context, fake_bot, make_group_event, stub_httpx, make_httpx_response
@@ -2071,7 +2122,8 @@ class TestGuessAnswer:
             is True
         )
         assert "假图 Fake Level" in sent_texts(fake_bot)[0]
-        assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
+        # 结束时字段是真的被删掉，不再留一条值为 NOTHING 的僵尸记录
+        assert store.hget(guess.ANSWER_KEY, session) is None
         assert store.get(guess.TOTAL_TRIES_KEY) == 1
         assert store.get(guess.TOTAL_RIGHT_KEY) == 1
         assert (pictures_dir / f"{session}.png").exists()
@@ -2080,7 +2132,8 @@ class TestGuessAnswer:
         store, session, _ = started
         await run_handler(guess.guess, fake_bot, make_group_event(), arg="假图")
         assert "假图 Fake Level" in sent_texts(fake_bot)[0]
-        assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
+        # 结束时字段是真的被删掉，不再留一条值为 NOTHING 的僵尸记录
+        assert store.hget(guess.ANSWER_KEY, session) is None
 
     async def test_answer_is_normalized_before_comparing(
         self, started, fake_bot, make_group_event
@@ -2090,7 +2143,8 @@ class TestGuessAnswer:
         await run_handler(
             guess.guess, fake_bot, make_group_event(), arg="  假图 FAKE-LEVEL!  "
         )
-        assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
+        # 结束时字段是真的被删掉，不再留一条值为 NOTHING 的僵尸记录
+        assert store.hget(guess.ANSWER_KEY, session) is None
 
     async def test_uppercase_alias_from_the_real_bank_is_accepted(
         self, guess_env, fake_bot, make_group_event, tmp_path
@@ -2106,7 +2160,8 @@ class TestGuessAnswer:
 
         await run_handler(guess.guess, fake_bot, make_group_event(), arg="VVVVVV")
         assert answer in sent_texts(fake_bot)[0]
-        assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
+        # 结束时字段是真的被删掉，不再留一条值为 NOTHING 的僵尸记录
+        assert store.hget(guess.ANSWER_KEY, session) is None
 
     async def test_guessing_is_allowed_during_the_cooldown(
         self, started, fake_bot, make_group_event
@@ -2116,7 +2171,8 @@ class TestGuessAnswer:
         store.set(f"{guess.COOLDOWN_PREFIX}{session}", "x", ex=45)
         await run_handler(guess.guess, fake_bot, make_group_event(), arg="假图")
         assert "假图 Fake Level" in sent_texts(fake_bot)[0]
-        assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
+        # 结束时字段是真的被删掉，不再留一条值为 NOTHING 的僵尸记录
+        assert store.hget(guess.ANSWER_KEY, session) is None
 
 
 class TestGuessGiveUp:
@@ -2139,7 +2195,8 @@ class TestGuessGiveUp:
         assert "假图 Fake Level" in message.extract_plain_text()
         assert image_files(message)[0].endswith(f"{session}.png")
         assert (pictures_dir / f"{session}.png").exists()
-        assert store.hget(guess.ANSWER_KEY, session) == guess.NOTHING_ANSWER
+        # 结束时字段是真的被删掉，不再留一条值为 NOTHING 的僵尸记录
+        assert store.hget(guess.ANSWER_KEY, session) is None
 
     async def test_giveup_does_not_count_as_a_try(
         self, started, fake_bot, make_group_event
@@ -2165,14 +2222,20 @@ class TestGuessGiveUp:
 
 
 class TestGuessMisc:
-    async def test_count_with_no_data_prints_none(
+    async def test_count_with_no_data_prints_zero(
         self, guess_env, fake_bot, make_group_event
     ):
-        """从来没人猜过的时候，两个计数器都是 None，直接被拼进了句子里"""
+        """从来没人猜过的时候得显示 0。
+
+        之前是 `r.get()` 拿回 None 直接拼进句子，于是输出
+        「全服总共进行了None次猜测」。
+        """
         assert (
             await run_handler(guess.guess_count, fake_bot, make_group_event()) is True
         )
-        assert only_text(fake_bot).count("None") == 2
+        text = only_text(fake_bot)
+        assert "None" not in text
+        assert "0" in text
 
     async def test_count_reports_the_stored_numbers(
         self, guess_env, fake_bot, make_group_event

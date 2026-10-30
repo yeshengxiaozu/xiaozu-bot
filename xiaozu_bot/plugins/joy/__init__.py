@@ -171,7 +171,10 @@ async def handle_function(event: Event, arg: Message = CommandArg()):
 
 @group_poke.handle()
 async def handle_function(bot: Bot, event: PokeNotifyEvent):
-    if event.user_id is not bot.self_id:
+    # 别戳自己。原来写的是 `event.user_id is not bot.self_id`，前者是 int、
+    # 后者是 str，`is not` 是身份比较，两个不同类型的对象永远不相等，
+    # 于是这个守卫从来没生效过。两边都转成 str 再比。
+    if str(event.user_id) != str(bot.self_id):
         await poke(bot, event, event.user_id)
 
 # Keyboard example: write the payload as a dict, then validate it into the

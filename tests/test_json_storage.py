@@ -857,7 +857,14 @@ class TestLoadAndSave:
 
         assert len(seen) == 1
         src, dst, content = seen[0]
-        assert src == tmp_path / "storage.json.tmp"
+        # 临时文件名必须带随机后缀：写死成 `storage.json.tmp` 时，多个
+        # 写者（不同插件实例 / 不同线程）会互相截断同一个临时文件，
+        # 再被 replace 成一个坏掉的正式文件。
+        # write_json_atomic 的前缀是 f".{name}."（带前导点，ls 时藏起来）
+        assert src.name.startswith(".storage.json.")
+        assert src.name.endswith(".tmp")
+        assert src.name != ".storage.json.tmp"
+        assert src.parent == tmp_path
         assert dst == path
         assert json.loads(content) == {"k": "v"}
         # 换完之后临时文件不该留下

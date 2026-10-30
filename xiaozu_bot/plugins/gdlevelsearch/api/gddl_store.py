@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from nonebot import logger
+
+from xiaozu_bot.utils.json_storage import write_json_atomic
 
 from ..paths import DATA_DIR
 
@@ -279,11 +280,9 @@ def _save(
         "failedPages": failed_pages,
         "levels": stored_levels,
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False)
-    os.replace(temporary, path)
+    # 走公共的原子写：临时文件名带随机后缀，03:00 的后台抓取和 07:00 的
+    # 快照刷新各写各的，不会互相截断同一个 .tmp 再把它 replace 成坏文件。
+    write_json_atomic(path, payload, indent=None)
     return stamp
 
 

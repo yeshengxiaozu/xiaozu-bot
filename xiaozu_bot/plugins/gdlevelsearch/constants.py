@@ -32,6 +32,9 @@ HTTP_RETRY_STATUS_CODES = frozenset(
 
 # 查询源和渲染源都必须在有限时间内失败，不能拖住整个 matcher。
 SOURCE_LOOKUP_TIMEOUT = 5
-# One worker per name-lookup source (gddl / nlw / plat / ratedplus / gd), so a
-# stalled network source never queues the in-memory indexes behind it.
-SEARCH_MAX_WORKERS = 5
+# 内存索引源和网络源必须用**两个**线程池。共用一个池时"一个源一个 worker"的
+# 承诺只在没有任何并发时才成立：几次慢搜索就能把所有 worker 占满，之后连纯内存
+# 的 NLW / plat 都要排队，于是所有源一起错过 deadline、调用方判定"全部不可用"，
+# 表现为无论搜什么都报 GDDL 无响应。分池之后网络源再慢也挤不到索引源。
+SEARCH_INDEX_WORKERS = 4
+SEARCH_NETWORK_WORKERS = 4

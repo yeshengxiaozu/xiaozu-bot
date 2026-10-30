@@ -1,6 +1,8 @@
 import json
 import random
 import re
+import time
+from typing import Any
 
 import emoji
 import httpx
@@ -46,6 +48,10 @@ API_URL_THINKING = (
 )
 API_KEY_THINKING = "lm-studio"  # Independent key for thinking model
 MAX_TURNS = 5  # 上下文轮数（每轮包含用户和助手的对话）
+# 多久没人说话就把这个会话的上下文丢掉
+CONTEXT_IDLE_TTL = 30 * 60
+# 会话数硬上限，防止短时间涌入大量新群把内存撑爆
+CONTEXT_MAX_SESSIONS = 500
 
 SYSTEM_PROMPT = """你是一个活泼可爱的网友，网名是“小小卒”，说话自然、直接。
 你在任何对话中不应该提及自己是AI或助手，也不应该提及任何关于AI的内容。你有一个主人，她也是你的开发者。你没有其他任何开发者和所属组织。
@@ -68,8 +74,68 @@ SYSTEM_PROMPT_2 = (
     "你不需要反复确认所有事情，也不需要真的彻底确认每一件事工作到位"
 )
 
+def _extract_reply(data: Any) -> str | None:
+    """从几种可能的返回格式里取出回复文本，取不到就返回 None。
+
+    各家 OpenAI 兼容端的字段并不统一，所以这里尽量宽容，但只在**看不懂**
+    的时候才返回 None，不再要求调用方自己判空。
+    """
+    if not isinstance(data, dict):
+        return None
+
+    choices = data.get("choices")
+    if isinstance(choices, list) and choices:
+        choice = choices[0]
+        if isinstance(choice, dict):
+            # common LM Studio / OpenAI chat format
+            msg = choice.get("message")
+            if isinstance(msg, dict):
+                content = msg.get("content")
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+            # fallback to older/text fields
+            text_field = choice.get("text") or choice.get("content")
+            if isinstance(text_field, str) and text_field.strip():
+                return text_field.strip()
+
+    for key in ("text", "response"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 # ===== 上下文存储 =====
+# key 是会话 id，value 是 [{"role": ..., "content": ...}, ...]
 context_map = {}
+# 每个会话最后一次说话的时间，用于回收长期沉默的会话
+_last_seen: dict[str, float] = {}
+
+
+def _evict_idle_sessions() -> None:
+    """丢掉超过 CONTEXT_IDLE_TTL 没人说话的上下文。
+
+    每个用过 .ai 的群/频道都会在 context_map 里留一条记录，而它从来没有被
+    删过（只有管理员手动 clear），跑得久了一直涨。每轮顺便扫一次，成本是
+    O(会话数)，比让它无界增长划算。
+    """
+    if len(context_map) <= CONTEXT_MAX_SESSIONS:
+        cutoff = time.time() - CONTEXT_IDLE_TTL
+    else:
+        # 会话数超过上限时不再等 TTL，直接按最久没说话的顺序砍到上限
+        cutoff = time.time()
+    stale = [key for key, seen in _last_seen.items() if seen < cutoff]
+    if len(context_map) > CONTEXT_MAX_SESSIONS:
+        by_age = sorted(_last_seen.items(), key=lambda item: item[1])
+        extra = [
+            key
+            for key, _ in by_age[: len(context_map) - CONTEXT_MAX_SESSIONS]
+            if key not in stale
+        ]
+        stale.extend(extra)
+    for key in stale:
+        context_map.pop(key, None)
+        _last_seen.pop(key, None)
 
 # ===== 指令注册 =====
 ai_cmd = on_command("ai", priority=5)
@@ -96,157 +162,112 @@ async def handle_ai(
     # ===== 清空上下文 =====
     if user_input.lower() in ["clear", "清空"] and get_user_id(event) == str(MASTER_ID):
         context_map.pop(session_id, None)
+        _last_seen.pop(session_id, None)
         await ai_cmd.finish("上下文已清空")
 
     # ===== 初始化上下文 =====
     if session_id not in context_map:
         context_map[session_id] = []
+    _last_seen[session_id] = time.time()
 
     history = context_map[session_id]
 
-    delegated = False
+    # ===== 构造 messages =====
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    while True:
-        # ===== 构造 messages =====
-        messages = [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT_2 if delegated else SYSTEM_PROMPT,
-            }
-        ]
+    # 取最近完整对话轮（2条一轮）
+    recent_history = history[-MAX_TURNS * 2 :]
 
-        # 取最近完整对话轮（2条一轮）
-        recent_history = history[-MAX_TURNS * 2 :]
+    # 清洗数据（防止异常）
+    clean_history = [
+        msg
+        for msg in recent_history
+        if isinstance(msg.get("content"), str) and msg["content"].strip()
+    ]
 
-        # 清洗数据（防止异常）
-        clean_history = [
-            msg
-            for msg in recent_history
-            if isinstance(msg.get("content"), str) and msg["content"].strip()
-        ]
+    messages.extend(clean_history)
 
-        messages.extend(clean_history)
+    # 当前用户输入
+    messages.append({"role": "user", "content": user_input})
 
-        # 当前用户输入
-        messages.append({"role": "user", "content": user_input})
+    # ===== 模型选择逻辑 =====
+    difficulty_keywords = ["复杂", "困难", "推理", "难题"]
+    is_difficult = any(keyword in user_input for keyword in difficulty_keywords)
+    if is_difficult:
+        model = THINKING_MODEL
+        api_url = API_URL_THINKING
+        api_key = API_KEY_THINKING
+    else:
+        model = random.choice(MODEL_NAMES)
+        api_url = API_URL
+        api_key = API_KEY
 
-        # ===== 模型选择逻辑 =====
-        if delegated:
-            model = THINKING_MODEL
-            api_url = API_URL_THINKING
-            api_key = API_KEY_THINKING
-        else:
-            difficulty_keywords = ["复杂", "困难", "推理", "难题"]
-            is_difficult = any(keyword in user_input for keyword in difficulty_keywords)
-            if is_difficult:
-                model = THINKING_MODEL
-                api_url = API_URL_THINKING
-                api_key = API_KEY_THINKING
-            else:
-                model = random.choice(MODEL_NAMES)
-                api_url = API_URL
-                api_key = API_KEY
+    # ===== 调试输出（可选）=====
+    logger.debug("====== REQUEST ======")
+    for m in messages:
+        logger.debug(m)
 
-        # ===== 调试输出（可选）=====
-        logger.debug("====== REQUEST ======")
-        for m in messages:
-            logger.debug(m)
+    # ===== 请求 API =====
+    # 注意：下面每个 `ai_cmd.finish()` 都必须待在 try 之外。
+    # finish() 是先发消息、再抛 FinishedException，而 FinishedException
+    # 继承自 Exception —— 写在 try 里会被 `except Exception` 接住，然后
+    # 又发一条「请求失败: 」，用户看到两条消息，真正的错误说明反而没了。
+    try:
+        resp = await async_request(
+            "POST",
+            api_url,
+            timeout=60,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": messages,
+                "temperature": 0.7,
+                "presence_penalty": 1.5,
+                "frequency_penalty": 1,
+            },
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        logger.exception("AI API returned HTTP %s", status)
+        await ai_cmd.finish(f"API请求失败: HTTP {status}")
+    except Exception:
+        logger.exception("Request to AI API failed")
+        await ai_cmd.finish("请求失败，请稍后再试")
 
-        # ===== 请求 API =====
-        try:
-            resp = await async_request(
-                "POST",
-                api_url,
-                timeout=(180 if delegated else 60),
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "presence_penalty": 1.5,
-                    "frequency_penalty": 1,
-                },
-            )
+    try:
+        data = resp.json()
+    except ValueError:
+        logger.exception("Failed to parse JSON from API response: %r", resp.text)
+        await ai_cmd.finish("API返回了非JSON响应")
 
-            resp.raise_for_status()
-            try:
-                data = resp.json()
-            except Exception:
-                # fallback: try to decode text
-                text = resp.text
-                logger.exception("Failed to parse JSON from API response")
-                await ai_cmd.finish(f"API返回非JSON响应: {text}")
-
-            # ===== 防止 choices 报错，解析多种返回格式 =====
-            reply = None
-            if (
-                isinstance(data, dict)
-                and "choices" in data
-                and isinstance(data["choices"], list)
-                and data["choices"]
-            ):
-                choice = data["choices"][0]
-                if isinstance(choice, dict):
-                    # common LM Studio / OpenAI chat format
-                    msg = choice.get("message")
-                    if isinstance(msg, dict):
-                        content = msg.get("content")
-                        if isinstance(content, str):
-                            reply = content.strip()
-                    # fallback to older/text fields
-                    if not reply:
-                        text_field = choice.get("text") or choice.get("content")
-                        if isinstance(text_field, str):
-                            reply = text_field.strip()
-
-            # other possible top-level text
-            if not reply and isinstance(data, dict):
-                if isinstance(data.get("text"), str):
-                    reply = data.get("text", "").strip()
-                elif isinstance(data.get("response"), str):
-                    reply = data.get("response", "").strip()
-
-            if not reply:
-                await ai_cmd.finish(
-                    f"无法解析 API 返回: {json.dumps(data, ensure_ascii=False)[:1000]}"
-                )
-
-        except httpx.HTTPStatusError as e:
-            # include response body for debugging but avoid leaking secrets
-            _body = e.response.text if e.response is not None else ""
-            await ai_cmd.finish(
-                f"API请求失败: {e.response.status_code if e.response is not None else e}"
-            )
-        except Exception as e:
-            logger.exception("Request to AI API failed")
-            await ai_cmd.finish(f"请求失败: {e}")
-
-        # eventually finds this useless since thinking ai will reach time limit anyway, maybe use some api instead but yeah
-        if False and not delegated and reply.startswith("[委托"):  # noqa: SIM223
-            delegated = True
-            user_input = user_input + reply.split("]")[0]
-            await ai_cmd.send("【ai决定把这个消息移交给另一ai处理，请稍等】")
-            continue
-        break
+    reply = _extract_reply(data)
+    if not reply:
+        logger.error(
+            "无法解析 API 返回: %s", json.dumps(data, ensure_ascii=False)[:1000]
+        )
+        await ai_cmd.finish("无法解析 API 返回")
 
     # ===== 更新上下文 =====
+    # 委托给 thinking 模型的分支（SYSTEM_PROMPT 第 10 条）已移除：它基本都会
+    # 先撞超时，留着只是一份永远不会执行的死代码加一个 while 骨架。
     history.append({"role": "user", "content": user_input})
     history.append({"role": "assistant", "content": reply})
 
     # 裁剪（严格按轮）
     if len(history) > MAX_TURNS * 2:
-        history = history[-MAX_TURNS * 2 :]
-        context_map[session_id] = history
+        context_map[session_id] = history[-MAX_TURNS * 2 :]
+
+    # 长时间没人说话的会话要回收：context_map 只会随新会话增长，
+    # 没有任何清理的话，每个用过 .ai 的群都会永久留一条记录。
+    _evict_idle_sessions()
 
     # ===== 发送回复 =====
     final_reply = remove_emoji(reply).strip()
     if not final_reply:
         await ai_cmd.finish("回复为空")
-
-    if delegated:
-        final_reply = "" + final_reply
 
     await ai_cmd.finish(final_reply)

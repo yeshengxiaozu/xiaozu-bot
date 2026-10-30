@@ -12,10 +12,14 @@ from nonebot.internal.adapter import Event, Message
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 
+from . import const
 from .config import Config
 from .const import *
 
-random.seed()
+# 不要 random.seed()：那是重置**全局** Mersenne Twister，guess/zhua/joy 共用
+# 同一个 random，而且无参 seed 本来就是默认行为，纯属无意义的副作用。
+# 另外 `const` 必须显式导入：下面 const.sjmap 能跑通只是因为导入子模块时
+# importlib 会把它 setattr 到父包上，属于隐式副作用。
 
 __plugin_meta__ = PluginMetadata(
     name="roulette",

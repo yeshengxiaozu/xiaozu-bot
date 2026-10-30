@@ -1,6 +1,11 @@
 """Shared search helpers for gdsearch, gdrandom, and dailydemon."""
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
+from concurrent.futures import (
+    CancelledError,
+    ThreadPoolExecutor,
+    as_completed,
+)
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from io import BytesIO
@@ -8,7 +13,7 @@ from io import BytesIO
 from nonebot import logger
 from nonebot.internal.adapter import Bot, Event
 
-from xiaozu_bot.utils.adapter_compat import send_image
+from xiaozu_bot.utils.adapter_compat import get_context_id, send_image
 
 from ..api.gdapi import GDLevel, get_level_by_id, search_levels_by_name
 from ..api.gddlapi import Gddl, GDDLSearchEntry
@@ -17,7 +22,11 @@ from ..api.nlwapi import Nlw
 from ..api.platapi import Platapi
 from ..api.ratedplusapi import Ratedplus
 from ..api.unratedlevels import UnratedLevels
-from ..constants import SEARCH_MAX_WORKERS, SOURCE_LOOKUP_TIMEOUT
+from ..constants import (
+    SEARCH_INDEX_WORKERS,
+    SEARCH_NETWORK_WORKERS,
+    SOURCE_LOOKUP_TIMEOUT,
+)
 from ..render.draw import create_image_from_gdlevel
 
 
@@ -87,15 +96,36 @@ def _add_search_result(
     results[level_id] = SearchResult(level_id, name, creator, tier, difficulty)
 
 
-_SEARCH_EXECUTOR = ThreadPoolExecutor(
-    max_workers=SEARCH_MAX_WORKERS,
-    thread_name_prefix="gdlevelsearch",
+# Two pools on purpose: a stalled network source must never queue an
+# in-memory index lookup behind it. With one shared pool, a handful of slow
+# searches occupy every worker, after which *all* sources miss the deadline
+# and the caller reports a total outage even though the indexes are healthy.
+_INDEX_EXECUTOR = ThreadPoolExecutor(
+    max_workers=SEARCH_INDEX_WORKERS,
+    thread_name_prefix="gdlevelsearch-index",
 )
+_NETWORK_EXECUTOR = ThreadPoolExecutor(
+    max_workers=SEARCH_NETWORK_WORKERS,
+    thread_name_prefix="gdlevelsearch-net",
+)
+
+# Sources served from in-memory indexes; the rest talk to the network.
+_INDEX_SOURCES = frozenset({"nlw", "plat", "ratedplus"})
+
+
+def _executor_for(source: str) -> ThreadPoolExecutor:
+    return _INDEX_EXECUTOR if source in _INDEX_SOURCES else _NETWORK_EXECUTOR
 
 
 def _collect_result(future, source: str, name: str):
     try:
         return future.result()
+    except CancelledError:
+        # concurrent.futures.CancelledError derives from BaseException, so a
+        # plain `except Exception` lets it escape into the caller and surface
+        # as an unhandled error instead of "this source contributed nothing".
+        logger.warning(f"{source.upper()} name lookup was cancelled for {name!r}")
+        return None
     except Exception as exc:
         logger.warning(f"{source.upper()} name lookup failed for {name!r}: {exc}")
         return None
@@ -127,17 +157,17 @@ def _search_gd_by_name(name: str) -> list[GDLevel]:
 def _lookup_sources(name: str) -> dict[str, object | None]:
     """Query all optional indexes in parallel with one shared deadline.
 
-    A provider that raises or exceeds the deadline contributes no result; the
-    GDDL None status is preserved so callers can distinguish an outage from a
-    successful empty search. The two network sources (GDDL, the GD server) are
-    queued last so a stalled request cannot delay the in-memory indexes.
+    A provider that raises or exceeds the deadline contributes no result and
+    is left out of the mapping entirely, so ``values.get(source) is None`` is
+    ambiguous between "errored", "cancelled" and "still running" - callers
+    must not read it as "the provider answered with nothing".
     """
     futures = {
-        "gddl": _SEARCH_EXECUTOR.submit(Gddl.getlevelsbyname, name),
-        "nlw": _SEARCH_EXECUTOR.submit(Nlw.getlevelbyname, name),
-        "plat": _SEARCH_EXECUTOR.submit(Platapi.getlevelbyname, name),
-        "ratedplus": _SEARCH_EXECUTOR.submit(Ratedplus.getlevelbyname, name),
-        "gd": _SEARCH_EXECUTOR.submit(_search_gd_by_name, name),
+        "gddl": _NETWORK_EXECUTOR.submit(Gddl.getlevelsbyname, name),
+        "nlw": _INDEX_EXECUTOR.submit(Nlw.getlevelbyname, name),
+        "plat": _INDEX_EXECUTOR.submit(Platapi.getlevelbyname, name),
+        "ratedplus": _INDEX_EXECUTOR.submit(Ratedplus.getlevelbyname, name),
+        "gd": _NETWORK_EXECUTOR.submit(_search_gd_by_name, name),
     }
     source_by_future = {future: source for source, future in futures.items()}
     values: dict[str, object | None] = {}
@@ -271,10 +301,18 @@ def search_by_name(name: str) -> list[SearchResult] | None:
         )
         logger.info(f"Find a result in GD server: {difficulty or 'Unknown'}")
 
-    if not results and source_values.get("gddl") is None:
-        logger.warning(f"GDDL name lookup unavailable for {name!r}")
-        return None
-    return list(results.values())
+    if results:
+        return list(results.values())
+
+    # Nothing matched. Returning None makes the command blame GDDL, so it may
+    # only mean "no source could answer at all". A healthy search that simply
+    # found nothing must report an empty list, otherwise every typo looks like
+    # an outage - and GDDL was the usual suspect simply because it is the
+    # slowest source and the first to miss the shared deadline.
+    if any(value is not None for value in source_values.values()):
+        return []
+    logger.warning(f"Every name lookup source was unavailable for {name!r}")
+    return None
 
 
 def getlevelinfo(level_id: int) -> GDLevel | None:
@@ -289,7 +327,9 @@ async def send_result(bot: Bot, event: Event, level_id: int) -> None:
     """Render a level and send its PNG through the adapter compatibility layer."""
     image = await create_image_from_gdlevel(level_id)
     buffer = BytesIO()
-    image.save(buffer, format="PNG")
+    # PNG encoding of a full-size card is another few hundred milliseconds of
+    # pure CPU; keep it off the event loop too.
+    await asyncio.to_thread(image.save, buffer, format="PNG")
     await send_image(bot, event, buffer)
 
 
@@ -301,8 +341,10 @@ def _clear_all_sessions(event: Event) -> None:
 
     _drop_fullsearch(event.get_session_id())
     _drop_ratings(event.get_session_id())
-    user_id = str(event.get_user_id())
-    search_cache.pop(user_id, None)
-    task = timeout_tasks.pop(user_id, None)
+    # Keyed by chat context, not by user id, so one person searching in two
+    # chats cannot select the other chat's results.
+    session_key = get_context_id(event)
+    search_cache.pop(session_key, None)
+    task = timeout_tasks.pop(session_key, None)
     if task:
         task.cancel()

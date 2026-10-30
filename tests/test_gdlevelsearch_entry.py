@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from concurrent.futures import Future
 from types import SimpleNamespace
 from typing import Any
 
@@ -64,6 +65,7 @@ from xiaozu_bot.plugins.gdlevelsearch.commands import (
     search as cmd_search,
 )
 from xiaozu_bot.plugins.gdlevelsearch.services import search as svc_search
+from xiaozu_bot.utils.adapter_compat import get_context_id
 
 # ==========================================================================
 # 造数据
@@ -270,8 +272,8 @@ def no_timeout_tasks(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """
     armed: list[str] = []
 
-    async def _noop_search(bot: Any, event: Any, user_id: str) -> None:
-        armed.append(f"search:{user_id}")
+    async def _noop_search(bot: Any, event: Any, session_key: str) -> None:
+        armed.append(f"search:{session_key}")
 
     async def _noop_full(bot: Any, event: Any, session_id: str) -> None:
         armed.append(f"full:{session_id}")
@@ -498,9 +500,32 @@ class TestSearchByName:
             (8, "Stable Plat Fallback")
         ]
 
-    def test_gddl_none_is_tolerated(self, sources: Any) -> None:
-        """A failed GDDL source is tolerated when no result is available."""
-        sources(gddl=None)
+    def test_gddl_outage_does_not_hijack_the_not_found_answer(
+        self, sources: Any
+    ) -> None:
+        """GDDL 挂了但别的源答上来了 —— 该回「没找到」，不是「GDDL 无法访问」。
+
+        以前只要 gddl 是 None 就返回 None，命令层于是把每一次空结果都报成
+        GDDL 故障：打错字、搜了个不存在的关卡，看到的都是「GDDL 暂时无法访问」。
+        """
+        sources(gddl=None, nlw=[], ratedplus=[], plat=None)
+        assert gdlevelsearch.search_by_name("Nope") == []
+
+    def test_only_a_total_outage_is_reported_as_none(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """五个源全都没答上来才返回 None，命令层据此提示数据源不可用"""
+
+        def _broken(_name: str) -> Any:
+            raise RuntimeError("outage")
+
+        installed = sources()
+        monkeypatch.setattr(installed.gddl, "getlevelsbyname", _broken)
+        monkeypatch.setattr(installed.nlw, "getlevelbyname", _broken)
+        monkeypatch.setattr(installed.plat, "getlevelbyname", _broken)
+        monkeypatch.setattr(installed.ratedplus, "getlevelbyname", _broken)
+        monkeypatch.setattr(svc_search, "search_levels_by_name", _broken)
+
         assert gdlevelsearch.search_by_name("Nope") is None
 
     def test_gddl_exact_match_only(self, sources: Any) -> None:
@@ -828,6 +853,57 @@ class TestSearchByName:
             (42, "Parallel", "Cached")
         ]
 
+    def test_network_and_index_sources_use_separate_pools(self) -> None:
+        """网络源和内存索引源必须分池。
+
+        共用一个池时「一个源一个 worker」只在没有并发时成立：几次慢搜索就能把
+        所有 worker 占满，之后连纯内存的 NLW 都要排队，于是所有源一起错过
+        deadline、被判定成全部不可用 —— 表现为无论搜什么都报 GDDL 无响应。
+        """
+        index_pool = svc_search._executor_for("nlw")
+        network_pool = svc_search._executor_for("gddl")
+        assert index_pool is not network_pool
+        assert svc_search._executor_for("plat") is index_pool
+        assert svc_search._executor_for("ratedplus") is index_pool
+        assert svc_search._executor_for("gd") is network_pool
+
+    def test_saturated_network_pool_still_lets_indexes_answer(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """把网络池占满，内存索引源仍要能在 deadline 内给出结果"""
+        gate = threading.Event()
+        blockers = [
+            svc_search._NETWORK_EXECUTOR.submit(gate.wait, 30)
+            for _ in range(svc_search.SEARCH_NETWORK_WORKERS)
+        ]
+
+        def _blocked(_name: str) -> Any:
+            gate.wait(30)
+            return []
+
+        installed = sources(nlw=[nlw_level("42", "StillHere", creator="Cached")])
+        monkeypatch.setattr(installed.gddl, "getlevelsbyname", _blocked)
+        monkeypatch.setattr(svc_search, "SOURCE_LOOKUP_TIMEOUT", 2)
+
+        try:
+            got = gdlevelsearch.search_by_name("StillHere")
+        finally:
+            gate.set()
+            for blocker in blockers:
+                blocker.cancel()
+
+        assert [(item.id, item.name) for item in got] == [(42, "StillHere")]
+
+    def test_cancelled_future_is_reported_as_no_result(self) -> None:
+        """CancelledError 继承 BaseException，`except Exception` 抓不到它。
+
+        被 cancel 的 future 之后仍会被 `future.done()` 命中并调 result()，
+        这里漏掉它就会一路抛到 handler，用户看到未处理异常而不是「该源没结果」。
+        """
+        future: Future = Future()
+        assert future.cancel() is True
+        assert svc_search._collect_result(future, "nlw", "X") is None
+
 
 # ==========================================================================
 # reload_all
@@ -963,11 +1039,21 @@ class TestGetLevelInfo:
 # 会话字典与几个 Rule
 # ==========================================================================
 class TestSessionBookkeeping:
-    def test_has_cache_looks_at_user_id(self, make_group_event: Any) -> None:
+    def test_has_cache_looks_at_the_chat_context(self, make_group_event: Any) -> None:
+        """缓存按会话（群/频道）隔离，不按裸 user_id。
+
+        否则同一个人在 A 群搜完，跑到 B 群发个数字就会选中 A 群的结果。
+        """
         event = make_group_event("随便")
         assert gdlevelsearch.has_cache(event) is False
-        gdlevelsearch.search_cache[str(DEFAULT_USER_ID)] = []
+        gdlevelsearch.search_cache[get_context_id(event)] = []
         assert gdlevelsearch.has_cache(event) is True
+
+    def test_has_cache_ignores_another_user_id(self, make_group_event: Any) -> None:
+        """防止将来又退回按 user_id 存：别人的 key 不该命中"""
+        event = make_group_event("随便")
+        gdlevelsearch.search_cache[str(DEFAULT_USER_ID)] = []
+        assert gdlevelsearch.has_cache(event) is False
 
     def test_has_fullsearch_and_has_ratings_look_at_session_id(
         self, make_group_event: Any
@@ -1007,7 +1093,7 @@ class TestSessionBookkeeping:
         """三个选择器同时只能活一个，开新的之前把旧的全清掉"""
         event = make_group_event("随便")
         session_id = event.get_session_id()
-        user_id = str(DEFAULT_USER_ID)
+        session_key = get_context_id(event)
 
         async def forever() -> None:
             await asyncio.sleep(3600)
@@ -1017,8 +1103,8 @@ class TestSessionBookkeeping:
         gdlevelsearch.fullsearch_timeouts[session_id] = tasks[0]
         gdlevelsearch.ratings_sessions[session_id] = object()  # type: ignore[assignment]
         gdlevelsearch.ratings_timeouts[session_id] = tasks[1]
-        gdlevelsearch.search_cache[user_id] = []
-        gdlevelsearch.timeout_tasks[user_id] = tasks[2]
+        gdlevelsearch.search_cache[session_key] = []
+        gdlevelsearch.timeout_tasks[session_key] = tasks[2]
 
         gdlevelsearch._clear_all_sessions(event)
         await asyncio.sleep(0)
@@ -1124,8 +1210,10 @@ class TestHandleGdsearch:
             arg="12345",
         )
 
-        assert stub_image == [12345]
-        assert len(image_segments(fake_bot)) == 1
+        # 服务不可用时该提示而不是渲染一张 "No info" 废图
+        assert cmd_search.GD_API_UNAVAILABLE_MESSAGE in sent_texts(fake_bot)
+        assert stub_image == []
+        assert image_segments(fake_bot) == []
 
     async def test_no_name_match_says_so(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
@@ -1148,7 +1236,7 @@ class TestHandleGdsearch:
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="Nope"
         )
 
-        assert cmd_search.GDDL_UNAVAILABLE_MESSAGE in sent_texts(fake_bot)
+        assert cmd_search.SOURCES_UNAVAILABLE_MESSAGE in sent_texts(fake_bot)
         assert image_segments(fake_bot) == []
 
     async def test_single_match_is_sent_straight_away(
@@ -1225,26 +1313,30 @@ class TestHandleGdsearch:
         results = [SearchResult(1, "A", difficulty="d"), SearchResult(2, "B", difficulty="d")]
         monkeypatch.setattr(cmd_search, "search_by_name", lambda _n: results)
 
+        event = make_group_event("*gdsearch")
         await run_handler(
-            gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="X"
+            gdlevelsearch.gdsearch, fake_bot, event, arg="X"
         )
         await asyncio.sleep(0)
 
-        user_id = str(DEFAULT_USER_ID)
-        assert gdlevelsearch.search_cache[user_id] is results
-        assert user_id in gdlevelsearch.timeout_tasks
-        assert no_timeout_tasks == [f"search:{user_id}"]
+        session_key = get_context_id(event)
+        assert gdlevelsearch.search_cache[session_key] is results
+        assert session_key in gdlevelsearch.timeout_tasks
+        assert no_timeout_tasks == [f"search:{session_key}"]
 
 
 # ==========================================================================
 # gdsearch 的序号选择器
 # ==========================================================================
 class TestHandleChoice:
-    def _prime(self, results: list[SearchResult] | None = None) -> list[SearchResult]:
+    @staticmethod
+    def _prime(
+        event: Any, results: list[SearchResult] | None = None
+    ) -> list[SearchResult]:
         results = results or [
             SearchResult(11, "First"), SearchResult(22, "Second"),
         ]
-        gdlevelsearch.search_cache[str(DEFAULT_USER_ID)] = results
+        gdlevelsearch.search_cache[get_context_id(event)] = results
         return results
 
     async def test_no_cache_means_silence(
@@ -1261,10 +1353,11 @@ class TestHandleChoice:
         self, word: str, fake_bot: FakeBot, make_group_event: Any
     ) -> None:
         """判的是 `in`，所以整句里带「结束」两个字就算"""
-        self._prime()
-        await run_handler(gdlevelsearch.gdsearchselect, fake_bot, make_group_event(word))
+        event = make_group_event(word)
+        self._prime(event)
+        await run_handler(gdlevelsearch.gdsearchselect, fake_bot, event)
 
-        # 行为是「回一句确认 + 把这个人的候选缓存清掉」，清缓存才是关键那半
+        # 行为是「回一句确认 + 把这个会话的候选缓存清掉」，清缓存才是关键那半
         assert len(sent_texts(fake_bot)) == 1
         assert gdlevelsearch.search_cache == {}
 
@@ -1272,32 +1365,31 @@ class TestHandleChoice:
         self, fake_bot: FakeBot, make_group_event: Any
     ) -> None:
         """不是序号就当没看见，别把群聊别的消息吞了"""
-        self._prime()
-        await run_handler(
-            gdlevelsearch.gdsearchselect, fake_bot, make_group_event("今天天气不错")
-        )
+        event = make_group_event("今天天气不错")
+        self._prime(event)
+        await run_handler(gdlevelsearch.gdsearchselect, fake_bot, event)
         assert fake_bot.calls == []
-        assert str(DEFAULT_USER_ID) in gdlevelsearch.search_cache  # 缓存还在
+        assert get_context_id(event) in gdlevelsearch.search_cache  # 缓存还在
 
     @pytest.mark.parametrize("choice", ["0", "3", "99"])
     async def test_out_of_range_index_complains(
         self, choice: str, fake_bot: FakeBot, make_group_event: Any
     ) -> None:
-        self._prime()
-        await run_handler(
-            gdlevelsearch.gdsearchselect, fake_bot, make_group_event(choice)
-        )
+        event = make_group_event(choice)
+        self._prime(event)
+        await run_handler(gdlevelsearch.gdsearchselect, fake_bot, event)
         # 行为是「提示一句 + 缓存留着让人重选」，别的什么都不发
         assert len(sent_texts(fake_bot)) == 1
         assert image_segments(fake_bot) == []
-        assert str(DEFAULT_USER_ID) in gdlevelsearch.search_cache  # 没清掉，可以再选
+        assert get_context_id(event) in gdlevelsearch.search_cache  # 没清掉，可以再选
 
     async def test_valid_index_sends_the_level_and_clears_the_cache(
         self, fake_bot: FakeBot, make_group_event: Any,
         monkeypatch: pytest.MonkeyPatch, stub_image: list[GDLevel],
     ) -> None:
-        self._prime()
-        await run_handler(gdlevelsearch.gdsearchselect, fake_bot, make_group_event("2"))
+        event = make_group_event("2")
+        self._prime(event)
+        await run_handler(gdlevelsearch.gdsearchselect, fake_bot, event)
 
         assert stub_image == [22]
         assert len(image_segments(fake_bot)) == 1
@@ -1306,8 +1398,9 @@ class TestHandleChoice:
     async def test_level_lookup_failure_still_renders_from_fallback_sources(
         self, fake_bot: FakeBot, make_group_event: Any, stub_image: list[int],
     ) -> None:
-        self._prime()
-        await run_handler(gdlevelsearch.gdsearchselect, fake_bot, make_group_event("1"))
+        event = make_group_event("1")
+        self._prime(event)
+        await run_handler(gdlevelsearch.gdsearchselect, fake_bot, event)
         # 行为是「报错时得把选中那条的 id 说出来」，不然没法查
         assert stub_image == [11]
         assert len(image_segments(fake_bot)) == 1

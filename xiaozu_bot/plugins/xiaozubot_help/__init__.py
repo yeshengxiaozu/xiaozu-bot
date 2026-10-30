@@ -46,8 +46,8 @@ CATEGORY_ALIASES: dict[str, str] = {
     "杂项": "fun",
     "ai": "ai",
     "语音": "ai",
-    "admin": "admin",
-    "管理": "admin",
+    # 这里**没有** "admin"：CATEGORIES 里没有这个分类，也没有任何命令把
+    # category 设成它，留着别名只会让 `*help admin` 永远落到「没有这个命令」。
 }
 
 DEFAULT_HIDDEN_CATEGORIES = {"ai"}
@@ -69,6 +69,10 @@ def _pad(text: str, width: int) -> str:
 
 def _command_lines(cmds: list[tuple[str, Cmd]], indent: str = "") -> list[str]:
     labels = [(c.prefix + n, c) for n, c in cmds]
+    # 空列表上 max() 会抛 ValueError。分类被清空、或者新增了分类还没填命令
+    # 时都会走到这里，不该让 *help 整个崩掉。
+    if not labels:
+        return []
     width = max(_width(label) for label, _ in labels)
     return [f"{indent}{_pad(label, width)}  {c.summary}" for label, c in labels]
 
@@ -266,8 +270,15 @@ async def handle_references(arg: Message = CommandArg()) -> None:
         await references.finish("use *references nlw/plat/gddl/hds/ids <page>")
         return
     name = args[0].lower().strip()
-    page = int(args[1]) if len(args) > 1 and args[1].isdigit() else 1
-    if name not in ["nlw", "gddl", "nlw", "ids", "hds", "lw", "aredl", "plat"]:
+    # isdigit() 对 int() 解析不了的 Unicode 数字字符（如 "²"）也返回 True，
+    # 光靠它守着 int() 会有漏网的 ValueError。
+    page = 1
+    if len(args) > 1:
+        try:
+            page = int(args[1])
+        except ValueError:
+            page = 1
+    if name not in ("nlw", "gddl", "ids", "hds", "lw", "aredl", "plat"):
         await references.finish("use *references nlw/plat/gddl/hds/ids <page>")
         return
     if name == "aredl":

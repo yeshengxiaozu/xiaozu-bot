@@ -10,7 +10,6 @@ from pathlib import Path
 from threading import Lock
 
 import httpx
-import urllib3
 from nonebot import logger
 
 from xiaozu_bot.utils.json_storage import write_json_atomic
@@ -25,13 +24,18 @@ def demon_type(cache_filter_difficulty):
 MANUAL_FALLBACK = False #控制是否进行人工干预
 
 # ---------- 证书修复 ----------
+# certifi 是本项目的硬依赖（见 pyproject.toml）。拿不到 CA 包时**不能**悄悄
+# 退化成 verify=False：那会把 history.geometrydash.eu 的流量变成可 MITM 的
+# 明文通道，而下面的 disable_warnings 还会顺手关掉唯一的告警，运维根本看不出来。
+# 缺依赖就该立刻炸，而不是用不安全的方式"继续能跑"。
 try:
     import certifi
+
     CA_BUNDLE = certifi.where()
-except ImportError:
-    CA_BUNDLE = None
-    logger.warning("certifi 未安装，将禁用 SSL 验证（不安全）")
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except ImportError as exc:  # pragma: no cover - 环境缺依赖
+    raise RuntimeError(
+        "certifi 是必需依赖，缺少它会导致 TLS 校验被禁用；请先 pip install certifi"
+    ) from exc
 
 # ---------- 配置 ----------
 GD_HISTORY_API = "https://history.geometrydash.eu/api/v1/search/level/advanced/"
@@ -42,8 +46,8 @@ MAX_CONCURRENT = 3          # Geometry Dash History API 的并发上限
 REQUEST_INTERVAL = 0.5      # 秒
 
 # ---------- HTTP 会话（统一走插件共享的重试策略） ----------
-# 默认 verify 参数：优先使用 certifi，否则关闭验证（不推荐）
-DEFAULT_VERIFY = CA_BUNDLE or False
+# 永远显式带上 certifi 的 CA 包，不留下 "or False" 这种会静默关校验的口子。
+DEFAULT_VERIFY = CA_BUNDLE
 
 http = RequestSession(verify=DEFAULT_VERIFY, trust_env=False)
 

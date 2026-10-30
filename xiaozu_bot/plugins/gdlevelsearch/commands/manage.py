@@ -20,6 +20,7 @@ from nonebot.permission import SUPERUSER
 from nonebot.rule import Rule
 
 from xiaozu_bot.utils.gd_args import NEXT_WORDS, PREV_WORDS, STOP_WORDS
+from xiaozu_bot.utils.json_storage import write_json_atomic
 
 from .. import paths, reload_all
 
@@ -72,8 +73,10 @@ def _load_json(path: Path) -> list[dict]:
 
 
 def _save_json(path: Path, entries: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(entries, ensure_ascii=False, indent=4), encoding="utf-8")
+    # metadata.json 是跨次运行累积的匹配缓存（几百 KB）。直接 write_text 会在
+    # 进程被杀 / 磁盘满时留下半截文件，而 load 那边读到坏文件是「当空处理」——
+    # 等于把全部历史匹配结果悄悄丢掉。走原子写。
+    write_json_atomic(path, entries, indent=4)
 
 
 def load_unmatched() -> list[dict]:
@@ -246,6 +249,9 @@ async def handle_gdsearchmanage_select(event: Event) -> None:
 # 状态
 # ---------------------------------------------------------------------------
 def _file_count(path: Path) -> int:
+    # 只想要条数，但文件是几 MB 的整份 JSON，解析是纯 CPU。调用方负责
+    # 丢线程池；这里只能避免把整个列表 materialize 出来（不过 json.loads
+    # 本身还是要把全文解析一遍，大头在那儿）。
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return len(data.get("levels", []))
@@ -269,8 +275,13 @@ def _fmt_time(ts: float | None) -> str:
 gdsearchstatus = on_command("gdsearch_status", permission=SUPERUSER, priority=1, block=True)
 
 
-@gdsearchstatus.handle()
-async def handle_gdsearchstatus() -> None:
+def _collect_status() -> str:
+    """把状态信息算出来。
+
+    整个函数都要在线程池里跑：它要读 metadata(583KB) + nlw(971KB) +
+    ids(821KB) + lw + hds(991KB) + aredl(1.35MB) + arepl，加起来接近 5MB
+    的 JSON 解析，直接在事件循环上做会让 bot 停好几秒。
+    """
     unmatched = load_unmatched()
     cache = _load_json(METADATA_CACHE_PATH)
 
@@ -296,4 +307,11 @@ async def handle_gdsearchstatus() -> None:
         f"AREDL 关卡数：aredl {_file_count(aredl_path)}、arepl {_file_count(arepl_path)}",
         f"AREDL 最后修改时间（两者最早）：{_fmt_time(min(aredl_mtimes) if aredl_mtimes else None)}",
     ]
-    await gdsearchstatus.finish("\n".join(lines))
+    return "\n".join(lines)
+
+
+@gdsearchstatus.handle()
+async def handle_gdsearchstatus() -> None:
+    # 近 5MB 的同步 JSON 解析，丢线程池，别堵事件循环
+    report = await asyncio.to_thread(_collect_status)
+    await gdsearchstatus.finish(report)

@@ -100,17 +100,10 @@ class JsonRedis:
 
     def _save(self) -> None:
         """Persist a complete snapshot through an atomic same-filesystem replace."""
-        self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.file_path.with_suffix(self.file_path.suffix + ".tmp")
         try:
-            with tmp.open("w", encoding="utf-8") as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self.file_path)
+            write_json_atomic(self.file_path, self.data, indent=4)
         except OSError:
             logger.exception(f"[JsonRedis] 写入失败：{self.file_path}")
-            tmp.unlink(missing_ok=True)
 
     def _clean_expired(self) -> bool:
         """Remove expired values and report whether anything was deleted."""
@@ -141,6 +134,41 @@ class JsonRedis:
                 self.data[key] = value
             if self.auto_save:
                 self._save()
+
+    def incr(self, key: str, amount: int = 1) -> int:
+        """Atomically increase a counter and return the new value.
+
+        Doing ``set(key, get(key) + 1)`` from a handler is a read-modify-write
+        across two lock acquisitions, so concurrent callers silently drop
+        counts. The whole update has to happen under one lock.
+        """
+        with self.lock:
+            current = self.data.get(key)
+            if isinstance(current, dict) and "_exp" in current:
+                current = current["_val"]
+            try:
+                value = int(current) + amount
+            except (TypeError, ValueError):
+                value = amount
+            self.data[key] = value
+            if self.auto_save:
+                self._save()
+            return value
+
+    def hdel(self, name: str, *keys: str) -> int:
+        """Delete fields from a hash and return how many were removed."""
+        with self.lock:
+            hash_map = self.data.get(name)
+            if not isinstance(hash_map, dict) or "_exp" in hash_map:
+                return 0
+            removed = 0
+            for key in keys:
+                if key in hash_map:
+                    del hash_map[key]
+                    removed += 1
+            if removed and self.auto_save:
+                self._save()
+            return removed
 
     def ttl(self, key: str) -> int:
         """Return Redis-compatible remaining lifetime in seconds.

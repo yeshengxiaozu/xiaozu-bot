@@ -17,7 +17,8 @@ __plugin_meta__ = PluginMetadata(
     config=Config,
 )
 
-random.seed()
+# 不要在这里 random.seed()：无参 seed 等于用系统熵重置**全局** Mersenne
+# Twister，而 guess / zhua / joy 用的是同一个 random，且这本来就是默认行为。
 r = JsonRedis(plugin_storage(__file__))
 
 config = get_plugin_config(Config)
@@ -28,8 +29,11 @@ jrrp = on_command("jrrp")
 @jrrp.handle()
 async def handle_function(event: Event):
     user_id = get_user_id(event)
-    if r.get(f"jrrp_{user_id}") is not None and r.get(f"jrrp_{user_id}") != "True":
-        rp = int(r.get(f"jrrp_{user_id}"))
+    # 只 get 一次（原来同一句里调了三次）。
+    # "True" 是早年存布尔值留下的旧数据，等于"今天没抽过"，不能拿去 int()。
+    today = r.get(f"jrrp_{user_id}")
+    if today is not None and today != "True":
+        rp = int(today)
         await jrrp.finish(f"今天已经抽过啦：{rp}/100，明天再来刷新。", at_sender=True)
     rp = random.randint(1, 100)
     if rp <= 1:
@@ -48,5 +52,7 @@ async def handle_function(event: Event):
         append = "满分！今天的好运额度看起来很充足。"
     d = datetime.datetime.now()
     delta = (23 - d.hour) * 3600 + (59 - d.minute) * 60 + (59 - d.second)
-    r.set(f"jrrp_{user_id}", f"{rp}", ex=delta)
+    # 23:59:59 抽的时候 delta 正好是 0，ex=0 会让键立刻过期，"每天一次"
+    # 的保证在那一秒失效。至少留 1 秒。
+    r.set(f"jrrp_{user_id}", f"{rp}", ex=max(delta, 1))
     await jrrp.finish(f"今日人品：{rp}/100。{append}")

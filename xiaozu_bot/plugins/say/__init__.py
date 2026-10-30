@@ -1,12 +1,15 @@
 import asyncio
 import os
 import re
+import threading
+import uuid
 import wave
 from contextlib import suppress
 from pathlib import Path
 
-from nonebot import get_plugin_config, on_command
+from nonebot import get_plugin_config, logger, on_command
 from nonebot.internal.adapter import Bot, Event, Message
+from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 
@@ -46,7 +49,16 @@ say_instructed = on_command("say_i")
 
 # mlx_audio 只在 Apple Silicon 上装得了，所以延迟到真正要用的时候再 import。
 # 这样在没装它的机器上，say 插件本身还是能正常加载，只是 say 指令用不了。
-_MODEL = None  # 线程安全，因为 mlx 模型在推理时是只读的
+_MODEL = None
+# 加载模型必须加锁：推理时只读只保证推理安全，不保证**初始化**安全。
+# 两个用户同时第一次触发 *say 时都会看到 _MODEL is None，然后各加载一份
+# 1.7B 的 bf16 模型（数 GB），后写的覆盖先写的。
+_MODEL_LOCK = threading.Lock()
+# TTS 是重 CPU 活，一次推理要好几秒。不设上限的话几个人连发 *say 就会把
+# 默认线程池占满，连 guess 的 `asyncio.to_thread` 裁图都跟着排队卡住。
+_TTS_SEMAPHORE = asyncio.Semaphore(1)
+# 单次合成的硬超时，避免一个卡死的请求永远占着上面的信号量。
+TTS_TIMEOUT = 120
 TTS_CHUNK_LENGTH = 200
 _TTS_BREAKS = re.compile(r"(?<=[。！？.!?；;，,\n ])")
 
@@ -71,10 +83,15 @@ def split_text(text: str, max_length: int = TTS_CHUNK_LENGTH) -> list[str]:
 
 def get_model():
     global _MODEL
+    # 双检锁：第一次加载要走网络/磁盘，几秒钟，期间别的线程也会进来。
     if _MODEL is None:
-        from mlx_audio.tts.utils import load_model
+        with _MODEL_LOCK:
+            if _MODEL is None:
+                from mlx_audio.tts.utils import load_model
 
-        _MODEL = load_model("mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16")
+                _MODEL = load_model(
+                    "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
+                )
     return _MODEL
 
 
@@ -126,7 +143,9 @@ def sync_generate_audio(text: str, instruct: str | None, output_dir: str) -> str
     from mlx_audio.tts.generate import generate_audio
 
     output = Path(output_dir)
-    base_name = f"audio_{os.getpid()}_{id(text)}"
+    # 不能用 id(text)：那是字符串对象的内存地址，对象被回收后地址会被新对象
+    # 复用，长文本切块时会一次派生出多个文件，撞名就把上一段覆盖掉了。
+    base_name = f"audio_{os.getpid()}_{uuid.uuid4().hex}"
     parts: list[Path] = []
     final_path = output / f"{base_name}.wav"
     chunks = split_text(text)
@@ -157,6 +176,44 @@ def sync_generate_audio(text: str, instruct: str | None, output_dir: str) -> str
                     part.unlink()
 
 
+async def _speak(
+    matcher: Matcher, bot: Bot, event: Event, text: str, instruct: str | None
+) -> None:
+    """合成一段语音并发出去，中间产物无论成败都清掉。
+
+    三个容易踩的点都在这里收口：
+    - TTS 是重 CPU 活，用信号量 + 超时卡住，否则几个人连发 *say 就会把默认
+      线程池占满，连 guess 的裁图都跟着排队。
+    - file_path 先初始化成 None。下面每个提前退出的分支都靠 finish() 抛
+      FinishedException 离开，一旦它不抛（比如被桩掉），就会带着未绑定的
+      名字走到 finally 里，把真正的错误盖成一个 UnboundLocalError。
+    - 给用户看的文案里不带 {e}：异常信息里有机器的绝对路径，不该发到群里，
+      细节一律只进日志。
+    """
+    file_path: str | None = None
+    try:
+        async with _TTS_SEMAPHORE:
+            file_path = await asyncio.wait_for(
+                asyncio.to_thread(sync_generate_audio, text, instruct, os.getcwd()),
+                timeout=TTS_TIMEOUT,
+            )
+    except TimeoutError:
+        logger.warning("say: 合成超过 %s 秒，放弃", TTS_TIMEOUT)
+        await matcher.finish("合成超时了，换短一点再试试")
+    except Exception:
+        logger.exception("say: 生成音频失败")
+        await matcher.finish("生成音频失败，请稍后再试")
+    try:
+        await send_audio(bot, event, file_path)
+    except Exception:
+        logger.exception("say: 发送音频失败")
+        await matcher.finish("发送音频失败，请稍后再试")
+    finally:
+        if file_path:
+            with suppress(OSError):
+                os.remove(file_path)
+
+
 @say.handle()
 async def handle_function(
     bot: Bot,
@@ -174,22 +231,8 @@ async def handle_function(
         await say.finish("请善待小小卒！")
     # 准备参数
     instruct = "体现稚嫩撒娇的少女声线，说话有点含糊有点夹子音，音色有点沙有点糊，语速较快而有活力，营造刻意卖萌又有点搞怪的听觉效果。"
-    output_dir = os.getcwd()
 
-    # 使用 asyncio.to_thread 将同步阻塞任务扔到线程池
-    try:
-        file_path = await asyncio.to_thread(
-            sync_generate_audio, text, instruct, output_dir
-        )
-    except Exception as e:
-        await say.finish(f"生成音频失败: {e}")
-    try:
-        await send_audio(bot, event, file_path)
-    except Exception as e:
-        await say.finish(f"发送音频失败: {e}")
-    finally:
-        with suppress(OSError):
-            os.remove(file_path)
+    await _speak(say, bot, event, text, instruct)
     await say.finish()
 
 
@@ -213,21 +256,5 @@ async def handle_function(
     if len(text) > 1000:
         await react(bot, event, "424")
         await say_instructed.finish("请善待小小卒！")
-    # 准备参数
-    output_dir = os.getcwd()
-
-    # 使用 asyncio.to_thread 将同步阻塞任务扔到线程池
-    try:
-        file_path = await asyncio.to_thread(
-            sync_generate_audio, text, instruct, output_dir
-        )
-    except Exception as e:
-        await say_instructed.finish(f"生成音频失败: {e}")
-    try:
-        await send_audio(bot, event, file_path)
-    except Exception as e:
-        await say_instructed.finish(f"发送音频失败: {e}")
-    finally:
-        with suppress(OSError):
-            os.remove(file_path)
+    await _speak(say_instructed, bot, event, text, instruct)
     await say_instructed.finish("")
