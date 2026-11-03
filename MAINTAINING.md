@@ -181,6 +181,43 @@ python -m pytest --cov=xiaozu_bot --cov-report=term-missing  # 覆盖率 + 没�
 python -m pip install -e ".[dev]"
 ```
 
+### `nb run` 说找不到 python / `No Python at '"...\python.exe'`
+
+症状（Windows，根目录直接 `nb run`）：
+
+```
+使用 Python: ...\xiaozu-bot\.venv\Scripts\python.exe
+No Python at '"C:\Users\<user>\.cache\codex-runtimes\...\python.exe'
+```
+
+这**不是 nb 的问题，也不是 PATH 里没有 python**。`nb` 是全局装的 nb-cli，
+它会自动挑当前目录下的 `.venv` —— 所以只要那个 venv 是坏的，`nb run` 就一起坏。
+venv 里的 `python.exe` 只是个转发器，它按 `.venv/pyvenv.cfg` 里的 `home` / `executable`
+去找真正的解释器；那个基础解释器一旦被删（换 Python 版本、清缓存目录、删过某个
+运行时都可能），整个 venv 立刻报废，**连带 `pip` / `pytest` / `ruff` 的 exe 全部失效**。
+
+先看一眼：
+
+```bash
+cat .venv/pyvenv.cfg     # home / executable 指向哪
+ls <那个 home>            # 目录还在不在
+```
+
+两条修法，按情况选：
+
+- **重建（推荐，最干净）**：删掉 `.venv`，用本机同版本 Python 重来一遍，
+  再 `python -m pip install -e ".[dev]"`。
+- **改指向（快，不用重装 site-packages）**：把 `pyvenv.cfg` 的 `home` / `executable` /
+  `version` 改成本机**同 minor 版本**的 Python（例如 3.12.x）。`Lib/site-packages`
+  里的东西是按 ABI 编的（`cp312-win_amd64.pyd`），同 minor 版本之间可以继续用，
+  所以不用重装。改完先 `.venv\Scripts\python -c "import nonebot"` 验一下。
+
+顺手确认一下装完能不能真把插件都拉起来（不需要连 QQ）：
+
+```bash
+.venv/Scripts/python -c "import nonebot; nonebot.init(); nonebot.load_from_toml('pyproject.toml')"
+```
+
 **用生产的 Python 版本（3.13）跑一遍**，本地平时用的可能不是它：
 
 ```bash
