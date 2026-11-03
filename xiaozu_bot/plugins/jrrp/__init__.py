@@ -1,5 +1,5 @@
-import datetime
 import random
+from datetime import datetime
 
 from nonebot import get_plugin_config, on_command
 from nonebot.internal.adapter import Event
@@ -50,7 +50,7 @@ async def handle_function(event: Event):
         append = "今天手气很旺，适合挑战一点新东西。"
     else:
         append = "满分！今天的好运额度看起来很充足。"
-    d = datetime.datetime.now()
+    d = datetime.now()
     delta = (23 - d.hour) * 3600 + (59 - d.minute) * 60 + (59 - d.second)
     # 23:59:59 抽的时候 delta 正好是 0，ex=0 会让键立刻过期，"每天一次"
     # 的保证在那一秒失效。至少留 1 秒。

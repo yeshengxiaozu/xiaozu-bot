@@ -44,7 +44,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pyright[nodejs]",
-    "ruff",
+    # 下限跟着 requirements-lint.txt 走：CI 里钉死那个版本，本地装的不能比它旧，
+    # 否则同一份代码在本地绿、CI 红（新规则是跟着 ruff 版本进来的）。
+    "ruff>=0.17.3",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
@@ -67,7 +69,7 @@ migrate = [
 [dependency-groups]
 dev = [
     "pyright",
-    "ruff",
+    "ruff>=0.17.3",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",

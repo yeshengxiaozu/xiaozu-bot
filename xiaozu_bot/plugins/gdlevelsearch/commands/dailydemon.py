@@ -10,8 +10,8 @@ GDDL 的数据是会变的（有人提交评分，关卡的 enjoyment / tier / �
 """
 
 import asyncio
-import datetime
 import random
+from datetime import date, datetime
 
 from nonebot import logger, on_command
 from nonebot.internal.adapter import Bot, Event
@@ -51,21 +51,21 @@ RECENT_KEEP = 30      # 记最近 30 次
 MAX_REROLL = 5        # 撞车最多再挑几次，每次都是一个 HTTP 请求，别太多
 
 
-def _today(today: datetime.date | None = None) -> datetime.date:
-    return today or datetime.datetime.now().astimezone().date()
+def _today(today: date | None = None) -> date:
+    return today or datetime.now().astimezone().date()
 
 
-def _key(day: datetime.date) -> str:
+def _key(day: date) -> str:
     return f"{KEY_PREFIX}{day.isoformat()}"
 
 
-def today_seed(today: datetime.date | None = None) -> int:
+def today_seed(today: date | None = None) -> int:
     """拿日期当种子，比如 2026-07-26 -> 20260726"""
     day = _today(today)
     return day.year * 10000 + day.month * 100 + day.day
 
 
-def pick_index(total: int, today: datetime.date | None = None) -> int:
+def pick_index(total: int, today: date | None = None) -> int:
     """按日期在 [0, total) 里定出一个下标"""
     return random.Random(today_seed(today)).randrange(total)
 
@@ -85,7 +85,7 @@ def remember(level_id: int) -> None:
     r.set(RECENT_KEY, recent[-RECENT_KEEP:])
 
 
-def get_cached_id(today: datetime.date | None = None) -> int | None:
+def get_cached_id(today: date | None = None) -> int | None:
     """看今天是不是已经挑过了"""
     cached = r.get(_key(_today(today)))
     if cached is None:
@@ -98,7 +98,7 @@ def get_cached_id(today: datetime.date | None = None) -> int | None:
 
 
 def get_daily_demon(
-    today: datetime.date | None = None,
+    today: date | None = None,
 ) -> tuple[int | None, int, str]:
     """取今天这一关。
 

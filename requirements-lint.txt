@@ -6,4 +6,9 @@
 #
 # 升级 ruff 就改这一行，改完本地跑一遍 `ruff check --statistics .`
 # 看看新规则带来了多少条新违规，再决定要不要在 pyproject 里关掉几类。
-ruff==0.16.9
+#
+# 0.16.9 -> 0.17.3：只多出 2 条 ICN001（`import datetime` 现在要求写成
+# `dt` 别名）。这里没有加例外，而是把那两处改成 `from datetime import ...`
+# —— 仓库里其他文件本来就是这么导的，跟着改更一致，也免得为一个风格规则
+# 在 pyproject 里再开一个 import-conventions 的口子。
+ruff==0.17.3

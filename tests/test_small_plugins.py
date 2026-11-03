@@ -129,12 +129,15 @@ class TestJrrp:
 
         需要别的时刻的用例（测过期秒数那两组）在自己函数体里再 setattr
         一次覆盖掉即可 —— monkeypatch 后设的生效，teardown 时逆序还原。
+
+        jrrp 现在是 `from datetime import datetime`，模块里的 `datetime`
+        就是那个**类**本身，所以桩只要提供 `.now()`。
         """
         moment = real_datetime(2026, 7, 27, 12, 0, 0)
         monkeypatch.setattr(
             jrrp,
             "datetime",
-            types.SimpleNamespace(datetime=types.SimpleNamespace(now=lambda: moment)),
+            types.SimpleNamespace(now=lambda: moment),
         )
 
     # ---- 摇出来的数要报回去 --------------------------------------------
@@ -256,9 +259,7 @@ class TestJrrp:
     ):
         """过期秒数按注入的时钟算，不碰真实时间"""
         moment = real_datetime(2026, 7, 27, hour, minute, second)
-        fake_module = types.SimpleNamespace(
-            datetime=types.SimpleNamespace(now=lambda: moment)
-        )
+        fake_module = types.SimpleNamespace(now=lambda: moment)
         monkeypatch.setattr(jrrp, "datetime", fake_module)
         monkeypatch.setattr(random, "randint", lambda a, b: 42)
 
@@ -285,7 +286,7 @@ class TestJrrp:
         monkeypatch.setattr(
             jrrp,
             "datetime",
-            types.SimpleNamespace(datetime=types.SimpleNamespace(now=lambda: moment)),
+            types.SimpleNamespace(now=lambda: moment),
         )
         monkeypatch.setattr(random, "randint", lambda a, b: 42)
 
