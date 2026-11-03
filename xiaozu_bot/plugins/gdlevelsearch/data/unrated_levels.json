@@ -60,6 +60,12 @@
             "note": "An redecorated version of the well-known \"upcoming top 1\", verified by Diamond. Most likely being the rated version"
         },
         {
+            "id": 85174455,
+            "name": "Cyber Raptor",
+            "creator": "ItsGianlu",
+            "note": "F-777 supermix"
+        },
+        {
             "id": 61775814,
             "name": "Element 111 Rg",
             "creator": "Compendium",
@@ -70,6 +76,12 @@
             "name": "Centipede",
             "creator": "zander12",
             "note": "Named after the famous impossible Osu! chart, redecorated and reverified and still dont get RobTop's attention."
+        },
+        {
+            "id": 13586257,
+            "name": "Silent poltergeist",
+            "creator": "TheRealSailent",
+            "note": "One of the most well-known unrated OG silent levels"
         },
         {
             "id": 146888428,
@@ -115,12 +127,6 @@
             "creator": "Davphla and more",
             "note": "(Unrated NLW) Super Demon map that pushed 2.1 to its absolute limits, being a highly anticipated release before unfortunately being split into Reverie, Faith, and Diligence due to lag issues."
         },
-        {
-            "id": 143564503,
-            "name": "MONHEIM",
-            "creator": "surveyor23",
-            "note": "A 19 minutes extreme demon share the same creator with the famous XXXL level REDEEMER. Can be Mythic worthy"
-        },
 
         {"note": "----Easy Extremes----","is_comment": true},
         {
@@ -164,14 +170,26 @@
             "note": "(Unrated NLW) Final boss of asinine patience test levels, this time dubiously representing the album Everywhere At The End Of Time. Also extremely laggy due to some poorly optimized effects"
         },
         
-        {"note": "----Unnerfed Extremes (without much gameplay change)----","is_comment": true},
+        {"note": "----Unnerfed/Buffed Extremes (without much gameplay change)----","is_comment": true},
         {
             "id": 54441585,
             "name": "Unnerfed Zodiac",
             "creator": "xander556",
             "note": "The more chokeable version of Zodiac, verified by nebnoob. Wow the reaction"
         },
-        
+        {
+            "id": 68904235,
+            "name": "Sightless Sandstorm",
+            "creator": "BradenbowlPro",
+            "note": "Invisible Sunset Sandstorm"
+        },
+        {
+            "id": 65679976,
+            "name": "Blind Blizzard",
+            "creator": "BradenbowlPro",
+            "note": "Invisible Black Blizzard"
+        },
+
         {"note": "----CNGD levels----","is_comment": true},
         {
             "id": 118951928,
