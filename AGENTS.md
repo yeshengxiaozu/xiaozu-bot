@@ -43,6 +43,42 @@ python scripts/try_search.py Tartarus
 `__plugin_meta__`、`Config` 和 NoneBot matcher 注册模式。跨 OneBot/QQ 的消息、媒体和
 事件逻辑优先复用 `xiaozu_bot/utils/adapter_compat.py`。
 
+## 数据更新流程
+
+`gdlevelsearch` 的关卡数据落在 `xiaozu_bot/plugins/gdlevelsearch/data/*.json`，由
+`updater/` 下的十三个抓取任务生成：
+
+- 每天凌晨 3 点自动跑一次（在 NoneBot startup 阶段注册，用 APScheduler 配置的服务器时区）
+- 超级用户发 `*gdsearch_update` 手动触发
+- 超级用户发 `*gdsearch_store_update` 立即刷新 GDDL 本地缓存
+- GDDL 快照另有每天 07:00 的独立刷新任务；写入 `data/gddl_levels.json`，除首页外的失败页
+  不会作废整轮扫描，而是按 ID 合并保留旧记录并记 `partial` / `failedPages`
+
+两条路径跑完都会调 `reload_all()` 把新数据读进内存，**不需要重启 bot**。各 api 模块在
+import 时把数据读进模块级 list/dict，少了这一步，新 json 要等下次重启才生效。
+
+### 分层并发 + 跑完才发布
+
+任务按依赖分两层，同层并发（都是网络 IO，丢线程池里）：
+
+```
+第 1 层： nlw  ids  lw  hds  idl  lists  tpl  pemonlist  platdiff  sfh  ratedplus
+第 2 层： platbatch（要 tpl/pemonlist/platdiff）  getmetadata（要 nlw/ids/lw/hds）
+```
+
+抓下来的东西先写 `data/.staging/`，**全部任务成功后才原子地搬进 `data/`**。原因：
+`nlw`/`ids`/`lw`/`hds` 抓回来的数据不带 metadata，要等最后 `getmetadata` 回填。以前直接
+写 `data/`，中间任何一步失败（runner 默认遇错即停）都会让 bot 读到缺 metadata 的半成品、
+把好数据冲掉。现在任一任务失败就不发布，`data/` 保持上一次的样子，中间产物留在
+`.staging/` 方便排查。GDDL 不在这个流水线里，作为独立后台任务与主更新同时启动，失败只上报
+管理员，不影响主流水线。`ratedplus` 抓 pointercrate 的 `/api/v2/demons/listed/`（全表
+700+ 条、8 页），落成 `data/ratedplus.json`；`position` 必须从 1 开始连续，否则这一轮不
+发布，线上保留上一份快照。
+
+`gddlapi.py` 查询优先走 GDDL 在线接口；按名称或搜索条件查会在在线失败后回退到
+`data/gddl_levels.json` 快照。`getlevelbyid` 默认在远端失败时返回 `None`，显式传
+`fallback=True` 才返回降级的 `GDDLSearchEntry`——它没有完整的 `Meta` 和 tags。
+
 ## 测试与质量检查
 
 ```bash
