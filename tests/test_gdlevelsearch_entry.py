@@ -434,6 +434,10 @@ def sources(monkeypatch: pytest.MonkeyPatch) -> Any:
         monkeypatch.setattr(svc_search, "Platapi", fake_plat)
         monkeypatch.setattr(svc_search, "Ratedplus", fake_rated)
         monkeypatch.setattr(svc_search, "search_levels_by_name", fake_gd)
+        # The production default is off; the aggregator cases below cover the
+        # enabled branch, and the tests that assert the off behavior flip it
+        # back explicitly.
+        monkeypatch.setattr(svc_search, "GDAPI_NAME_SEARCH_ENABLED", True)
         return SimpleNamespace(
             gddl=fake_gddl,
             nlw=fake_nlw,
@@ -446,6 +450,10 @@ def sources(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 class TestSearchByName:
+    def test_gd_name_search_switch_is_shipped_off(self) -> None:
+        """线上默认不打 gdapi；要打开这个开关就得同时改掉这条断言"""
+        assert svc_search.GDAPI_NAME_SEARCH_ENABLED is False
+
     def test_nothing_anywhere_gives_an_empty_list(self, sources: Any) -> None:
         sources(gddl=[])
         assert gdlevelsearch.search_by_name("Nope") == []
@@ -714,6 +722,21 @@ class TestSearchByName:
         got = gdlevelsearch.search_by_name("Fallback")
 
         assert [(item.id, item.name) for item in got] == [(42, "Fallback")]
+
+    def test_gd_server_is_skipped_when_the_switch_is_off(
+        self, sources: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """开关关着时名称搜索完全不打 gdapi，索引源照常出结果"""
+        installed = sources(
+            nlw=[nlw_level("42", "Switch Off", creator="Cached")],
+            gd=[gd_level(level_id=99, level_name="Switch Off", is_demon=1, stars=10)],
+        )
+        monkeypatch.setattr(svc_search, "GDAPI_NAME_SEARCH_ENABLED", False)
+
+        got = gdlevelsearch.search_by_name("Switch Off")
+
+        assert [(item.id, item.name) for item in got] == [(42, "Switch Off")]
+        assert installed.gd.names == []
 
     def test_same_level_from_three_sources_is_merged_once(self, sources: Any) -> None:
         """去重的键是 id：GDDL 给难度和 tier，NLW 补作者，plat 不再覆盖"""
@@ -997,16 +1020,29 @@ class TestGetCreator:
 
 
 class TestGetDifficulty:
+    def test_switch_off_returns_none_without_calling_gdapi(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(svc_search, "GDAPI_NAME_SEARCH_ENABLED", False)
+        monkeypatch.setattr(
+            svc_search, "get_level_by_id", lambda _id: pytest.fail("不该打 gdapi")
+        )
+        assert gdlevelsearch.get_difficulty(128) is None
+
     def test_returns_the_label(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(svc_search, "GDAPI_NAME_SEARCH_ENABLED", True)
         level = gd_level(stars=10, demon_difficulty=3)
         monkeypatch.setattr(svc_search, "get_level_by_id", lambda _id: level)
         assert gdlevelsearch.get_difficulty(128) == level.difficulty_label()
 
     def test_none_level_gives_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(svc_search, "GDAPI_NAME_SEARCH_ENABLED", True)
         monkeypatch.setattr(svc_search, "get_level_by_id", lambda _id: None)
         assert gdlevelsearch.get_difficulty(128) is None
 
     def test_exception_gives_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(svc_search, "GDAPI_NAME_SEARCH_ENABLED", True)
+
         def boom(_id: int) -> Any:
             raise RuntimeError("GD 服务器又挂了")
 

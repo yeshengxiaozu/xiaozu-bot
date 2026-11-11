@@ -29,6 +29,13 @@ from ..constants import (
 )
 from ..render.draw import create_image_from_gdlevel
 
+# Kill switch for the official GD server in *name* search. While it is off,
+# neither the fuzzy name endpoint nor the per-result difficulty lookup calls
+# gdapi; the local indexes and GDDL stay the only sources. ID lookup
+# (getlevelinfo) is deliberately not covered by it: it has no replacement
+# source and rendering needs the official record anyway.
+GDAPI_NAME_SEARCH_ENABLED = False
+
 
 def get_creator(level_id: int) -> str | None:
     """Fetch a creator name from the history API as a last-resort fallback."""
@@ -46,6 +53,8 @@ def get_creator(level_id: int) -> str | None:
 
 def get_difficulty(level_id: int) -> str | None:
     """Fetch the difficulty label directly from the official GD API."""
+    if not GDAPI_NAME_SEARCH_ENABLED:
+        return None
     logger.info("get_difficulty got called: " + str(level_id))
     try:
         data = get_level_by_id(level_id)
@@ -167,8 +176,9 @@ def _lookup_sources(name: str) -> dict[str, object | None]:
         "nlw": _INDEX_EXECUTOR.submit(Nlw.getlevelbyname, name),
         "plat": _INDEX_EXECUTOR.submit(Platapi.getlevelbyname, name),
         "ratedplus": _INDEX_EXECUTOR.submit(Ratedplus.getlevelbyname, name),
-        "gd": _NETWORK_EXECUTOR.submit(_search_gd_by_name, name),
     }
+    if GDAPI_NAME_SEARCH_ENABLED:
+        futures["gd"] = _NETWORK_EXECUTOR.submit(_search_gd_by_name, name)
     source_by_future = {future: source for source, future in futures.items()}
     values: dict[str, object | None] = {}
     try:
