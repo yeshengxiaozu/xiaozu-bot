@@ -734,33 +734,6 @@ class TestLoadAndSave:
         assert second.get("a") == 1
         assert second.hget("h", "f") == "v"
 
-    def test_auto_save_false_never_touches_disk(self, tmp_path: Path) -> None:
-        path = tmp_path / "storage.json"
-
-        redis = JsonRedis(path, auto_save=False)
-        redis.set("a", 1)
-        redis.hset("h", "f", 1)
-        redis.delete("a")
-
-        assert not path.exists()
-        assert redis.hget("h", "f") == 1
-
-    def test_auto_save_false_still_loads_and_can_save_explicitly(
-        self, tmp_path: Path
-    ) -> None:
-        path = tmp_path / "storage.json"
-        JsonRedis(path).set("旧的", 1)
-
-        redis = JsonRedis(path, auto_save=False)
-        assert redis.get("旧的") == 1
-
-        redis.set("新的", 2)
-        # 还没手动 save，文件里只有旧的
-        assert _read_raw(path) == {"旧的": 1}
-
-        redis._save()
-        assert JsonRedis(path).get("新的") == 2
-
     def test_empty_file_is_not_treated_as_corrupt(
         self, tmp_path: Path, recording_logger: _RecordingLogger
     ) -> None:
@@ -773,7 +746,7 @@ class TestLoadAndSave:
         assert redis.data == {}
         assert not path.with_suffix(".json.broken").exists()
         assert recording_logger.records == []
-        # auto_save 的话顺手把它写成了合法的空 json
+        # load 时顺手把它写成了合法的空 json
         assert _read_raw(path) == {}
 
     def test_corrupt_file_is_quarantined_instead_of_raising(
@@ -987,7 +960,7 @@ class TestThreadSafety:
         assert not any(thread.is_alive() for thread in workers), "有线程卡住了"
 
     def test_concurrent_set_loses_nothing(self, tmp_path: Path) -> None:
-        redis = JsonRedis(tmp_path / "storage.json", auto_save=False)
+        redis = JsonRedis(tmp_path / "storage.json")
         n_threads, per_thread = 8, 25
         barrier = threading.Barrier(n_threads, timeout=30)
         errors: list[BaseException] = []
@@ -1010,7 +983,7 @@ class TestThreadSafety:
             for j in range(per_thread):
                 assert redis.get(f"k_{i}_{j}") == i * 1000 + j
 
-    def test_concurrent_set_with_auto_save_keeps_file_valid(
+    def test_concurrent_set_keeps_file_valid(
         self, tmp_path: Path
     ) -> None:
         """每次 set 都写盘的情况下，文件不能被写成半截。"""
@@ -1040,7 +1013,7 @@ class TestThreadSafety:
 
     def test_concurrent_hset_on_one_hash_loses_no_field(self, tmp_path: Path) -> None:
         """hset 是"读-改-写"，没有锁的话并发下会丢字段。"""
-        redis = JsonRedis(tmp_path / "storage.json", auto_save=False)
+        redis = JsonRedis(tmp_path / "storage.json")
         n_threads, per_thread = 6, 20
         barrier = threading.Barrier(n_threads, timeout=30)
         errors: list[BaseException] = []

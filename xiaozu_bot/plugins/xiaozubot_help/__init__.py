@@ -1,6 +1,6 @@
 import unicodedata
 
-from nonebot import get_plugin_config, on_command
+from nonebot import on_command
 from nonebot.internal.adapter import Message
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
@@ -14,8 +14,6 @@ __plugin_meta__ = PluginMetadata(
     usage="",
     config=Config,
 )
-
-config = get_plugin_config(Config)
 
 xiaozubothelp = on_command("help")
 references = on_command("references")
@@ -213,15 +211,12 @@ New Rates: Levels that were rated (or re-rated) recently
 Potential Extremes: May or may not actually be extreme demons.""",
 ]
 
-REF_LW = [
-    """Unfathomable (TSII) > Nightmare (Tidal Wave) > Unreal (Acheron)
+REF_LW = """Unfathomable (TSII) > Nightmare (Tidal Wave) > Unreal (Acheron)
     > Menacing (Slaughterhouse) > Demonic (Firework)
     > Apocalyptic (Edge of Destiny) > Monstrous (Tartarus)
     > Merciless (Zodiac)"""
-]
 
-REF_IDS = [
-    """Fuck: Buff This, Denouement, Invisible Deadlocked
+REF_IDS = """Fuck: Buff This, Denouement, Invisible Deadlocked
 Beginner: Stalemate, Windy Landscape
 Easy: Lit Fuse, Supersonic
 Medium: Acropolis, Hyperio Technia, Night Terrors
@@ -229,10 +224,8 @@ Hard: The Secret Box, Sonic Wave Unlimited
 Very Hard: Leyak, Spectral Tentation
 Insane: ICE Carbon Diablo X, Quest for Perfection
 Extreme: Edens Blessing, The End, Thanatophobia"""
-]
 
-REF_HDS = [
-    """WARNING: not all picked by HDS team
+REF_HDS = """WARNING: not all picked by HDS team
 Fuck: Larga Espera, Tidal Line, GD10
 Demote: Spherio, Emerald Realm, PoisonGate
 Easy: Nine Circles, pg clubstep, white women
@@ -241,7 +234,6 @@ Hard: CraZy, Dance Massacre, Fairydust
 Very Hard: Forest Temple, Breakthrough, Kitty
 Insane: Mastermind, Psychosis, Spectrum Switch
 Extreme: Diffuse, I Cant Fix You, Anya II"""
-]
 
 REF_PDIFF = [
     """All below are BASELINEs for the represented tier, meaning the levels in that tier should be HARDER the baseline
@@ -263,6 +255,15 @@ REF_PDIFF = [
 ]
 
 
+REF_PAGED = {
+    "gddl": (REF_GDDL, "5个Tier一页"),
+    "nlw": (REF_NLW, ""),
+    "plat": (REF_PDIFF, ""),
+}
+REF_SINGLE = {"lw": REF_LW, "ids": REF_IDS, "hds": REF_HDS}
+REFERENCE_NAMES = {"nlw", "gddl", "ids", "hds", "lw", "aredl", "plat"}
+
+
 @references.handle()
 async def handle_references(arg: Message = CommandArg()) -> None:
     args = arg.extract_plain_text().strip().split()
@@ -278,41 +279,20 @@ async def handle_references(arg: Message = CommandArg()) -> None:
             page = int(args[1])
         except ValueError:
             page = 1
-    if name not in ("nlw", "gddl", "ids", "hds", "lw", "aredl", "plat"):
+    if name not in REFERENCE_NAMES:
         await references.finish("use *references nlw/plat/gddl/hds/ids <page>")
         return
     if name == "aredl":
         await references.finish(
             "AREDL是实时变化的，我不可能给你提供一个不会移动的参照线，建议手动使用*gdsearch搜索知名关的排名"
         )
-    elif name == "gddl":
-        # 页码是 1 开始的，下界必须挡掉：`"0".isdigit()` 是 True，
-        # 不挡的话 REF_GDDL[0-1] 会翻出最后一页，提示语却写着「第0页」
-        if page < 1 or page > len(REF_GDDL):
-            await references.finish(
-                f"你输入的页码数超出范围（共{len(REF_GDDL)}页，5个Tier一页），请重试"
-            )
-        else:
-            await references.finish(REF_GDDL[page - 1] + pagehint(page, len(REF_GDDL)))
-    elif name == "nlw":
-        if page < 1 or page > len(REF_NLW):
-            await references.finish(
-                f"你输入的页码数超出范围（共{len(REF_NLW)}页），请重试"
-            )
-        else:
-            await references.finish(REF_NLW[page - 1] + pagehint(page, len(REF_NLW)))
-    elif name == "lw":
-        await references.finish(REF_LW[0])
-    elif name == "ids":
-        await references.finish(REF_IDS[0])
-    elif name == "hds":
-        await references.finish(REF_HDS[0])
-    elif name == "plat":
-        if page < 1 or page > len(REF_PDIFF):
-            await references.finish(
-                f"你输入的页码数超出范围（共{len(REF_PDIFF)}页），请重试"
-            )
-        else:
-            await references.finish(
-                REF_PDIFF[page - 1] + pagehint(page, len(REF_PDIFF))
-            )
+    if name in REF_SINGLE:
+        await references.finish(REF_SINGLE[name])
+    pages, note = REF_PAGED[name]
+    # 页码是 1 开始的，下界必须挡掉：`"0".isdigit()` 是 True，
+    # 不挡的话 REF_GDDL[0-1] 会翻出最后一页，提示语却写着「第0页」
+    if page < 1 or page > len(pages):
+        await references.finish(
+            f"你输入的页码数超出范围（共{len(pages)}页{note}），请重试"
+        )
+    await references.finish(pages[page - 1] + pagehint(page, len(pages)))

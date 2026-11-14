@@ -1,7 +1,6 @@
 import os
 import time
 from collections.abc import Callable
-from functools import wraps
 from threading import Semaphore
 from time import monotonic
 from typing import Any
@@ -63,16 +62,6 @@ def _execute(request: Callable[[], Any], *, label: str = "Sheets request") -> An
             logger.info(f"[Sheets] waiting 2s before retry: {label}")
             time.sleep(2)
     raise AssertionError("unreachable")
-
-
-def persistently(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Compatibility decorator backed by the shared Sheets execute policy."""
-
-    @wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        return _execute(lambda: func(*args, **kwargs))
-
-    return wrapper
 
 
 class SheetAPI:

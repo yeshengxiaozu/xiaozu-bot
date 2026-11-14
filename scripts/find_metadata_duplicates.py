@@ -51,11 +51,9 @@ SOURCE_SHORT: dict[str, str] = {
 }
 DEFAULT_CANDIDATES: tuple[Path, ...] = (
     Path("xiaozu_bot/plugins/gdlevelsearch/data/metadata.json"),
-    Path("xiaozu-bot/xiaozu_bot/plugins/gdlevelsearch/data/metadata.json"),
 )
 DEFAULT_DATA_DIRS: tuple[Path, ...] = (
     Path("xiaozu_bot/plugins/gdlevelsearch/data"),
-    Path("xiaozu-bot/xiaozu_bot/plugins/gdlevelsearch/data"),
 )
 
 Entry = dict[str, object]

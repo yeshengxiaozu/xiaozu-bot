@@ -197,16 +197,11 @@ async def _process_input(event: Event, text: str) -> str | None:
             publish()
         except Exception:
             logger.exception("[gdsearch_manage] 自动触发 getmetadata 失败")
+        prefix = f"已记录：{entry['name']} by {entry['creator']} -> {level_id}"
         if remaining:
-            return (
-                f"已记录：{entry['name']} by {entry['creator']} -> {level_id}"
-                f"（剩余 {len(remaining)} 条）"
-            )
+            return f"{prefix}（剩余 {len(remaining)} 条）"
         _drop_session(session_id)
-        return (
-            f"已记录：{entry['name']} by {entry['creator']} -> {level_id}"
-            "（没有剩余待匹配关卡了）"
-        )
+        return f"{prefix}（没有剩余待匹配关卡了）"
 
     if text in NEXT_WORDS or text in PREV_WORDS:
         page = manage_sessions.get(session_id, {}).get("page", 1)
@@ -240,8 +235,6 @@ async def handle_gdsearchmanage_select(event: Event) -> None:
     """会话期间的后续输入：序号 id / 翻页词直接处理，其他消息不吞。"""
     text = event.get_message().extract_plain_text().strip()
     msg = await _process_input(event, text)
-    if msg is None:
-        await gdsearchmanage_select.finish()
     await gdsearchmanage_select.finish(msg)
 
 

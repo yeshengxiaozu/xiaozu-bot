@@ -99,7 +99,7 @@ def fetch():
 
     mapping = build_level_mapping(data)
 
-    if not isinstance(mapping, dict) or not mapping:
+    if not mapping:
         logger.error(
             "[PEMON] 新映射为空，疑似上游数据损坏，保留旧快照"
         )

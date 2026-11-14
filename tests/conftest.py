@@ -613,12 +613,11 @@ def make_json_redis(tmp_path: Path) -> Callable[..., JsonRedis]:
         name: str | None = None,
         *,
         initial: dict[str, Any] | None = None,
-        auto_save: bool = True,
     ) -> JsonRedis:
         if name is None:
             counter["n"] += 1
             name = f"storage_{counter['n']}.json"
-        redis = JsonRedis(tmp_path / name, auto_save=auto_save)
+        redis = JsonRedis(tmp_path / name)
         for key, value in (initial or {}).items():
             redis.set(key, value)
         return redis

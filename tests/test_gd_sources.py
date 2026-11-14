@@ -16,7 +16,6 @@ icons（gamemode 图标的参数拼装与拼图几何）。
 from __future__ import annotations
 
 import json
-import random
 import zipfile
 
 # datetime 只在这里用来造固定日期，绝不取 now()
@@ -647,27 +646,7 @@ class TestGddlGetSubmissions:
         assert page.total_pages == 1
 
 
-class TestGddlSpreadAndTags:
-    def test_spread_happy_path(self, stub_requests: Any, make_response: Any) -> None:
-        payload = {"rating": {"20": 3}, "enjoyment": {"8": 5}}
-        stub_requests.get("/submissions/spread", make_response(json_data=payload))
-        assert Gddl.getspread(1000) == payload
-        assert stub_requests.urls[-1] == (
-            "https://gdladder.com/api/levels/1000/submissions/spread"
-        )
-
-    def test_spread_non_200_returns_none(
-        self, stub_requests: Any, make_response: Any
-    ) -> None:
-        stub_requests.get("/submissions/spread", make_response(503, json_data={}))
-        assert Gddl.getspread(1000) is None
-
-    def test_spread_exception_returns_none(self, stub_requests: Any) -> None:
-        import requests as _requests
-
-        stub_requests.get("/submissions/spread", _requests.ConnectionError("nope"))
-        assert Gddl.getspread(1000) is None
-
+class TestGddlTags:
     def test_tags_are_flattened(
         self, stub_requests: Any, make_response: Any
     ) -> None:
@@ -1290,12 +1269,6 @@ class TestNlwModels:
             del row["enjoyment"]
             with pytest.raises(KeyError):
                 cls(row)
-
-    def test_to_dict_is_a_copy(self) -> None:
-        level = NLWlevel(make_nlw_row())
-        dumped = level.to_dict()
-        dumped["name"] = "changed"
-        assert level.name == "Alpha"
 
 
 class TestNlwLoading:
@@ -2494,37 +2467,6 @@ class TestDailyDemonPure:
     def test_today_passthrough(self) -> None:
         assert dailydemon._today(FIXED_DAY) is FIXED_DAY
 
-    def test_pick_index_is_in_range_and_deterministic(self) -> None:
-        first = dailydemon.pick_index(2380, FIXED_DAY)
-        second = dailydemon.pick_index(2380, FIXED_DAY)
-        assert first == second
-        assert 0 <= first < 2380
-
-    def test_pick_index_ignores_global_random_state(
-        self,
-        seeded_random: Any,
-    ) -> None:
-        seeded_random(1)
-        a = dailydemon.pick_index(1000, FIXED_DAY)
-        seeded_random(999999)
-        b = dailydemon.pick_index(1000, FIXED_DAY)
-        assert a == b
-        assert a == random.Random(20260726).randrange(1000)
-
-    def test_pick_index_changes_with_the_day(self) -> None:
-        days = [
-            date(2026, 7, d)
-            for d in range(1, 21)
-        ]
-        picks = {
-            dailydemon.pick_index(10000, d)
-            for d in days
-        }
-        assert len(picks) > 1
-
-    def test_pick_index_total_one(self) -> None:
-        assert dailydemon.pick_index(1, FIXED_DAY) == 0
-
     def test_filters_are_the_documented_conditions(self) -> None:
         assert dailydemon.FILTERS == {
             "minRating": 1,
@@ -2532,7 +2474,6 @@ class TestDailyDemonPure:
             "minEnjoyment": 7,
             "minSubmissionCount": 10,
         }
-        assert dailydemon.describe_conditions().strip()
 
     def test_keep_seconds_is_two_days(self) -> None:
         assert dailydemon.KEEP_SECONDS == 2 * 24 * 3600
@@ -2702,9 +2643,8 @@ class TestDailyDemonFlow:
             fake,
         )
 
-        got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
+        got, err = dailydemon.get_daily_demon(FIXED_DAY)
         assert got == 555
-        assert total == 0
         assert err == ""
         assert fake.id_calls == []
         assert fake.search_calls == []
@@ -2727,9 +2667,8 @@ class TestDailyDemonFlow:
             fake,
         )
 
-        got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
+        got, err = dailydemon.get_daily_demon(FIXED_DAY)
         assert got == 555
-        assert total == 0
         assert err == ""
         assert r.get("dailydemon_2026-07-26") == "555"
         assert fake.search_calls == []
@@ -2746,8 +2685,8 @@ class TestDailyDemonFlow:
             "Gddl",
             FakeGddl(search_payload=None),
         )
-        got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
-        assert (got, total) == (None, 0)
+        got, err = dailydemon.get_daily_demon(FIXED_DAY)
+        assert got is None
         assert err
 
     @pytest.mark.parametrize(
@@ -2766,9 +2705,8 @@ class TestDailyDemonFlow:
             "Gddl",
             FakeGddl(search_payload=payload),
         )
-        got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
+        got, err = dailydemon.get_daily_demon(FIXED_DAY)
         assert got is None
-        assert total == 0
         assert err
 
     def test_search_uses_the_fixed_filters(
@@ -2809,9 +2747,9 @@ class TestDailyDemonFlow:
                 by_index=level,
             ),
         )
-        got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
+        got, err = dailydemon.get_daily_demon(FIXED_DAY)
         assert got == level.ID
-        assert (total, err) == (500, "")
+        assert err == ""
         assert (
             r.get("dailydemon_2026-07-26")
             == "31415"
@@ -2872,7 +2810,7 @@ class TestDailyDemonFlow:
             "Gddl",
             fake,
         )
-        got, _total, err = dailydemon.get_daily_demon(FIXED_DAY)
+        got, err = dailydemon.get_daily_demon(FIXED_DAY)
         assert got == fresh.ID
         assert err == ""
         assert len(fake.index_calls) == 2
@@ -2898,7 +2836,7 @@ class TestDailyDemonFlow:
             "Gddl",
             fake,
         )
-        got, _total, err = dailydemon.get_daily_demon(FIXED_DAY)
+        got, err = dailydemon.get_daily_demon(FIXED_DAY)
         assert got == repeated.ID
         assert err == ""
         assert len(fake.index_calls) == dailydemon.MAX_REROLL
@@ -2921,9 +2859,8 @@ class TestDailyDemonFlow:
             "Gddl",
             fake,
         )
-        got, total, err = dailydemon.get_daily_demon(FIXED_DAY)
+        got, err = dailydemon.get_daily_demon(FIXED_DAY)
         assert got is None
-        assert total == 500
         assert err
         assert len(fake.index_calls) == dailydemon.MAX_REROLL
         assert (
@@ -2982,11 +2919,10 @@ class TestDailyDemonFlow:
             "Gddl",
             fake,
         )
-        a, _t1, _e1 = dailydemon.get_daily_demon(FIXED_DAY)
+        a, _e1 = dailydemon.get_daily_demon(FIXED_DAY)
         fake.search_payload = {"total": 999}
-        b, total_b, _e2 = dailydemon.get_daily_demon(FIXED_DAY)
+        b, _e2 = dailydemon.get_daily_demon(FIXED_DAY)
         assert a == b
-        assert total_b == 0
         assert len(fake.search_calls) == 1
 
 
@@ -3031,7 +2967,6 @@ class TestIconForms:
             for attr, _ in GDUser.FIELD_MAP.values()
         }
         for form in icons.FORMS:
-            assert form.api_type == form.key, form
             assert form.attr in gduser_fields, form
         assert set(icons.FORM_BY_KEY) == {
             f.key for f in icons.FORMS

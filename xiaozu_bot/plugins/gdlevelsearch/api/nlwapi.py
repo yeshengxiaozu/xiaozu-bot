@@ -28,9 +28,6 @@ class Level:
         self.description = jsondict.get("description")
         self.video = jsondict["video"]
 
-    def to_dict(self) -> dict[str, Any]:
-        return self.__dict__.copy()
-
 class NLWlevel(Level):
     tier: str | None = None
     skillset: str | None = None

@@ -327,10 +327,7 @@ def search_by_name(name: str) -> list[SearchResult] | None:
 
 def getlevelinfo(level_id: int) -> GDLevel | None:
     """Return the official GD level record for an ID."""
-    gdlevel = get_level_by_id(level_id)
-    if not gdlevel:
-        return None
-    return gdlevel
+    return get_level_by_id(level_id)
 
 
 async def send_result(bot: Bot, event: Event, level_id: int) -> None:
@@ -347,14 +344,10 @@ def _clear_all_sessions(event: Event) -> None:
     """Cancel every level-search session belonging to the current event."""
     from ..commands.fullsearch import _drop_fullsearch
     from ..commands.ratings import _drop_ratings
-    from ..commands.search import search_cache, timeout_tasks
+    from ..commands.search import _drop_search
 
     _drop_fullsearch(event.get_session_id())
     _drop_ratings(event.get_session_id())
     # Keyed by chat context, not by user id, so one person searching in two
     # chats cannot select the other chat's results.
-    session_key = get_context_id(event)
-    search_cache.pop(session_key, None)
-    task = timeout_tasks.pop(session_key, None)
-    if task:
-        task.cancel()
+    _drop_search(get_context_id(event))

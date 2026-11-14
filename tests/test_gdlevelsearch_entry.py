@@ -2034,7 +2034,6 @@ class TestHandleGdrandom:
         fake = FakeGddl()
         fake.random_result = gddl_level(4321, "Random Pick")
         monkeypatch.setattr(cmd_random, "Gddl", fake)
-        monkeypatch.setattr(cmd_random, "getlevelinfo", lambda _i: gd_level(name="R"))
 
         await run_handler(
             gdlevelsearch.gdrandom, fake_bot, make_group_event("*gd随机推关"), arg="15"
@@ -2292,7 +2291,7 @@ class TestHandleDailyDemon:
         # 用个明显假的串，免得以后有人以为这是插件里的提示语而去"顺手统一措辞"。
         error = "【挑选器自己的错误话术】"
         monkeypatch.setattr(
-            cmd_dailydemon, "get_daily_demon", lambda: (None, 0, error)
+            cmd_dailydemon, "get_daily_demon", lambda: (None, error)
         )
         await run_handler(
             gdlevelsearch.dailydemon, fake_bot, make_group_event("*dailydemon")
@@ -2309,7 +2308,7 @@ class TestHandleDailyDemon:
     ) -> None:
         monkeypatch.setattr(
             cmd_dailydemon, "get_daily_demon",
-            lambda: (777, 42, ""),
+            lambda: (777, ""),
         )
 
         await run_handler(
@@ -2326,15 +2325,14 @@ class TestHandleDailyDemon:
     ) -> None:
         monkeypatch.setattr(
             cmd_dailydemon, "get_daily_demon",
-            lambda: (777, 42, ""),
+            lambda: (777, ""),
         )
 
         await run_handler(
             gdlevelsearch.dailydemon, fake_bot, make_group_event("*dailydemon")
         )
 
-        # 说明文字里要带上 describe_conditions() 的原文和候选关卡数，
-        # 这两样是真信息；剩下的措辞不是
+        # 成功路径不带说明文字
         assert stub_image == [777]
         assert sent_texts(fake_bot) == [""]
         assert len(image_segments(fake_bot)) == 1

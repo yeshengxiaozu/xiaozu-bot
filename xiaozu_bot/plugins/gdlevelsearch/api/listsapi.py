@@ -71,15 +71,25 @@ def _load_level_ids(name: str, path: str | Path) -> dict[int, int]:
     return ranking
 
 
-def _load_all() -> dict[str, dict[int, int]]:
-    """从磁盘加载四个榜单；单个文件失败只影响它自己，不影响其余榜单。"""
+def _load_all(
+    keep: dict[str, dict[int, int]] | None = None,
+) -> dict[str, dict[int, int]]:
+    """从磁盘加载四个榜单；单个文件失败只影响它自己，不影响其余榜单。
+
+    ``keep`` 不为 None 时（reload 路径）失败的榜单保留旧缓存，
+    为 None 时（首次加载）失败的榜单暂时为空。
+    """
     loaded: dict[str, dict[int, int]] = {}
     for name, path in DATA_PATHS.items():
         try:
             loaded[name] = _load_level_ids(name, path)
         except Exception as exc:
-            logger.warning(f"[lists] 加载 {name} 失败，该榜单暂时为空: {exc}")
-            loaded[name] = {}
+            if keep is None:
+                logger.warning(f"[lists] 加载 {name} 失败，该榜单暂时为空: {exc}")
+                loaded[name] = {}
+            else:
+                logger.warning(f"[lists] 重新加载 {name} 失败，保留旧数据: {exc}")
+                loaded[name] = keep.get(name, {})
     return loaded
 
 
@@ -87,14 +97,7 @@ def reload() -> None:
     """重新从磁盘加载四个榜单；单个文件失败时保留该榜单的旧缓存。"""
     global _cache
     with _cache_lock:
-        loaded: dict[str, dict[int, int]] = {}
-        for name, path in DATA_PATHS.items():
-            try:
-                loaded[name] = _load_level_ids(name, path)
-            except Exception as exc:
-                logger.warning(f"[lists] 重新加载 {name} 失败，保留旧数据: {exc}")
-                loaded[name] = _cache.get(name, {}) if _cache else {}
-        _cache = loaded
+        _cache = _load_all(_cache)
 
 
 def _get_lists() -> dict[str, dict[int, int]]:

@@ -116,7 +116,7 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
 
     return level_objs
 
-def fetch_levels(service, sheet_name: str, platformer: bool, pending: bool) -> list[dict[str, Any]]:
+def fetch_levels(service, sheet_name: str, platformer: bool) -> list[dict[str, Any]]:
     if platformer:
         cols = fetch_platformer_cells(service, sheet_name)
     else:
@@ -143,8 +143,8 @@ def fetch_all_levels() -> dict[str, list[dict[str, Any]]]:
     plat_name = IDS_PLATFORMER_LEVELS_NAME
 
     logger.info('[IDS] Fetching IDS levels...')
-    regular = fetch_levels(service, reg_name, platformer=False, pending=False)
-    platformer = fetch_levels(service, plat_name, platformer=True, pending=False)
+    regular = fetch_levels(service, reg_name, platformer=False)
+    platformer = fetch_levels(service, plat_name, platformer=True)
 
     return {
         'regular': regular,

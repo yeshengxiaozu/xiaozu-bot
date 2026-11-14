@@ -16,29 +16,28 @@ from PIL import Image, ImageDraw
 
 from ..api.gdapi import GDUser
 from . import iconrender
-from .draw import RES_DIR, _load_font
+from .draw import RES_DIR, _load_font, draw_outlined_text
 
 
 class Form(NamedTuple):
-    """一个 gamemode：命令里叫什么、图集文件叫什么、图标 id 存在 GDUser 的哪个字段。"""
+    """一个 gamemode：命令里叫什么、图标 id 存在 GDUser 的哪个字段。"""
 
     key: str          # 用户输入的名字
-    api_type: str     # 和旧 gdicon API 的 type 参数同名，保持兼容
     attr: str         # GDUser 上的属性名
     label: str        # 拼图时显示的标题
     resource: str     # 本地图集里的文件名前缀
 
 
 FORMS: tuple[Form, ...] = (
-    Form("cube", "cube", "acc_icon", "Cube", "player"),
-    Form("ship", "ship", "acc_ship", "Ship", "ship"),
-    Form("ball", "ball", "acc_ball", "Ball", "player_ball"),
-    Form("ufo", "ufo", "acc_bird", "UFO", "bird"),
-    Form("wave", "wave", "acc_dart", "Wave", "dart"),
-    Form("robot", "robot", "acc_robot", "Robot", "robot"),
-    Form("spider", "spider", "acc_spider", "Spider", "spider"),
-    Form("swing", "swing", "acc_swing", "Swing", "swing"),
-    Form("jetpack", "jetpack", "acc_jetpack", "Jetpack", "jetpack"),
+    Form("cube", "acc_icon", "Cube", "player"),
+    Form("ship", "acc_ship", "Ship", "ship"),
+    Form("ball", "acc_ball", "Ball", "player_ball"),
+    Form("ufo", "acc_bird", "UFO", "bird"),
+    Form("wave", "acc_dart", "Wave", "dart"),
+    Form("robot", "acc_robot", "Robot", "robot"),
+    Form("spider", "acc_spider", "Spider", "spider"),
+    Form("swing", "acc_swing", "Swing", "swing"),
+    Form("jetpack", "acc_jetpack", "Jetpack", "jetpack"),
 )
 
 # 一些常见的别名，省得非记着 API 里那个词
@@ -120,8 +119,6 @@ def compose_sheet(user: GDUser, items: list[tuple[Form, Image.Image | None]]) ->
     九个 gamemode 的顺序是固定的（cube/ship/ball 一行，以此类推），
     看图就知道哪个是哪个，标签纯属占地方。
     """
-    from .draw import draw_outlined_text
-
     rows = -(-len(items) // GRID_COLS)
     width = PAD * 2 + CELL * GRID_COLS
     height = PAD * 2 + TITLE_H + CELL * rows

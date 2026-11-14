@@ -145,7 +145,14 @@ grep -rn "回归\|看着不对\|以前" tests/
 
 ## 5. 怎么安全地删测试
 
-**规则：要么删掉一整个 `class Test...`，要么删掉一整个文件。不要把一个测试掏空一半。**
+**默认还是删掉一整个 `class Test...` 或整个文件。** 但如果某段功能已经确定
+不再需要（参数、分支、函数被移除），就允许只删对应的单个测试方法或
+parametrize 参数，不必为了保持类完整而给已删代码留一条测试。
+
+判断标准只有一条：**这条用例守的行为还在不在？**
+
+- 行为已经删了：跟着删，同类的其它用例该留还留。
+- 行为还在、只是测试挡路：不许掏空。要么改实现，要么先确认这是产品决策。
 
 安全的原因：每个 fixture 都是 function 作用域（每个用例一份全新的），
 用例之间没有共享状态，模块级也没有可变全局变量。所以删任何一块，
@@ -268,6 +275,22 @@ GDDL 是独立于主流水线的后台任务，快照发布为
 服务器时区，并使用 job id `gdlevelsearch.daily_update`。启动日志必须出现
 `[UPDATER] daily update job registered`；如果只看到 APScheduler 的日志而没有这条，
 先检查插件加载是否在 startup 阶段报错。
+
+### IDL 数据源（2026-11-14 上游改版）
+
+`updater/jobs/idl.py` 抓 insanedemonlist.com。旧页面是 Pages Router，条目长成
+`\"level\":{...}`，Main / Extended 各 75 条。现在 `/extended` 直接 307 回 `/main`，
+`/main` 一页给全部 top 150；数据在 Next.js App Router 的 RSC flight chunk
+（`self.__next_f.push`）里，形如 `{"levels":[{...}]}`，而且整个 chunk 是 JS 字符串，
+里面的 JSON 引号被二次转义成 `\"`。旧正则因此可以抓到 0 条、直接抛
+「预期 150 个条目，实际获取 0 个」。
+
+现在的解析顺序：反转义一层 → 定位 `"levels":[` → 括号平衡截出数组 → `json.loads`，
+字段取 `name` / `position` / `publisher`（publisher 即页面上的 creator）。
+`/main` 给不出连续 1..150 时才会再请求 `/extended`，并按 position 去重，
+所以重定向不会把 150 条算成 300 条。条数或排名不连续就抛错，staging 不落盘。
+以后再报「找不到 levels 数组」，先 `curl -L https://insanedemonlist.com/main`
+看 `"levels":` 这个键还在不在、字段名有没有换。
 
 想先小范围试试，用这个 —— 它只发 1 个 API 请求，而且产出的
 `tpl.json` 属于中间文件（不在 `PUBLISHED_FILES` 里），

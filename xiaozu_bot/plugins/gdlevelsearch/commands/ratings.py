@@ -5,7 +5,6 @@
 """
 
 import asyncio
-import time
 from dataclasses import dataclass, field
 
 from nonebot import logger, on_command, on_message
@@ -160,14 +159,6 @@ class RatingsSession:
     pages: dict[int, list[Submission]] = field(default_factory=dict)
     total: int = 0
     total_pages: int = 1
-    updated_at: float = field(default_factory=time.time)
-
-    def touch(self) -> None:
-        self.updated_at = time.time()
-
-    @property
-    def expired(self) -> bool:
-        return time.time() - self.updated_at > SESSION_TIMEOUT
 
     @property
     def current(self) -> list[Submission]:
@@ -198,14 +189,12 @@ class RatingsSession:
         if self.fetch(self.page + 1) is None:
             return False, "翻页失败，GDDL 那边没响应"
         self.page += 1
-        self.touch()
         return True, ""
 
     def go_prev(self) -> tuple[bool, str]:
         if self.page == 0:
             return False, "已经是第一页了"
         self.page -= 1
-        self.touch()
         return True, ""
 
     def render(self) -> str:

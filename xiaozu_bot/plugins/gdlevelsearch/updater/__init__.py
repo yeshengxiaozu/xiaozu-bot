@@ -244,72 +244,48 @@ async def daily_update_job() -> None:
             )
 
 
-def register_daily_update_job() -> bool:
-    """Register the daily job after all NoneBot plugins have loaded."""
+def _register_cron(job_id: str, hour: int, func, label: str) -> bool:
+    """Register one daily cron job; return False when APScheduler is unavailable."""
     try:
         from nonebot_plugin_apscheduler import scheduler
     except (ImportError, ValueError):
-        logger.error(
-            "[UPDATER] apscheduler is unavailable; automatic updates are disabled"
-        )
+        logger.error(f"[UPDATER] apscheduler is unavailable; {label} disabled")
         return False
 
     try:
         job = scheduler.add_job(
-            daily_update_job,
+            func,
             "cron",
-            hour=3,
+            hour=hour,
             minute=0,
-            id=DAILY_UPDATE_JOB_ID,
+            id=job_id,
             replace_existing=True,
             coalesce=True,
             max_instances=1,
             misfire_grace_time=3600,
         )
     except Exception:
-        logger.exception("[UPDATER] failed to register the daily update job")
+        logger.exception(f"[UPDATER] failed to register the {label} job")
         return False
 
     next_run = getattr(job, "next_run_time", "unknown")
     logger.info(
-        f"[UPDATER] daily update job registered: "
-        f"id={DAILY_UPDATE_JOB_ID}, timezone=server-default, "
-        f"schedule=03:00, next_run={next_run!s}, "
-        "misfire_grace_time=3600s"
+        f"[UPDATER] {label} job registered: "
+        f"id={job_id}, schedule={hour:02d}:00, next_run={next_run!s}"
     )
     return True
+
+
+def register_daily_update_job() -> bool:
+    """Register the daily job after all NoneBot plugins have loaded."""
+    return _register_cron(DAILY_UPDATE_JOB_ID, 3, daily_update_job, "daily update")
 
 
 def register_gddl_snapshot_refresh_job() -> bool:
     """Register the 07:00 GDDL snapshot refresh job."""
-    try:
-        from nonebot_plugin_apscheduler import scheduler
-    except (ImportError, ValueError):
-        logger.error("[UPDATER] apscheduler is unavailable; GDDL snapshot refresh disabled")
-        return False
-
-    try:
-        job = scheduler.add_job(
-            gddl_snapshot_refresh_job,
-            "cron",
-            hour=7,
-            minute=0,
-            id=GDDL_SNAPSHOT_REFRESH_JOB_ID,
-            replace_existing=True,
-            coalesce=True,
-            max_instances=1,
-            misfire_grace_time=3600,
-        )
-    except Exception:
-        logger.exception("[UPDATER] failed to register the GDDL snapshot refresh job")
-        return False
-
-    next_run = getattr(job, "next_run_time", "unknown")
-    logger.info(
-        f"[UPDATER] GDDL snapshot refresh job registered: "
-        f"id={GDDL_SNAPSHOT_REFRESH_JOB_ID}, schedule=07:00, next_run={next_run!s}"
+    return _register_cron(
+        GDDL_SNAPSHOT_REFRESH_JOB_ID, 7, gddl_snapshot_refresh_job, "GDDL snapshot refresh"
     )
-    return True
 
 
 def _register_daily_update_job_on_startup() -> None:

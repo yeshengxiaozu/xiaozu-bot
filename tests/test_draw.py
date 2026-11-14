@@ -30,7 +30,6 @@ from xiaozu_bot.plugins.gdlevelsearch import draw
 from xiaozu_bot.plugins.gdlevelsearch.api import http as http_transport
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import GDLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import GDDLLevel
-from xiaozu_bot.plugins.gdlevelsearch.api.platapi import PlatInfo
 from xiaozu_bot.plugins.gdlevelsearch.api.thumbnail import (
     THUMB_BACKOFF,
     THUMB_RETRIES,
@@ -51,7 +50,6 @@ from xiaozu_bot.plugins.gdlevelsearch.render.draw import (
     create_image_from_gdlevel,
     create_vertical_gradient,
     rounded_image,
-    select_tags,
     wrap_text_by_width,
 )
 
@@ -86,24 +84,6 @@ def png_bytes(size: tuple[int, int] = (8, 8)) -> bytes:
     buf = io.BytesIO()
     Image.new("RGBA", size, (1, 2, 3, 255)).save(buf, format="PNG")
     return buf.getvalue()
-
-
-# ==========================================================================
-# select_tags
-# ==========================================================================
-class TestSelectTags:
-    def test_returns_the_tags_list_itself(self) -> None:
-        """就是把 PlatInfo.tags 原样递出来 —— 返回的是同一个 list，不是拷贝
-
-        调用方（create_level_image 里拼侧边栏）如果就地改它，会改到 PlatInfo。
-        """
-        info = PlatInfo.from_dict({"id": "1", "name": "X", "tags": ["Deathless", "Precision"]})
-        assert select_tags(info) == ["Deathless", "Precision"]
-        assert select_tags(info) is info.tags
-
-    def test_empty_tags(self) -> None:
-        info = PlatInfo.from_dict({"id": "1", "name": "X"})
-        assert select_tags(info) == []
 
 
 # ==========================================================================
@@ -366,28 +346,6 @@ class TestDrawOutlinedText:
         colours = {img.getpixel((x, y)) for x in range(200) for y in range(80)}
         assert (255, 255, 255) in colours, "描边把填充色整个盖住了"
         assert (255, 0, 0) in colours, "描边没画出来"
-
-    def test_shadow_layer_is_drawn_when_asked(self) -> None:
-        img = Image.new("RGB", (200, 80), (0, 0, 0))
-        d = ImageDraw.Draw(img)
-        draw.draw_outlined_text(
-            d, (10, 10), "AB", ImageFont.load_default(20),
-            fill="white", outline="black", outline_width=2,
-            shadow=(6, 6, "#00ff00", 3),
-        )
-        colours = {img.getpixel((x, y)) for x in range(200) for y in range(80)}
-        assert (0, 255, 0) in colours, "shadow 分支没画"
-
-    def test_without_shadow_nothing_green_appears(self) -> None:
-        """对照组：不给 shadow 就不该有那一层"""
-        img = Image.new("RGB", (200, 80), (0, 0, 0))
-        d = ImageDraw.Draw(img)
-        draw.draw_outlined_text(
-            d, (10, 10), "AB", ImageFont.load_default(20),
-            fill="white", outline="black", outline_width=2,
-        )
-        colours = {img.getpixel((x, y)) for x in range(200) for y in range(80)}
-        assert (0, 255, 0) not in colours
 
 
 # ==========================================================================

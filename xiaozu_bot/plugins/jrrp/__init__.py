@@ -1,7 +1,7 @@
 import random
 from datetime import datetime
 
-from nonebot import get_plugin_config, on_command
+from nonebot import on_command
 from nonebot.internal.adapter import Event
 from nonebot.plugin import PluginMetadata
 
@@ -20,8 +20,6 @@ __plugin_meta__ = PluginMetadata(
 # 不要在这里 random.seed()：无参 seed 等于用系统熵重置**全局** Mersenne
 # Twister，而 guess / zhua / joy 用的是同一个 random，且这本来就是默认行为。
 r = JsonRedis(plugin_storage(__file__))
-
-config = get_plugin_config(Config)
 
 jrrp = on_command("jrrp")
 

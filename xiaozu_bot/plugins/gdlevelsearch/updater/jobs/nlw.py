@@ -29,40 +29,28 @@ from .constants import (
 # ------------------------------
 # 数据抓取函数（现在接收 sheet_name 而非 sheet_id）
 # ------------------------------
-def fetch_regular_cells(service, sheet_name: str) -> dict[str, list]:
-    videos = SheetAPI.get_hyperlink_column(service, NLW_ID, sheet_name, 'A')
+def _fetch_cells(service, sheet_name: str, platformer: bool) -> dict[str, list]:
     levels = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'B')
+    videos = SheetAPI.get_hyperlink_column(service, NLW_ID, sheet_name, 'A')
     creators = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'C')
-    lengths = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'D')
     skillsets = SheetAPI.get_column_values_with_note(service, NLW_ID, sheet_name, 'E')
     enjoyments = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'F')
-    descriptions = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'G')
-
-    return {
-        'levels': levels,
-        'creators': creators,
-        'checkpoints': [None] * len(levels),
-        'lengths': lengths,
-        'skillsets': skillsets,
-        'enjoyments': enjoyments,
-        'descriptions': descriptions,
-        'videos': videos,
-    }
-
-def fetch_platformer_cells(service, sheet_name: str) -> dict[str, list]:
-    videos = SheetAPI.get_hyperlink_column(service, NLW_ID, sheet_name, 'A')
-    levels = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'B')
-    creators = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'C')
-    checkpoints = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'D')
-    skillsets = SheetAPI.get_column_values_with_note(service, NLW_ID, sheet_name, 'E')
-    enjoyments = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'F')
-    descriptions = SheetAPI.get_column_values_with_note(service, NLW_ID, sheet_name, 'G')
+    if platformer:
+        checkpoints = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'D')
+        lengths = [None] * len(levels)
+        descriptions = SheetAPI.get_column_values_with_note(
+            service, NLW_ID, sheet_name, 'G'
+        )
+    else:
+        checkpoints = [None] * len(levels)
+        lengths = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'D')
+        descriptions = SheetAPI.get_column_values(service, NLW_ID, sheet_name, 'G')
 
     return {
         'levels': levels,
         'creators': creators,
         'checkpoints': checkpoints,
-        'lengths': [None] * len(levels),
+        'lengths': lengths,
         'skillsets': skillsets,
         'enjoyments': enjoyments,
         'descriptions': descriptions,
@@ -137,17 +125,8 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
 
     return level_objs
 
-def fetch_levels(service, sheet_name: str, platformer: bool, pending: bool) -> list[dict[str, Any]]:
-    if pending:
-        if platformer:
-            cols = fetch_platformer_cells(service, sheet_name)
-        else:
-            cols = fetch_regular_cells(service, sheet_name)
-    elif platformer:
-        cols = fetch_platformer_cells(service, sheet_name)
-    else:
-        cols = fetch_regular_cells(service, sheet_name)
-    return build_level_list(cols)
+def fetch_levels(service, sheet_name: str, platformer: bool) -> list[dict[str, Any]]:
+    return build_level_list(_fetch_cells(service, sheet_name, platformer))
 
 # ------------------------------
 # 公开接口
@@ -171,10 +150,10 @@ def fetch_all_levels() -> dict[str, list[dict[str, Any]]]:
     pend_plat_name = NLW_PENDING_PLATFORMER_LEVELS_NAME
 
     logger.info('[NLW] Fetching NLW levels...')
-    regular = fetch_levels(service, reg_name, platformer=False, pending=False)
-    pending1 = fetch_levels(service, pend_name, platformer=False, pending=True)
-    pending2 = fetch_levels(service, pend_plat_name, platformer=True, pending=True)
-    platformer = fetch_levels(service, plat_name, platformer=True, pending=False)
+    regular = fetch_levels(service, reg_name, platformer=False)
+    pending1 = fetch_levels(service, pend_name, platformer=False)
+    pending2 = fetch_levels(service, pend_plat_name, platformer=True)
+    platformer = fetch_levels(service, plat_name, platformer=True)
 
     return {
         'regular': regular,

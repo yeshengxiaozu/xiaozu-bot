@@ -38,6 +38,13 @@ def has_cache(event: Event) -> bool:
     return get_context_id(event) in search_cache
 
 
+def _drop_search(session_key: str) -> None:
+    search_cache.pop(session_key, None)
+    task = timeout_tasks.pop(session_key, None)
+    if task:
+        task.cancel()
+
+
 rule_cache = Rule(has_cache)
 gdsearchselect = on_message(rule_cache, priority=100, block=False)
 
@@ -123,10 +130,7 @@ async def handle_choice(bot: Bot, event: Event) -> None:
 
     # 手动取消
     if "结束" in choice or "取消" in choice:
-        search_cache.pop(session_key, None)
-        task = timeout_tasks.pop(session_key, None)
-        if task:
-            task.cancel()
+        _drop_search(session_key)
         await gdsearchselect.finish("已取消搜索")
 
     if not choice.isdigit():
@@ -139,10 +143,7 @@ async def handle_choice(bot: Bot, event: Event) -> None:
 
     result = results[index - 1]
     # 清理缓存
-    search_cache.pop(session_key, None)
-    task = timeout_tasks.pop(session_key, None)
-    if task:
-        task.cancel()
+    _drop_search(session_key)
 
     await send_result(bot, event, int(result.id))
     await gdsearchselect.finish()

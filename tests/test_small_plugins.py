@@ -555,12 +555,6 @@ class TestRouletteConst:
         )
         assert len(set(roulette.const.sjmap)) == len(roulette.const.sjmap)
 
-    def test_star_import_exposes_the_submodule(self):
-        """`from .const import *` 只带进来 sjmap，但 `const` 这个名字是子模块
-        import 时挂到包上的 —— __init__.py 里 `const.sjmap` 能用就是靠这个。
-        """
-        assert roulette.const.sjmap is roulette.sjmap
-
 
 class TestRouletteCommands:
     async def test_roulette_is_a_tombstone(self, fake_bot, make_group_event):
@@ -840,21 +834,6 @@ class TestZhuaTest:
 # ==========================================================================
 # say
 # ==========================================================================
-class TestSayHelpers:
-    """say 里两个纯函数：拼 OneBot 语音消息的 payload"""
-
-    @pytest.mark.parametrize(
-        ("builder", "target_key"),
-        [(say.json_group_audio, "group_id"), (say.json_private_audio, "user_id")],
-    )
-    def test_audio_payload(self, builder, target_key):
-        """两个函数只差收件人字段叫什么，消息体是同一套 record 段"""
-        assert builder(123, "/tmp/a.wav") == {
-            target_key: 123,
-            "message": [{"type": "record", "data": {"file": "/tmp/a.wav"}}],
-        }
-
-
 @pytest.fixture
 def fake_mlx_audio(monkeypatch, tmp_path):
     """往 sys.modules 里塞一套假的 mlx_audio（真货只在 Apple Silicon 上装得了）。
@@ -1279,7 +1258,7 @@ class TestAiRequest:
         self, ai_context, fake_bot, make_group_event, ok
     ):
         await run_handler(ai.ai_cmd, fake_bot, make_group_event(), arg="今天天气如何")
-        assert request_payload(ok)["model"] in ai.MODEL_NAMES
+        assert request_payload(ok)["model"] == ai.MODEL
         assert request_payload(ok)["model"] != ai.THINKING_MODEL
 
     async def test_only_one_request_is_made(
@@ -1565,10 +1544,10 @@ class TestGuessFormalize:
 
 
 class TestGuessTables:
-    """import 期从 data.maps 生成的 aliases / accepted 两张表"""
+    """import 期从 data.maps 生成的 accepted 表"""
 
-    def test_bank_shape_and_aliases_mirror_it(self):
-        """题库每条都得有那三个字段、答案不重样，aliases 是它的一比一镜像。
+    def test_bank_shape(self):
+        """题库每条都得有那三个字段、答案不重样。
 
         原来还钉了 `len(maps) == 122` —— 加一张图就得回来改数字，
         而条数不是行为，重复答案和缺字段才是。
@@ -1584,8 +1563,6 @@ class TestGuessTables:
         for entry in maps:
             assert set(entry) == {"file_path", "answer", "alias"}
             assert entry["answer"] and entry["alias"]
-            assert guess.aliases[entry["answer"]] == entry["alias"]
-        assert len(guess.aliases) == len(maps)
 
     def test_accepted_holds_the_normalized_answer_and_every_alias(self):
         """每条答案的「全名 + 所有别名」归一化之后都要在 accepted 里。
@@ -1793,7 +1770,7 @@ class TestGuessCanStart:
         finished = await run_coro(
             fake_bot,
             event,
-            lambda: guess.can_start(fake_bot, guess.guess_start, event),
+            lambda: guess.can_start(guess.guess_start, event),
         )
         assert finished is False
         assert fake_bot.calls == []
@@ -1806,7 +1783,7 @@ class TestGuessCanStart:
         event = make_group_event()
 
         finished = await run_coro(
-            fake_bot, event, lambda: guess.can_start(fake_bot, guess.guess_start, event)
+            fake_bot, event, lambda: guess.can_start(guess.guess_start, event)
         )
         assert finished is True
         # 行为是「挡住 + 回一条」，提示怎么写不管
@@ -1825,7 +1802,7 @@ class TestGuessCanStart:
         event = make_group_event()
 
         finished = await run_coro(
-            fake_bot, event, lambda: guess.can_start(fake_bot, guess.guess_start, event)
+            fake_bot, event, lambda: guess.can_start(guess.guess_start, event)
         )
         assert finished is False
         assert fake_bot.calls == []
@@ -1842,7 +1819,7 @@ class TestGuessCanStart:
         event = make_private_event()
 
         finished = await run_coro(
-            fake_bot, event, lambda: guess.can_start(fake_bot, guess.guess_start, event)
+            fake_bot, event, lambda: guess.can_start(guess.guess_start, event)
         )
         assert finished is False
 

@@ -71,7 +71,7 @@ def fetch():
     # 2. 构建映射
     logger.info("[SFH] 正在构建 level ID -> 歌曲信息 映射...")
     mapping = build_level_to_song_mapping(data)
-    if not isinstance(mapping, dict) or not mapping:
+    if not mapping:
         logger.error("[SFH] 新映射为空，疑似上游数据损坏，保留旧快照")
         return
     logger.info(f"[SFH] 共映射了 {len(mapping)} 个 level ID")

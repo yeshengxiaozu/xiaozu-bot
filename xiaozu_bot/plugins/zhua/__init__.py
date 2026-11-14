@@ -1,7 +1,7 @@
 import random
 from pathlib import Path
 
-from nonebot import get_plugin_config, on_command
+from nonebot import on_command
 from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
@@ -92,8 +92,6 @@ descriptions = {
     "水印卒.png": "我要声明一下 真正的水印人打个盗图sm都要打成浮雕的",
     "电击卒.jpg": "电所有人前列腺",
 }
-
-config = get_plugin_config(Config)
 
 zhua = on_command("zhua")
 show = on_command("show")

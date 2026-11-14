@@ -2,6 +2,7 @@
 # get /api/aredl/levels/{level_id}
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -69,27 +70,28 @@ class AREDLLevel:
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
 
-aredllevels = []
-arepllevels = []
-
-
-def fetch_aredl_levels() -> list[AREDLLevel]:
-    url = "https://api.aredl.net/v2/api/aredl/levels"
-    headers = {
-        "Content-Type": "application/json",
-    }
+def _fetch_levels(url: str) -> list[AREDLLevel]:
     try:
-        response = http_request("GET", url, headers=headers, timeout=AREDL_TIMEOUT)
+        response = http_request(
+            "GET", url, headers={"Content-Type": "application/json"}, timeout=AREDL_TIMEOUT
+        )
     except httpx.HTTPError as e:
         logger.error(f"[aredlapi] 拉取失败 {url}: {e}")
         return []
     if response.status_code == HTTP_OK:
         levels = response.json()
-        aredllevels = [AREDLLevel(level) for level in levels]
-        logger.info(f"successfully fetch {levels.__len__()} levels from {url}")
-        return aredllevels
+        logger.info(f"successfully fetch {len(levels)} levels from {url}")
+        return [AREDLLevel(level) for level in levels]
     logger.error(f"failed to fetch from {url}")
     return []
+
+
+def fetch_aredl_levels() -> list[AREDLLevel]:
+    return _fetch_levels("https://api.aredl.net/v2/api/aredl/levels")
+
+
+def fetch_arepl_levels() -> list[AREDLLevel]:
+    return _fetch_levels("https://api.aredl.net/v2/api/arepl/levels")
 
 
 def _load_cached_levels(path: Path) -> tuple[list[AREDLLevel], bool]:
@@ -108,102 +110,34 @@ def _load_cached_levels(path: Path) -> tuple[list[AREDLLevel], bool]:
     return levels, fresh
 
 
-def get_aredl_levels() -> list[AREDLLevel]:
-    aredlfilepath = WORK_FOLDER / "aredl_levels.json"
-    cached_levels, fresh = _load_cached_levels(aredlfilepath)
+def _load_levels(
+    filename: str, label: str, fetcher: Callable[[], list[AREDLLevel]]
+) -> list[AREDLLevel]:
+    path = WORK_FOLDER / filename
+    cached_levels, fresh = _load_cached_levels(path)
     if fresh:
-        logger.info(
-            f"successly load {len(cached_levels)} levels from aredl_levels.json"
-        )
+        logger.info(f"successly load {len(cached_levels)} levels from {filename}")
         return cached_levels
     logger.info("cache expired, trying to re-fetch levels...")
-    fetched_levels = fetch_aredl_levels()
+    fetched_levels = fetcher()
     if not fetched_levels and cached_levels:
-        logger.warning("[aredlapi] 刷新失败，继续使用过期的 AREDL 缓存")
+        logger.warning(f"[aredlapi] 刷新失败，继续使用过期的 {label} 缓存")
         return cached_levels
-    levels_data = []
-    for level in fetched_levels:
-        level_data = {
-            "id": level.id,
-            "position": level.position,
-            "name": level.name,
-            "points": level.points,
-            "status": level.status,
-            "level_id": level.level_id,
-            "two_player": level.two_player,
-            "tags": level.tags,
-            "description": level.description,
-            "song": level.song,
-            "edel_enjoyment": level.edel_enjoyment,
-            "is_edel_pending": level.is_edel_pending,
-            "gddl_tier": level.gddl_tier,
-            "nlw_tier": level.nlw_tier,
-        }
-        levels_data.append(level_data)
-    if levels_data.__len__() > 0:
-        with Path.open(aredlfilepath, "w", encoding="utf-8") as f:
+    if fetched_levels:
+        levels_data = [level.to_dict() for level in fetched_levels]
+        with path.open("w", encoding="utf-8") as f:
             json.dump({"timestamp": time.time(), "levels": levels_data}, f, indent=4)
     else:
-        logger.error("failed to save 0 AREDL level datas")
+        logger.error(f"failed to save 0 {label} level datas")
     return fetched_levels
 
 
-def fetch_arepl_levels() -> list[AREDLLevel]:
-    url = "https://api.aredl.net/v2/api/arepl/levels"
-    headers = {
-        "Content-Type": "application/json",
-    }
-    try:
-        response = http_request("GET", url, headers=headers, timeout=AREDL_TIMEOUT)
-    except httpx.HTTPError as e:
-        logger.error(f"[aredlapi] 拉取失败 {url}: {e}")
-        return []
-    if response.status_code == HTTP_OK:
-        levels = response.json()
-        arepllevels = [AREDLLevel(level) for level in levels]
-        logger.info(f"successfully fetch {levels.__len__()} levels from {url}")
-        return arepllevels
-    logger.error(f"failed to fetch from {url}")
-    return []
+def get_aredl_levels() -> list[AREDLLevel]:
+    return _load_levels("aredl_levels.json", "AREDL", fetch_aredl_levels)
 
 
 def get_arepl_levels() -> list[AREDLLevel]:
-    areplfilepath = WORK_FOLDER / "arepl_levels.json"
-    cached_levels, fresh = _load_cached_levels(areplfilepath)
-    if fresh:
-        logger.info(
-            f"successly load {len(cached_levels)} levels from arepl_levels.json"
-        )
-        return cached_levels
-    fetched_levels = fetch_arepl_levels()
-    if not fetched_levels and cached_levels:
-        logger.warning("[aredlapi] 刷新失败，继续使用过期的 AREPL 缓存")
-        return cached_levels
-    levels_data = []
-    for level in fetched_levels:
-        level_data = {
-            "id": level.id,
-            "position": level.position,
-            "name": level.name,
-            "points": level.points,
-            "status": level.status,
-            "level_id": level.level_id,
-            "two_player": level.two_player,
-            "tags": level.tags,
-            "description": level.description,
-            "song": level.song,
-            "edel_enjoyment": level.edel_enjoyment,
-            "is_edel_pending": level.is_edel_pending,
-            "gddl_tier": level.gddl_tier,
-            "nlw_tier": level.nlw_tier,
-        }
-        levels_data.append(level_data)
-    if levels_data.__len__() > 0:
-        with Path.open(areplfilepath, "w", encoding="utf-8") as f:
-            json.dump({"timestamp": time.time(), "levels": levels_data}, f, indent=4)
-    else:
-        logger.error("failed to save 0 AREPL level datas")
-    return fetched_levels
+    return _load_levels("arepl_levels.json", "AREPL", fetch_arepl_levels)
 
 
 aredllevels: list[AREDLLevel] = []
@@ -280,12 +214,6 @@ class Aredl:
                 f"Level ID {level_id} found in aredl_dict as #{aredl_dict[level_id].position}"
             )
             return aredl_dict[level_id]
-        for level in aredllevels:
-            if level.level_id == level_id:
-                logger.warning(
-                    f"Level ID {level_id} found in aredllevels_backup as #{level.position}"
-                )
-                return level
         return None
 
 # 这里原本自己挂了一个 3 点的 scheduled_job，但它是坏的：赋值的是局部变量，

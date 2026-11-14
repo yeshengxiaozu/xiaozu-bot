@@ -33,7 +33,6 @@ async def handle_gdsong(bot: Bot, event: Event, arg: Message = CommandArg()) -> 
     if song is None or song.name is None:
         await gdsong.finish("没有找到对应的歌曲")
     song_basic_info = f"{song.name} By {song.artist_name} [{song_id}]\n"
-    # await gdsong.send(str(song.to_dict()))
     if song.level_count:
         song_data = f"⬆️{song.level_count if song.level_count <= 200000 else '200K+'} ⭐{song.rated_count} ⬇️{song.downloads}\n"
     else:

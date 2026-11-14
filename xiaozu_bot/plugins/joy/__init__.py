@@ -1,11 +1,12 @@
 import random
 
-from nonebot import get_plugin_config, on_command, on_fullmatch, on_type
+from nonebot import on_command, on_fullmatch, on_type
 from nonebot.adapters.onebot.v11 import (
     PokeNotifyEvent,
 )
 from nonebot.adapters.qq.models import MessageKeyboard
 from nonebot.internal.adapter import Bot, Event, Message
+from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
@@ -41,8 +42,6 @@ def notbanned(event: Event):
 rule_ban = Rule(banned)
 rule_notban = Rule(notbanned)
 
-config = get_plugin_config(Config)
-
 ultra = on_command("ultra", rule=rule_notban)
 nsdd = on_command("nsdd", rule=rule_notban)
 # insult 之前只注册没写 handler，block=True 会把 *insult 吞掉还不回话。
@@ -60,13 +59,19 @@ group_poke = on_type(
 )
 
 
+async def _reject_long_arg(
+    bot: Bot, event: Event, matcher: Matcher, arg: Message
+) -> None:
+    if len(str(arg)) > 100:
+        await react(bot, event, "424")
+        await matcher.finish()
+
+
 @ultra.handle()
 async def handle_function(
     bot: Bot, event: Event, arg: Message = CommandArg()
 ):
-    if len(str(arg)) > 100:
-        await react(bot, event, "424")
-        await ultra.finish()
+    await _reject_long_arg(bot, event, ultra, arg)
     args = str(arg).lower().split()
     if len(args) == 0:
         tmsg = await ultra.send(
@@ -110,9 +115,7 @@ async def handle_function(bot: Bot, event: Event):
 async def handle_function(
     bot: Bot, event: Event, arg: Message = CommandArg()
 ):
-    if len(str(arg)) > 100:
-        await react(bot, event, "424")
-        await jwz.finish()
+    await _reject_long_arg(bot, event, jwz, arg)
     args = str(arg).lower().split()
     if len(args) == 0:
         await jwz.finish("请输入一个参数！")
@@ -132,9 +135,7 @@ async def handle_function(
 async def handle_function(
     bot: Bot, event: Event, arg: Message = CommandArg()
 ):
-    if len(str(arg)) > 100:
-        await react(bot, event, "424")
-        await today.finish()
+    await _reject_long_arg(bot, event, today, arg)
     args = str(arg).lower().split()
     if len(args) != 3:
         await today.finish("请输入3个参数！")

@@ -7,8 +7,6 @@
   1. 换掉模块级的 `search_levels_page` / `Gddl`（测这两个模块自己的逻辑）；
   2. 用 stub_requests 从真的 requests 层拦下来（测 as_api_kwargs 真的
      能被下游接口吃进去，参数名没写错）。
-
-会话过期不 sleep 120 秒，而是把模块级的 `time` 换成 FakeClock。
 """
 
 from __future__ import annotations
@@ -43,26 +41,6 @@ from xiaozu_bot.utils.gd_args import SORT_ALIASES
 # ---------------------------------------------------------------------------
 # 公共小工具
 # ---------------------------------------------------------------------------
-
-
-class FakeClock:
-    """假的 time 模块，只提供 time()。
-
-    RatingsSession / FullSearchSession 都是 `import time` 之后调 `time.time()`，
-    把模块级的 `time` 名字换掉就能精确控制过期判定，不用真等 120 秒。
-
-    注意：dataclass 上 `field(default_factory=time.time)` 的那个 time.time 是
-    类定义时就绑死的真函数，所以测过期必须显式设 updated_at。
-    """
-
-    def __init__(self, now: float = 1_000_000.0) -> None:
-        self.now = now
-
-    def time(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
 
 
 def _gd_level(**attrs: Any) -> GDLevel:
@@ -836,7 +814,7 @@ class TestRatingsSessionFetch:
 
 
 class TestRatingsSessionPaging:
-    """go_next / go_prev / expired"""
+    """go_next / go_prev"""
 
     def _session(
         self, fake: FakeGddl, *, page: int = 0, total_pages: int = 1
@@ -932,63 +910,6 @@ class TestRatingsSessionPaging:
         )
 
         assert session.current == []
-
-    def test_expiry_boundary(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """判定是 `> SESSION_TIMEOUT`，卡在 120 秒整还不算过期"""
-        clock = FakeClock()
-        monkeypatch.setattr(ratings, "time", clock)
-        session = ratings.RatingsSession(
-            query=ratings.RatingsQuery(target="x", sort_direction=None), level_id=1
-        )
-        session.updated_at = clock.now
-
-        assert ratings.SESSION_TIMEOUT == 120
-        assert session.expired is False
-
-        clock.advance(ratings.SESSION_TIMEOUT)
-        assert session.expired is False
-
-        clock.advance(0.001)
-        assert session.expired is True
-
-    def test_touch_resets_the_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        clock = FakeClock()
-        monkeypatch.setattr(ratings, "time", clock)
-        session = ratings.RatingsSession(
-            query=ratings.RatingsQuery(target="x", sort_direction=None), level_id=1
-        )
-        session.updated_at = clock.now - 500
-
-        assert session.expired is True
-
-        session.touch()
-
-        assert session.updated_at == clock.now
-        assert session.expired is False
-
-    def test_go_next_touches_the_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        clock = FakeClock()
-        fake = FakeGddl({1: _sub_page([_sub(2, 2, name="b")], total=12)})
-        monkeypatch.setattr(ratings, "time", clock)
-        monkeypatch.setattr(ratings, "Gddl", fake)
-        session = self._session(fake, total_pages=2)
-        session.updated_at = clock.now - 500
-
-        session.go_next()
-
-        assert session.expired is False
-
-    def test_go_prev_touches_the_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        clock = FakeClock()
-        fake = FakeGddl({})
-        monkeypatch.setattr(ratings, "time", clock)
-        monkeypatch.setattr(ratings, "Gddl", fake)
-        session = self._session(fake, page=1, total_pages=2)
-        session.updated_at = clock.now - 500
-
-        session.go_prev()
-
-        assert session.expired is False
 
 
 class TestRatingsRender:
@@ -1688,12 +1609,9 @@ class TestFullSearchKnownLastPage:
 
         assert session.known_last_page == 1
 
-    def test_page_size_matches_gdapi(self) -> None:
-        assert self._session().page_size == GD_PAGE_SIZE == 10
-
 
 class TestFullSearchSessionPaging:
-    """go_next / go_prev / expired"""
+    """go_next / go_prev"""
 
     def _session(self, fake: FakeSearch, **kw: Any) -> fullsearch.FullSearchSession:
         session = fullsearch.FullSearchSession(
@@ -1780,66 +1698,6 @@ class TestFullSearchSessionPaging:
         )
 
         assert session.current_levels == []
-
-    def test_expiry_boundary(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        clock = FakeClock()
-        monkeypatch.setattr(fullsearch, "time", clock)
-        session = fullsearch.FullSearchSession(query=fullsearch.FullSearchQuery(query="x"))
-        session.updated_at = clock.now
-
-        assert fullsearch.SESSION_TIMEOUT == 120
-        assert session.expired is False
-
-        clock.advance(fullsearch.SESSION_TIMEOUT)
-        assert session.expired is False
-
-        clock.advance(0.001)
-        assert session.expired is True
-
-    def test_touch_resets_the_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        clock = FakeClock()
-        monkeypatch.setattr(fullsearch, "time", clock)
-        session = fullsearch.FullSearchSession(query=fullsearch.FullSearchQuery(query="x"))
-        session.updated_at = clock.now - 500
-
-        assert session.expired is True
-        session.touch()
-
-        assert session.updated_at == clock.now
-        assert session.expired is False
-
-    def test_successful_paging_touches_the_session(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        clock = FakeClock()
-        level = _gd_level(level_id=2, level_name="Y", stars=0, length=3)
-        fake = FakeSearch({1: _search_page([level], total=GD_TOTAL_CAP, page=1)})
-        monkeypatch.setattr(fullsearch, "time", clock)
-        monkeypatch.setattr(fullsearch, "search_levels_page", fake)
-        session = self._session(fake)
-        session.updated_at = clock.now - 500
-
-        session.go_next()
-        assert session.expired is False
-
-        session.updated_at = clock.now - 500
-        session.go_prev()
-        assert session.expired is False
-
-    def test_failed_paging_does_not_touch_the_session(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """翻不动的时候不刷新时间戳，会话该过期还是过期"""
-        clock = FakeClock()
-        fake = FakeSearch({})
-        monkeypatch.setattr(fullsearch, "time", clock)
-        monkeypatch.setattr(fullsearch, "search_levels_page", fake)
-        session = self._session(fake)
-        session.updated_at = clock.now - 500
-
-        session.go_next()
-
-        assert session.expired is True
 
 
 class TestFullSearchRender:

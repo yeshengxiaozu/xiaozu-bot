@@ -61,10 +61,6 @@ guess_count = on_command("guess_count")
 
 crop_width = 256
 crop_height = 256
-crop_width_hard = 128
-crop_height_hard = 128
-crop_width_ultra = 64
-crop_height_ultra = 64
 
 
 def _button(
@@ -166,12 +162,10 @@ def formalize(str: str) -> str:
     return str
 
 
-aliases: dict[str, list[str]] = {}
 # 答案 -> 所有能算对的写法（都归一化过）
 accepted: dict[str, set[str]] = {}
 
 for map_info in maps:
-    aliases[map_info["answer"]] = map_info["alias"]
     # 别名表以前是原样存的，而输入是归一化之后再去比的，
     # 所以别名里只要带大写或空格就永远匹配不上（比如 VVVVVV）。
     # 这里两边都归一化。顺带把完整答案名也收进去，写全名也能算对。
@@ -253,7 +247,7 @@ def isnonsense(image: Image.Image) -> bool:
 
 
 async def can_start(
-    bot: Bot, matcher: Matcher, event: Event
+    matcher: Matcher, event: Event
 ) -> None:
     # The 45s key only gates "give up right after a new question" now
     # (see guessstart / handle_guess_giveup). Starting is no longer throttled:
@@ -338,15 +332,6 @@ def _safe_hget(name: str, key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _bump_counter(key: str) -> None:
-    """自增计数。
-
-    `r.set(key, r.get(key) + 1)` 是跨两次加锁的读-改-写，并发时会丢计数，
-    所以用 storage 层的原子 incr。
-    """
-    r.incr(key)
-
-
 def _clear_session(session_id: str) -> None:
     """结束/放弃时把三个字段真正删掉。
 
@@ -397,31 +382,21 @@ async def guessstart(
     )
 
 
-@guess_start.handle()
-async def handle_guess_start(
-    bot: Bot, matcher: Matcher, event: Event
-) -> None:
-    await can_start(bot, matcher, event)
-    await guessstart(bot, (256, 256), matcher, event)
-    await guess_start.finish()
+def _guess_start_handler(matcher: Matcher, size: tuple[int, int]):
+    async def handler(bot: Bot, event: Event) -> None:
+        await can_start(matcher, event)
+        await guessstart(bot, size, matcher, event)
+        await matcher.finish()
+
+    return handler
 
 
-@guess_start_hard.handle()
-async def handle_guess_start_hard(
-    bot: Bot, matcher: Matcher, event: Event
-) -> None:
-    await can_start(bot, matcher, event)
-    await guessstart(bot, (128, 128), matcher, event)
-    await guess_start_hard.finish()
-
-
-@guess_start_ultra.handle()
-async def handle_guess_start_ultra(
-    bot: Bot, matcher: Matcher, event: Event
-) -> None:
-    await can_start(bot, matcher, event)
-    await guessstart(bot, (64, 64), matcher, event)
-    await guess_start_ultra.finish()
+for _matcher, _size in (
+    (guess_start, (256, 256)),
+    (guess_start_hard, (128, 128)),
+    (guess_start_ultra, (64, 64)),
+):
+    _matcher.handle()(_guess_start_handler(_matcher, _size))
 
 
 @guess_giveup.handle()
@@ -502,7 +477,7 @@ async def handle_guess(
     if guess_input in accepted.get(answer, set()):
         guess_input = answer
 
-    _bump_counter(TOTAL_TRIES_KEY)
+    r.incr(TOTAL_TRIES_KEY)
 
     if guess_input != answer:
         await react(bot, event, "424")
@@ -539,7 +514,7 @@ async def handle_guess(
             cropped_path,
         )
 
-    _bump_counter(TOTAL_RIGHT_KEY)
+    r.incr(TOTAL_RIGHT_KEY)
     await send_image(
         bot,
         event,

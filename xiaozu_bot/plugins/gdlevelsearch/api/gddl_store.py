@@ -23,11 +23,6 @@ PAGE_SIZE = 25
 FETCH_INTERVAL = 5
 FETCH_WORKERS = 5
 RETRY_WAIT = 60
-MIN_COMPLETE_RATIO = 0.95
-TIER_MIN = 1.0
-TIER_MAX = 39.0
-GDDL_TIER_MIN = TIER_MIN
-GDDL_TIER_MAX = TIER_MAX
 
 levels: list[dict[str, Any]] = []
 by_id: dict[int, dict[str, Any]] = {}
@@ -42,10 +37,6 @@ class FetchResult:
     levels: list[dict[str, Any]]
     failed_pages: list[int]
     fetched_at: str
-
-
-def loaded() -> bool:
-    return bool(by_id)
 
 
 def get_by_id(level_id: str | int) -> dict[str, Any] | None:
@@ -89,7 +80,7 @@ def _matches(level: dict[str, Any], filters: dict[str, Any]) -> bool:
             lower = _number(filters[minimum])
             if lower is None or value is None or value < lower:
                 return False
-        if maximum is not None and filters.get(maximum) is not None:
+        if filters.get(maximum) is not None:
             upper = _number(filters[maximum])
             if upper is None or value is None or value > upper:
                 return False
@@ -123,7 +114,7 @@ def search_levels(
 
     result = [level for level in levels if _matches(level, filters)]
     direction = (sort_direction or "asc").lower()
-    if len(result) == 0:
+    if not result:
         return None
     if sort.lower() == "random":
         random.shuffle(result)
@@ -141,32 +132,6 @@ def search_levels(
         "page": page,
         "data": result[start : start + limit],
     }
-
-
-def pick_random(
-    low: int,
-    high: int,
-    enjoyment_min: float | None = None,
-    enjoyment_max: float | None = None,
-) -> dict[str, Any] | None:
-    low_exact = max(low - 0.5, TIER_MIN)
-    high_exact = min(high + 0.5, TIER_MAX)
-    pool: list[dict[str, Any]] = []
-    for level in levels:
-        rating = _number(level.get("rating"))
-        if rating is None or not low_exact <= rating <= high_exact:
-            continue
-        enjoyment = _number(level.get("enjoyment"))
-        if enjoyment_min is not None and (
-            enjoyment is None or enjoyment < enjoyment_min
-        ):
-            continue
-        if enjoyment_max is not None and (
-            enjoyment is None or enjoyment > enjoyment_max
-        ):
-            continue
-        pool.append(level)
-    return random.choice(pool) if pool else None
 
 
 def _rebuild_indexes(new_levels: list[dict[str, Any]], stamp: str | None) -> None:
@@ -202,14 +167,9 @@ def reload(path: Path | None = None) -> None:
     new_levels = payload.get("levels") if isinstance(payload, dict) else None
     if not isinstance(new_levels, list) or not new_levels:
         return
-    valid_levels = [level for level in new_levels if isinstance(level, dict)]
-    usable_levels = []
-    for level in valid_levels:
-        try:
-            int(level["id"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        usable_levels.append(level)
+    usable_levels = [
+        level for level in new_levels if isinstance(level, dict) and _valid_id(level)
+    ]
     if not usable_levels:
         return
     _rebuild_indexes(usable_levels, payload.get("fetchedAt"))

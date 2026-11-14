@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import TypeVar, cast
 
 from nonebot import logger
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -50,10 +50,14 @@ TIER_COLOR_MAP = {
     "13 - TERRIFYING": "#ff7fb5",
 }
 DEFAULT_TIER_COLOR = "#ffffff"
-
-
-def select_tags(level: PlatInfo) -> list[str]:
-    return level.tags
+DEMON_DIFFICULTY = {
+    "Official": 0,
+    "Easy": 1,
+    "Medium": 2,
+    "Hard": 3,
+    "Insane": 4,
+    "Extreme": 5,
+}
 
 # ----------------- 常量 -----------------
 
@@ -88,12 +92,6 @@ PANEL_BOTTOM_OFFSET = 24
 PANEL_PAD = 28
 PANEL_RADIUS = 24
 
-SHADOW_OFFSET = 8
-SHADOW_ALPHA = 120
-SHADOW_BLUR = 12
-
-PANEL_ALPHA = 230
-
 FONT_PUSAB_TITLE = 60
 FONT_PUSAB_SUB = 44
 FONT_SANS_SMALL = 22
@@ -105,7 +103,6 @@ SPACING_SMALL = 16
 SPACING_TIER_ROW = 36
 SPACING_SONG_LINE = 30
 
-DIFF_SCALE = 1.0
 DIFF_Y_EXTRA = 70
 
 THUMB_W = 480
@@ -117,13 +114,10 @@ THUMB_SHADOW_BLUR = 6
 
 
 SIDEBAR_X_OFFSET = 20
-SIDEBAR_ALPHA = 230
 SIDEBAR_TEXT_LEFT = 18
 SIDEBAR_TEXT_RIGHT_MARGIN = 8
 SIDEBAR_MIN_AVAIL_PX = 100
 SIDEBAR_LINE_HEIGHT = 22
-SIDEBAR_TOP_PAD = 20
-SIDEBAR_BOTTOM_PAD = 20
 
 ICON_NEGATIVE_MARGIN = 3
 ICON_DEFAULT_H = 40
@@ -138,12 +132,10 @@ ICON_ALLOWED_EXTRA = 48
 ICON_MIN_H = 12
 ICON_MIN_SCALE = 0.4
 
-CARD_PADDING_LEFT = 16
 CARD_TOP_PADDING = 20
 CARD_BETWEEN_TITLE_AND_LINES = 26
 CARD_INTER_LINE_SPACING = 15
 CARD_BOTTOM_PADDING = 15
-CARD_EXTRA_SPACING = 4
 
 CARD_BG_RADIUS = 12
 CARD_BG_COLOR = (28, 28, 28, 220)
@@ -155,13 +147,8 @@ os.environ["NO_PROXY"] = "history.geometrydash.eu,geometrydash.eu"
 
 # ---------------------------------------------------------------------
 def draw_outlined_text(draw: ImageDraw.ImageDraw, xy: tuple[float, float], text: str, font: ImageFont.FreeTypeFont,
-                       fill: str = "white", outline: str = "black", outline_width: int = 4,
-                       shadow: tuple | None = None) -> None:
+                       fill: str = "white", outline: str = "black", outline_width: int = 4) -> None:
     x, y = xy
-    if shadow:
-        sx, sy, scolor, soff = shadow
-        draw.text((x + sx, y + sy), text, fill=scolor, font=font,
-                  stroke_width=soff, stroke_fill=scolor)
     draw.text((x, y), text, fill=outline, font=font,
               stroke_width=outline_width, stroke_fill=outline)
     draw.text((x, y), text, fill=fill, font=font)
@@ -307,7 +294,6 @@ class FetchedData:
     level_id: int
     gdlevel: GDLevel | None = None
     gddl_info: GDDLLevel | GDDLSearchEntry | None = None
-    gddl_tags: list[dict[str, Any]] | None = None
     thumb_bytes: bytes | None = None
     aredl_info: AREDLLevel | None = None
     nlw_info: NLWLevel | None = None
@@ -347,18 +333,14 @@ def _draw_background(data: LevelRenderData) -> Image.Image:
         if left_bg.size != (W, H):
             left_bg = left_bg.resize((W, H), Image.Resampling.LANCZOS)
         left_bg_layer.paste(left_bg, (0, 0), left_bg)
-        ImageDraw.Draw(left_bg_layer)
     except Exception as e:
         logger.error("[gdlevelsearch.draw] ERROR: %s", e)
     left_bg_masked = Image.composite(left_bg_layer, Image.new("RGBA", (W, H), (0, 0, 0, 0)), panel_mask)
 
-    right_bg_layer = create_vertical_gradient((W, H), (255, 255, 255), (255, 255, 255)).convert("RGBA")
+    right_bg_layer = Image.new("RGBA", (W, H), (255, 255, 255, 255))
     right_bg_masked = Image.composite(right_bg_layer, Image.new("RGBA", (W, H), (0, 0, 0, 0)), sidebar_mask)
     base = Image.alpha_composite(base, left_bg_masked)
-    ImageDraw.Draw(base)
-    base = Image.alpha_composite(base, right_bg_masked)
-    ImageDraw.Draw(base)
-    return base
+    return Image.alpha_composite(base, right_bg_masked)
 
 
 def _draw_main_panel(img: Image.Image, data: LevelRenderData) -> Image.Image:
@@ -424,9 +406,9 @@ def _draw_main_panel(img: Image.Image, data: LevelRenderData) -> Image.Image:
     try:
         diff_icon_img = Image.open(data.diff_icon_path).convert("RGBA")
         orig_w, orig_h = diff_icon_img.size
-        diff_target_size = (max(1, int(orig_w * DIFF_SCALE)), max(1, int(orig_h * DIFF_SCALE)))
+        diff_target_size = (max(1, int(orig_w)), max(1, int(orig_h)))
     except Exception:
-        diff_target_size = (max(1, int(320 * DIFF_SCALE)), max(1, int(280 * DIFF_SCALE)))
+        diff_target_size = (320, 280)
     diff_w, diff_h = diff_target_size
     diff_x = panel[2] - PANEL_PAD - diff_w
     diff_y = panel[1] + PANEL_PAD + title_h + DIFF_Y_EXTRA
@@ -478,9 +460,7 @@ def _draw_thumbnail(img: Image.Image, data: LevelRenderData) -> Image.Image:
     )
     tshadow = tshadow.filter(ImageFilter.GaussianBlur(THUMB_SHADOW_BLUR))
     img = Image.alpha_composite(img, tshadow)
-    ImageDraw.Draw(img)
     img.paste(thumb_round, (thumb_x, thumb_y), thumb_round)
-    ImageDraw.Draw(img)
     return img
 
 
@@ -515,11 +495,9 @@ def _draw_sidebar(img: Image.Image, data: LevelRenderData) -> Image.Image:
             if crop_w < sb_w:
                 padded = Image.new("RGBA", (sb_w, bg_height), (0, 0, 0, 0))
                 padded.paste(cropped, (0, 0))
-                ImageDraw.Draw(padded)
                 img.paste(padded, (sb_rect[0], bg_y_top), padded)
             else:
                 img.paste(cropped, (sb_rect[0], bg_y_top), cropped)
-            ImageDraw.Draw(img)
         except Exception as e:
             logger.error("[gdlevelsearch.draw] ERROR: %s", e)
 
@@ -533,9 +511,7 @@ def _draw_sidebar(img: Image.Image, data: LevelRenderData) -> Image.Image:
 
     sidebar_mask = Image.new("L", (W, H), 0)
     ImageDraw.Draw(sidebar_mask).rounded_rectangle(sb_rect, radius=PANEL_RADIUS, fill=255)
-    img = Image.composite(img, img_before_sidebar, sidebar_mask)
-    ImageDraw.Draw(img)
-    return img
+    return Image.composite(img, img_before_sidebar, sidebar_mask)
 
 
 def _draw_card(img: Image.Image, data: LevelRenderData) -> Image.Image:
@@ -594,7 +570,6 @@ def _draw_card(img: Image.Image, data: LevelRenderData) -> Image.Image:
         if icon:
             icon_y = int(center_y - icon.height / 2)
             img.paste(icon, (int(tx), int(icon_y)), icon)
-            draw = ImageDraw.Draw(img)
             tx += icon.width + ICON_SPACING
 
     current_y = block_y + CARD_TOP_PADDING + title_h + CARD_BETWEEN_TITLE_AND_LINES
@@ -651,7 +626,6 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
         level_id=level_id,
         gdlevel=gdlevel,
         gddl_info=gddl_info,
-        gddl_tags=gddl_tags,
         thumb_bytes=thumb_bytes,
         aredl_info=aredl_info,
         nlw_info=nlw_info,
@@ -661,12 +635,6 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
         nong_song=nong_song,
         unrated_note=unrated_note,
     )
-
-
-def _valid_id(value: Any) -> Any | None:
-    if value is None or (isinstance(value, str) and not value.strip()):
-        return None
-    return value
 
 
 def _build_render_data(data: FetchedData) -> LevelRenderData:
@@ -789,17 +757,11 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
                 stars = max(0, min(9, int(getattr(gdlevel, "stars", 0) or 0)))
                 diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{stars}.png"
         elif gddl_meta is not None:
-            demon_difficulty = {
-                "Official": 0, "Easy": 1, "Medium": 2,
-                "Hard": 3, "Insane": 4, "Extreme": 5,
-            }.get(getattr(gddl_meta, "Difficulty", ""),0)
-            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{f'1{demon_difficulty}'}.png"
+            demon_difficulty = DEMON_DIFFICULTY.get(getattr(gddl_meta, "Difficulty", ""), 0)
+            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_1{demon_difficulty}.png"
         elif isinstance(gddl_info, GDDLSearchEntry):
-            demon_difficulty = {
-                "Official": 0, "Easy": 1, "Medium": 2,
-                "Hard": 3, "Insane": 4, "Extreme": 5,
-            }.get(getattr(gddl_info, "Difficulty", ""),0)
-            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_{f'1{demon_difficulty}'}.png"
+            demon_difficulty = DEMON_DIFFICULTY.get(getattr(gddl_info, "Difficulty", ""), 0)
+            diff_icon_path = RES_DIR / f"diffIcon/diffIcon_1{demon_difficulty}.png"
     except (IndexError, TypeError, ValueError):
         pass
 
@@ -811,12 +773,10 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
     tier_icon_path = RES_DIR / "tiers/tier_0.png"
     is_plat = False
     if gdlevel is not None:
-        is_plat_method = getattr(gdlevel, "is_plat", None)
-        if callable(is_plat_method):
-            try:
-                is_plat = bool(is_plat_method())
-            except Exception:
-                is_plat = False
+        try:
+            is_plat = gdlevel.is_plat()
+        except Exception:
+            is_plat = False
     if is_plat or (gdlevel is None and gddl_meta is not None and gddl_meta.is_pemon()):
         tier_icon_path = RES_DIR / "moon.png"
     else:

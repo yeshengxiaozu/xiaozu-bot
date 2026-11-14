@@ -309,7 +309,7 @@ def _section(frames, atlas, prefix, suffix):
 
 # ---------- 构建器 ----------
 
-def _build_simple(plist_file, color1, color2, extra_color, glow_on, glow_color, form):
+def _build_simple(plist_file, color1, color2, glow_on, glow_color, form):
     """普通单部件 gamemode（cube/ball/ship/ufo/wave/swing/jetpack）。"""
     data = _load_plist(plist_file)
     frames = data["frames"]
@@ -339,7 +339,7 @@ def _build_simple(plist_file, color1, color2, extra_color, glow_on, glow_color, 
 
     s = _section(frames, atlas, prefix, "_extra")
     if s:
-        layers.append((tint_image(s[0], extra_color), s[1], s[2]))
+        layers.append((tint_image(s[0], "#FFFFFF"), s[1], s[2]))
 
     return _compose_layers(layers, form)
 
@@ -432,4 +432,4 @@ def get_icon_from_cols(type, icon, color1, color2, glow, glowc=-1):
     if type in ROBOT_PARTS:
         return _build_complex(plist_file, c1, c2, glow_on, cg, type,
                               f"{type}_{icon_id:02d}")
-    return _build_simple(plist_file, c1, c2, "#FFFFFF", glow_on, cg, type)
+    return _build_simple(plist_file, c1, c2, glow_on, cg, type)

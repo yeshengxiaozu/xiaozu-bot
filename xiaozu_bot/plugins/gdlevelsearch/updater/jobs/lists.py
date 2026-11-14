@@ -35,45 +35,35 @@ LISTS = {
 }
 
 
-def _create_session() -> RequestSession:
-    return RequestSession()
-
-
 def _fetch_level(
     base_url: str,
     level_name: str,
     position: int,
     name_map: dict[str, str] | None,
-    session: RequestSession | None = None,
+    session: RequestSession,
 ) -> dict[str, str]:
     """Fetch one level JSON using the caller's shared connection pool."""
-    owned_session = session is None
-    session = session or _create_session()
-    try:
-        response = session.get(f"{base_url}/{level_name}.json", timeout=20)
-        response.raise_for_status()
-        data = response.json()
+    response = session.get(f"{base_url}/{level_name}.json", timeout=20)
+    response.raise_for_status()
+    data = response.json()
 
-        author_id = data["author"]
-        creator = (
-            name_map.get(str(author_id), str(author_id))
-            if name_map is not None
-            else str(author_id)
-        )
-        return {
-            "id": str(data["id"]),
-            "position": str(position),
-            "name": str(data["name"]),
-            "creator": creator,
-        }
-    finally:
-        if owned_session:
-            session.close()
+    author_id = data["author"]
+    creator = (
+        name_map.get(str(author_id), str(author_id))
+        if name_map is not None
+        else str(author_id)
+    )
+    return {
+        "id": str(data["id"]),
+        "position": str(position),
+        "name": str(data["name"]),
+        "creator": creator,
+    }
 
 
 def _fetch_list(base_url: str, use_name_map: bool) -> list[dict[str, str]]:
     """Fetch one Demon List with one shared client per list."""
-    session = _create_session()
+    session = RequestSession()
     try:
         response = session.get(f"{base_url}/_list.json", timeout=20)
         response.raise_for_status()

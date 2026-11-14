@@ -31,12 +31,6 @@ def save_json_file(filepath, data):
     except OSError as e:
         logger.error(f"[GETMETADATA] 写入缓存失败: {filepath}: {e}")
 
-def test():
-    data = load_json_file(staged_or_published("ids_levels.json"))
-    if data:
-        flat_list = data["levels"]
-        enrich_levels_with_ids(flat_list, cache_dir=DATA_DIR)
-
 def main():
     """给 nlw/ids/lw/hds/idl 补 metadata。
 

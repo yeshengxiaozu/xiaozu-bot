@@ -57,6 +57,20 @@ class PlatLevel:
         }
 
 
+def _index_by_id(raw: object, label: str) -> dict[str, dict]:
+    """Index a ``{position: entry}`` payload by the entry's ``id`` field."""
+    by_id: dict[str, dict] = {}
+    if isinstance(raw, dict):
+        for item in raw.values():
+            if not isinstance(item, dict):
+                continue
+            level_id = item.get("id")
+            if level_id is not None:
+                by_id[str(level_id)] = item
+    logger.info(f"[PLATBATCH] loaded {len(by_id)} {label} levels")
+    return by_id
+
+
 def extract_base_name(name: str) -> tuple:
     """
     提取基础名称和附属词条
@@ -163,45 +177,8 @@ def merge_plat_data() -> dict[str, PlatLevel]:
     # 4. 建立 TPL ID 索引
     # =========================================================
 
-    tpl_by_id: dict[str, dict] = {}
-
-    if isinstance(tpl_raw, dict):
-        for item in tpl_raw.values():
-            if not isinstance(item, dict):
-                continue
-
-            level_id = item.get("id")
-
-            if level_id is None:
-                continue
-
-            tpl_by_id[str(level_id)] = item
-
-    logger.info(
-        f"[PLATBATCH] loaded {len(tpl_by_id)} TPL levels"
-    )
-
-    # =========================================================
-    # 5. 建立 Pemon List ID 索引
-    # =========================================================
-
-    pemon_by_id: dict[str, dict] = {}
-
-    if isinstance(pemonlist_raw, dict):
-        for item in pemonlist_raw.values():
-            if not isinstance(item, dict):
-                continue
-
-            level_id = item.get("id")
-
-            if level_id is None:
-                continue
-
-            pemon_by_id[str(level_id)] = item
-
-    logger.info(
-        f"[PLATBATCH] loaded {len(pemon_by_id)} Pemon levels"
-    )
+    tpl_by_id = _index_by_id(tpl_raw, "TPL")
+    pemon_by_id = _index_by_id(pemonlist_raw, "Pemon")
 
     # =========================================================
     # 6. 以 platdiff 为全集
@@ -233,12 +210,10 @@ def merge_plat_data() -> dict[str, PlatLevel]:
         )
 
         # Tier
-        if "tier" in item:
-            level.tier = item.get("tier")
+        level.tier = item.get("tier")
 
         # Creator
-        if "creator" in item:
-            level.creator = item.get("creator")
+        level.creator = item.get("creator")
 
         # Tags
         if "tags" in item:
@@ -264,12 +239,10 @@ def merge_plat_data() -> dict[str, PlatLevel]:
                 ]
 
         # Enjoyment
-        if "enjoyment" in item:
-            level.enjoyment = item.get("enjoyment")
+        level.enjoyment = item.get("enjoyment")
 
         # Video
-        if "video" in item:
-            level.video = item.get("video")
+        level.video = item.get("video")
 
         # -----------------------------------------------------
         # 有 ID：匹配 TPL / Pemon
@@ -447,13 +420,6 @@ def batch_process():
     logger.info(f"[PLATBATCH] saved to {output_path}")
 
     return merged
-
-
-def batch():
-    """
-    在 batch.py 中调用的主函数
-    """
-    batch_process()
 
 
 if __name__ == "__main__":

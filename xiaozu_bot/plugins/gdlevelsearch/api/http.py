@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -127,14 +127,12 @@ def request(
     *,
     timeout: float,
     policy: RetryPolicy = DEFAULT_POLICY,
-    retry_statuses: Iterable[int] | None = None,
     allow_retry: bool = False,
     client: httpx.Client | None = None,
     **kwargs: Any,
 ) -> httpx.Response:
     """Perform a bounded synchronous request using a reusable httpx client."""
     method = method.upper()
-    statuses = frozenset(retry_statuses or policy.retry_statuses)
     attempts = max(1, policy.attempts if _should_retry(method, allow_retry) else 1)
     transport = client or _get_sync_client()
     last_error: BaseException | None = None
@@ -149,7 +147,7 @@ def request(
                 f"{attempt}/{attempts}: {type(exc).__name__}"
             )
         else:
-            if response.status_code not in statuses:
+            if response.status_code not in policy.retry_statuses:
                 return response
             last_error = RuntimeError(f"HTTP {response.status_code}")
             logger.warning(
@@ -171,14 +169,12 @@ async def async_request(
     *,
     timeout: float,
     policy: RetryPolicy = DEFAULT_POLICY,
-    retry_statuses: Iterable[int] | None = None,
     retry_if: Callable[[httpx.Response], bool] | None = None,
     allow_retry: bool = False,
     **kwargs: Any,
 ) -> httpx.Response:
     """Perform a bounded async request using a reusable httpx client."""
     method = method.upper()
-    statuses = frozenset(retry_statuses or policy.retry_statuses)
     should_retry = _should_retry(method, allow_retry) or retry_if is not None
     attempts = max(1, policy.attempts if should_retry else 1)
     client = await _get_async_client()
@@ -199,7 +195,7 @@ async def async_request(
                 f"{attempt}/{attempts}: {type(exc).__name__}"
             )
         else:
-            retry_response = response.status_code in statuses or (
+            retry_response = response.status_code in policy.retry_statuses or (
                 retry_if is not None and retry_if(response)
             )
             if not retry_response:

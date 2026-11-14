@@ -16,7 +16,7 @@ from xiaozu_bot.utils.gd_args import (
 )
 
 from ..api.gddlapi import Gddl
-from ..services.search import getlevelinfo, send_result  # noqa: F401
+from ..services.search import send_result
 
 gdrandom = on_command("gd随机推关")
 

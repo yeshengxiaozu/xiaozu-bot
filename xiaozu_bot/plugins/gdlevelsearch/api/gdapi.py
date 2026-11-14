@@ -163,8 +163,6 @@ class GDLevel:
     creator_name: str | None = None
     song_info: dict[str, Any] | None = None
 
-    XOR_KEY = "26364"
-
     def __init__(self) -> None:
         for attr, _ in self.FIELD_MAP.values():
             setattr(self, attr, None)
@@ -181,11 +179,6 @@ class GDLevel:
                 continue
             setattr(instance, attr, _parse_server_value(pairs[key], typ))
         return instance
-
-    @classmethod
-    def from_string(cls, response: str) -> "GDLevel":
-        """从原始字符串直接构建 GDLevel 对象。"""
-        return cls.from_server_response(response)
 
     @property
     def song_id(self) -> int | None:
@@ -224,54 +217,11 @@ class GDLevel:
             return author
         return "Unknown"
 
-    def decrypt_password(self) -> str | None:
-        if not self.password:
-            return None
-        raw = base64.b64decode(self.password)
-        key_bytes = self.XOR_KEY.encode("utf-8")
-        decrypted = bytearray()
-        for i, b in enumerate(raw):
-            decrypted.append(b ^ key_bytes[i % len(key_bytes)])
-        try:
-            return decrypted.decode("utf-8")
-        except UnicodeDecodeError:
-            return decrypted.hex()
-
-    def get_display_string(self) -> str:
-        creator = self.creator_name or "Unknown"
-        stars_str = f" - Stars:{self.stars}" if self.stars is not None else ""
-        base = f"{self.level_name} by {creator} (ID:{self.level_id}){stars_str}"
-        song_str = self._get_song_display()
-        if song_str:
-            base += f" [{song_str}]"
-        return base
-
-    def _get_song_display(self) -> str | None:
-        """返回歌曲的可读字符串，若无信息则返回 None"""
-        # 优先自定义歌曲
-        if self.song_info:
-            s = self.song_info
-            return f"{s.get('name')} by {s.get('artist_name')} (NG ID:{s.get('id')})"
-        # 官方歌曲
-        off_id = self.official_song
-        custom_id = self.custom_song_id
-        # 部分关卡可能 custom_song_id 为 0 但官方歌曲空，需要检查
-        if off_id is not None and off_id in OFFICIAL_SONG_MAP:
-            name, author = OFFICIAL_SONG_MAP[off_id]
-            return f"{name} by {author} (Official)"
-        # 兜底：有custom_song_id但未找到歌曲
-        if custom_id and custom_id != 0:
-            return f"Custom song (ID:{custom_id}) not loaded"
-        return None
-
     def is_plat(self) -> bool:
         return int(self.length) == LENGTH_PLAT if self.length is not None else False
 
     def is_pemon(self) -> bool:
         return self.is_plat() and self.is_demon
-
-    def is_demon_detail(self) -> bool:
-        return self.is_demon and not self.is_plat()
 
     def difficulty_label(self) -> str:
         """获取该关卡的难度标识"""
@@ -473,10 +423,6 @@ class GDUser:
             setattr(instance, attr, _parse_server_value(pairs[key], typ))
         return instance
 
-    @classmethod
-    def from_string(cls, response: str) -> "GDUser":
-        return cls.from_server_response(response)
-
     def __repr__(self) -> str:
         return f"<GDUser {self.user_name!r} (ID:{self.user_id})>"
 
@@ -533,10 +479,6 @@ class GDSongInfo:
         instance = cls()
         song_dict = parse_song_object(response)
         return instance.from_dict(song_dict)
-
-    @classmethod
-    def from_string(cls, response: str) -> "GDSongInfo":
-        return cls.from_server_response(response)
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -644,97 +586,50 @@ class SearchPage:
 def search_levels_page(
     query: str | None = None,
     page: int = 0,
-    **kwargs: Any,
+    *,
+    diff: str | int | None = None,
+    demon_filter: int | None = None,
+    star: bool | None = None,
 ) -> SearchPage:
     """和 search_levels 一样，但把分页信息一起返回。
 
     没有结果（服务器返回 -1）时返回一个空的 SearchPage，不抛异常 ——
     翻页翻过头和搜不到东西，服务器给的都是 -1。
     """
-    return _search_levels(query=query, page=page, **kwargs)
+    return _search_levels(
+        query=query, page=page, diff=diff, demon_filter=demon_filter, star=star
+    )
 
 
 def _search_levels(
     query: str | None = None,
     page: int = 0,
     *,
-    search_type: int = 0,
-    diff: str | None = None,
+    diff: str | int | None = None,
     demon_filter: int | None = None,
-    length: str | None = None,
-    featured: bool | None = None,
-    original: bool | None = None,
-    two_player: bool | None = None,
-    coins: bool | None = None,
-    epic: bool | None = None,
-    legendary: bool | None = None,
-    mythic: bool | None = None,
-    no_star: bool | None = None,
     star: bool | None = None,
-    song: int | None = None,
-    custom_song: bool | None = None,
-    uncompleted: bool | None = None,
-    only_completed: bool | None = None,
-    completed_levels: str | None = None,
-    gauntlet: int | None = None,
-    local: bool | None = None,
-    account_id: int | None = None,
-    gjp2: str | None = None,
-    udid: str | None = None,
-    uuid: str | None = None,
-    game_version: int = 22,
-    binary_version: int = 42,
-    gdw: int = 0,
     raise_on_request_error: bool = False,
-    **kwargs: Any,
 ) -> SearchPage:
-    """i dumped every param so it looks like this lol"""
+    """One getGJLevels21 request, including its pagination block."""
     url = "http://www.boomlings.com/database/getGJLevels21.php"
     headers = {"User-Agent": USER_AGENT}
 
     data = {
         "secret": "Wmfd2893gb7",
-        "gameVersion": game_version,
-        "binaryVersion": binary_version,
-        "type": search_type,
+        "gameVersion": 22,
+        "binaryVersion": 42,
+        "type": 0,
         "page": page,
-        "gdw": gdw,
+        "gdw": 0,
     }
     if query is not None:
         data["str"] = query
-
-    def bool_param(name: str, val: bool | None):
-        if val is not None:
-            data[name] = "1" if val else "0"
-
-    bool_param("featured", featured)
-    bool_param("original", original)
-    bool_param("twoPlayer", two_player)
-    bool_param("coins", coins)
-    bool_param("epic", epic)
-    bool_param("legendary", legendary)
-    bool_param("mythic", mythic)
-    bool_param("noStar", no_star)
-    bool_param("star", star)
-    bool_param("customSong", custom_song)
-    bool_param("uncompleted", uncompleted)
-    bool_param("onlyCompleted", only_completed)
-    bool_param("local", local)
-
-    optional = {
-        "diff": diff,
-        "len": length,
-        "demonFilter": demon_filter,
-        "song": song,
-        "completedLevels": completed_levels,
-        "gauntlet": gauntlet,
-        "accountID": account_id,
-        "gjp2": gjp2,
-        "udid": udid,
-        "uuid": uuid,
-    }
-    data.update({k: v for k, v in optional.items() if v is not None})
-    data.update(kwargs)
+    if star is not None:
+        data["star"] = "1" if star else "0"
+    if diff is not None:
+        data["diff"] = diff
+    if demon_filter is not None:
+        data["demonFilter"] = demon_filter
 
     try:
         resp = http_request(
@@ -821,10 +716,6 @@ def _search_levels(
 
         if level.custom_song_id and level.custom_song_id in song_dict:
             level.song_info = song_dict[level.custom_song_id]
-        elif (
-            level.official_song is not None and level.official_song in OFFICIAL_SONG_MAP
-        ):
-            level.song_info = None
         else:
             level.song_info = None
             if level.custom_song_id:
@@ -843,17 +734,6 @@ def _search_levels(
         page=page,
     )
 
-
-def search_levels(
-    query: str | None = None,
-    page: int = 0,
-    **kwargs: Any,
-) -> list[GDLevel]:
-    """按条件搜索关卡，只返回关卡列表。
-
-    要拿分页信息（总数 / 偏移）用 search_levels_page。
-    """
-    return _search_levels(query=query, page=page, **kwargs).levels
 
 def get_user_info(
     user_id: int
@@ -877,11 +757,7 @@ def get_user_info(
     except httpx.HTTPError as e:
         logger.error(f"[gdapi] get_user_info({user_id}) 请求失败: {e}")
         return None
-    raw_text = resp.text
-    if not isinstance(raw_text, str):
-        logger.error("[gdapi] get_user_info(%s) 返回了非文本响应", user_id)
-        return None
-    text = raw_text.strip()
+    text = resp.text.strip()
     logger.info(f"get_user_info({user_id}): {text}")
     return _parse_user_response(text, endpoint=f"get_user_info({user_id})")
 
@@ -907,11 +783,7 @@ def search_user(
     except httpx.HTTPError as e:
         logger.error(f"[gdapi] search_user({name}) 请求失败: {e}")
         return None
-    raw_text = resp.text
-    if not isinstance(raw_text, str):
-        logger.error("[gdapi] search_user(%s) 返回了非文本响应", name)
-        return None
-    text = raw_text.strip()
+    text = resp.text.strip()
     logger.info(f"search_user({name}): {text}")
     return _parse_user_response(
         text,
@@ -949,11 +821,7 @@ def get_song_usage(
     except httpx.HTTPError as e:
         logger.error(f"[gdapi] get_song_usage({song_id}) 请求失败: {e}")
         return None
-    raw_text = resp.text
-    if not isinstance(raw_text, str):
-        logger.error("[gdapi] get_song_usage(%s) 返回了非文本响应", song_id)
-        return None
-    text = raw_text.strip()
+    text = resp.text.strip()
     logger.info(f"get_song_usage({song_id}): {text}")
     #schema: level,rated,download#usageinfo
     main, _, usage_str = text.strip().partition('#')
@@ -1007,11 +875,7 @@ def get_song_info(
     except httpx.HTTPError as e:
         logger.error(f"[gdapi] get_song_info({song_id}) 请求失败: {e}")
         return None
-    raw_text = resp.text
-    if not isinstance(raw_text, str):
-        logger.error("[gdapi] get_song_info(%s) 返回了非文本响应", song_id)
-        return None
-    text = raw_text.strip()
+    text = resp.text.strip()
     logger.info(f"get_song_info({song_id}): {text}")
     ret = GDSongInfo.from_server_response(text)
     song_usage = get_song_usage(song_id)
@@ -1020,55 +884,10 @@ def get_song_info(
     return ret
 
 
-def search_levels_by_name(
-    name: str,
-    page: int = 0,
-    *,
-    diff: str | None = None,
-    demon_filter: int | None = None,
-    length: str | None = None,
-    featured: bool | None = None,
-    epic: bool | None = None,
-    legendary: bool | None = None,
-    mythic: bool | None = None,
-    star: bool | None = None,
-    **kwargs: Any,
-) -> list[GDLevel]:
-    """
-    按关卡名称搜索，返回 GDLevel 对象列表。
+def search_levels_by_name(name: str, page: int = 0) -> list[GDLevel]:
+    """按名称搜索，返回 GDLevel 列表。"""
+    return _search_levels(query=name, page=page).levels
 
-    参数：
-        name (str): 搜索关键词。
-        page (int): 页码，默认 0。
-        diff (int): 难度筛选。-3=auto, -1=未评级, 1~5=easy/normal/hard/harder/insane,
-            -2=demon（要配合 demon_filter 细分）。筛的是关卡自报难度（响应字段 9），
-            所以未评级的关卡也能筛到。
-        demon_filter (int): 恶魔难度筛选，**1=easy, 2=medium, 3=hard, 4=insane, 5=extreme**，
-            0 等于不筛。注意这套刻度和响应里的字段 43 不一样（字段 43 是
-            0=hard, 3=easy, 4=medium, 5=insane, 6=extreme），别搞混 ——
-            按字段 43 的刻度传 6 进来服务器会一条都不返回。
-        length (str): 长度筛选，如 "tiny", "short", "medium", "long", "xl"。
-        featured (bool), epic (bool), legendary (bool), mythic (bool): self-explain
-        star (bool): if it is rated
-        **kwargs: 其他可选参数，会透传给 search_levels。
-
-    返回：
-        List[GDLevel]: 匹配的关卡列表。
-    """
-    return search_levels(
-        query=name,
-        page=page,
-        search_type=0,  # 固定为关键词搜索
-        diff=diff,
-        demon_filter=demon_filter,
-        length=length,
-        featured=featured,
-        epic=epic,
-        legendary=legendary,
-        mythic=mythic,
-        star=star,
-        **kwargs,
-    )
 
 OFFICIAL_LEVELS = {
     1:GDLevel.from_server_response("1:1:2:Clubstep:3:VGhpcyBpcyB0aGUgZmlyc3Qgb2ZmaWNpYWwgZGVtb24gYW5kIG15IGZpcnN0IGRlbW9uIGFuZCBJIGhhdmUgdG8gY29uc3RydWN0IGEgZmFrZSBsZXZlbCBkYXRhIGZvciB0aGlzIHByb2dyYW0gdG8gcmVhZCB0byBwcmV2ZW50IGV2ZXJ5dGhpbmcgdG8gZ28gd3Jvbmc=:12:13:15:3:17:1:18:10:43:1:"),

@@ -162,14 +162,12 @@ def _absorb(
 
 
 def collect(
-    target: int | None = None,
     *,
     timeout: float = FETCH_TIMEOUT,
     delay: float = PAGE_DELAY,
 ) -> list[dict[str, Any]]:
-    """Page through the list until ``1..target`` is covered or the table ends.
+    """Page through the list until the table ends.
 
-    ``target=None`` means "everything": stop when a page stops adding records.
     The result is always sorted by position.
     """
     limit, batch = pick_limit(timeout)
@@ -183,8 +181,6 @@ def collect(
     pages = 1
 
     while pages < MAX_PAGES:
-        if target is not None and not missing_positions(items, target):
-            break
         if not batch:
             break
 
@@ -224,10 +220,7 @@ def collect(
         if added == 0 and not detecting:
             break
 
-    ordered = sort_by_position(items)
-    if target is None:
-        return ordered
-    return ordered[:target]
+    return sort_by_position(items)
 
 
 def verify(items: list[dict[str, Any]]) -> None:

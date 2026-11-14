@@ -67,6 +67,14 @@ TAG_NAMES = { #apparenly they are no longer with the /tags response so time to h
     19:"Slow-Paced",
 }
 
+
+def _headers() -> dict[str, str]:
+    return {
+        "User-Agent": USER_AGENT,
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {apikey}",
+    }
+
 """
 SongDTO{
 ID*	integer
@@ -206,7 +214,7 @@ class GDDLSearchEntry:
     Rarity: int
     PublisherName: str
     SongName: str
-    def __init__(self, jsondict: dict[str, Any], _tags: list[dict[str, str]] | None = None) -> None:
+    def __init__(self, jsondict: dict[str, Any]) -> None:
         self.ID = jsondict["id"]
         self.Rating = jsondict["rating"]
         self.Enjoyment = jsondict["enjoyment"]
@@ -285,11 +293,7 @@ class Gddl:
         请求失败返回 None（和「没有提交」区分开）。
         """
         url = f"https://gdladder.com/api/levels/{level_id}/submissions"
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {apikey}",
-        }
+        headers = _headers()
         params: dict[str, Any] = {
             "page": max(0, page),
             "limit": min(GDDL_LIMIT_MAX, max(GDDL_LIMIT_MIN, limit)),
@@ -331,34 +335,10 @@ class Gddl:
         return SubmissionPage(response.json())
 
     @staticmethod
-    def getspread(level_id: str | int) -> dict[str, Any] | None:
-        """拿某关卡的 tier / enjoyment 分布直方图"""
-        url = f"https://gdladder.com/api/levels/{level_id}/submissions/spread"
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {apikey}",
-        }
-        try:
-            response = http_request(
-                "GET", url, headers=headers, timeout=15, policy=GDDL_RETRY_POLICY, allow_retry=True
-            )
-        except httpx.HTTPError as e:
-            logger.error(f"[gddl] 拉取分布失败 level={level_id}: {e}")
-            return None
-        if response.status_code != HTTP_OK:
-            return None
-        return response.json()
-
-    @staticmethod
     def getleveltags(level_id: str | int) -> list[dict[str, Any]]:
         """Fetch the tags associated with a level from the GDDL API."""
         url = f"https://gdladder.com/api/levels/{level_id}/tags"
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {apikey}",
-        }
+        headers = _headers()
         try:
             response = http_request(
                 "GET",
@@ -383,11 +363,7 @@ class Gddl:
     def getlevelsbyname(name: str) -> list[GDDLSearchEntry] | None:
         """Search by name; return None when both remote and local lookup fail."""
         url = "https://gdladder.com/api/levels"
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {apikey}",
-        }
+        headers = _headers()
         data = {"name": name}
         try:
             response = http_request(
@@ -429,11 +405,7 @@ class Gddl:
         has no full Meta or Tags information.
         """
         url = f"https://gdladder.com/api/levels/{level_id}"
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {apikey}",
-        }
+        headers = _headers()
         try:
             response = http_request(
                 "GET",
@@ -474,11 +446,7 @@ class Gddl:
         **filters: Any,
     ) -> dict[str, Any] | None:
         url = "https://gdladder.com/api/levels"
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {apikey}",
-        }
+        headers = _headers()
         params: dict[str, Any] = {"page": max(0, page), "limit": limit, "sort": sort}
         if sort_direction is not None:
             params["sortDirection"] = sort_direction

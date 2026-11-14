@@ -5,7 +5,6 @@ scripts/try_search.py 要单独跑会话逻辑时，会先 init `~none` 驱动�
 """
 
 import asyncio
-import time
 from dataclasses import dataclass, field
 
 from nonebot import logger, on_command, on_message
@@ -150,14 +149,6 @@ class FullSearchSession:
     total_is_capped: bool = True
     # 已知的最后一页（翻到服务器返回 -1 才知道）
     last_page: int | None = None
-    updated_at: float = field(default_factory=time.time)
-
-    def touch(self) -> None:
-        self.updated_at = time.time()
-
-    @property
-    def expired(self) -> bool:
-        return time.time() - self.updated_at > SESSION_TIMEOUT
 
     @property
     def current_levels(self) -> list[GDLevel]:
@@ -173,12 +164,8 @@ class FullSearchSession:
         if self.last_page is not None:
             return self.last_page
         if not self.total_is_capped and self.total > 0:
-            return max(0, -(-self.total // self.page_size) - 1)  # 向上取整再减一
+            return max(0, -(-self.total // GD_PAGE_SIZE) - 1)  # 向上取整再减一
         return None
-
-    @property
-    def page_size(self) -> int:
-        return GD_PAGE_SIZE
 
     def fetch(self, page: int) -> list[GDLevel]:
         """取某一页，取过的直接用缓存"""
@@ -211,7 +198,6 @@ class FullSearchSession:
         if not levels:
             return False, "已经是最后一页了"
         self.page += 1
-        self.touch()
         return True, ""
 
     def go_prev(self) -> tuple[bool, str]:
@@ -219,7 +205,6 @@ class FullSearchSession:
         if self.page == 0:
             return False, "已经是第一页了"
         self.page -= 1
-        self.touch()
         return True, ""
 
     def render(self) -> str:
@@ -232,7 +217,7 @@ class FullSearchSession:
         if self.total_is_capped:
             head = f"「{self.query.query}」第 {self.page + 1} 页　[{self.query.describe()}]"
         else:
-            total_pages = max(1, -(-self.total // self.page_size))  # 向上取整
+            total_pages = max(1, -(-self.total // GD_PAGE_SIZE))  # 向上取整
             head = (
                 f"「{self.query.query}」共 {self.total} 条，"
                 f"第 {self.page + 1}/{total_pages} 页　[{self.query.describe()}]"

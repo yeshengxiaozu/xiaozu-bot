@@ -26,7 +26,6 @@ from typing import Any
 import httpx
 import pytest
 import requests
-from googleapiclient.errors import HttpError
 
 import xiaozu_bot.plugins.gdlevelsearch.updater as updater_pkg
 from xiaozu_bot.plugins import gdlevelsearch
@@ -52,7 +51,6 @@ from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
     sfh,
     tpl,
 )
-from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import platapi as jobs_platapi
 
 pytestmark = pytest.mark.updater
 
@@ -124,8 +122,8 @@ class TestPaths:
         assert paths.DATA_DIR == paths.PLUGIN_DIR / "data"
         assert paths.STAGING_DIR == paths.DATA_DIR / ".staging"
 
-    def test_发布清单与中间产物清单不重叠(self) -> None:
-        # bot 只读 PUBLISHED_FILES 里这几个，INTERMEDIATE_FILES 是 platbatch 的输入
+    def test_发布清单(self) -> None:
+        # bot 只读 PUBLISHED_FILES 里这几个
         assert paths.PUBLISHED_FILES == (
             "gddl_levels.json",
             "nlw_levels.json",
@@ -140,12 +138,6 @@ class TestPaths:
             "nong_index.json",
             "ratedplus.json",
         )
-        assert paths.INTERMEDIATE_FILES == (
-            "tpl.json",
-            "pemonlist.json",
-            "platdiff.json",
-        )
-        assert not set(paths.PUBLISHED_FILES) & set(paths.INTERMEDIATE_FILES)
 
     def test_ensure_dirs_两级目录都建出来(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -306,7 +298,7 @@ class TestRunnerTables:
             "platdiff": platdiff.fetch,
             "tpl": tpl.fetch,
             "pemonlist": pemonlist.fetch,
-            "platbatch": platbatch.batch,
+            "platbatch": platbatch.batch_process,
             "sfh": sfh.fetch,
             "ratedplus": ratedplus.fetch,
             "getmetadata": getmetadata.main,
@@ -1186,14 +1178,6 @@ class TestBatchProcess:
         # 返回值是清理/过滤之后的 dict 好像还有点问题 我有空再修修
         assert set(merged) == {"Null", "Null (Deathless)"}
 
-    def test_batch_就是_batch_process(
-        self, data_dirs: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        called: list[int] = []
-        monkeypatch.setattr(platbatch, "batch_process", lambda: called.append(1))
-        platbatch.batch()
-        assert called == [1]
-
     def test_没有任何源文件时也能产出空的_plat_combined(
         self, data_dirs: SimpleNamespace
     ) -> None:
@@ -1360,24 +1344,25 @@ class TestPemonlistFetch:
 
 
 # ==========================================================================
-# jobs/idl.py —— 从 insanedemonlist 的 Next.js 响应里正则抠条目
+# jobs/idl.py —— 从 insanedemonlist 的 Next.js RSC flight chunk 里解出 levels
 # ==========================================================================
-def _idl_chunk(name: str, position: int, publisher: str) -> str:
-    """拼一段 Next.js 响应里的 level 对象（带转义引号，和线上格式一致）"""
-    return (
-        '\\"level\\":{'
-        '\\"id\\":\\"123\\",'
-        '\\"formerRank\\":null,'
-        f'\\"name\\":\\"{name}\\",'
-        f'\\"position\\":{position},'
-        f'\\"publisher\\":\\"{publisher}\\",'
-        '\\"extra\\":1'
-        "}"
-    )
-
-
 def _idl_text(levels: list[tuple]) -> str:
-    return ", ".join(_idl_chunk(*item) for item in levels)
+    """Build one escaped RSC flight chunk carrying a levels array."""
+    payload = [
+        {
+            "id": f"id-{position}",
+            "formerRank": None,
+            "name": name,
+            "position": position,
+            "publisher": publisher,
+            # Nested arrays and extra fields mimic the upstream payload.
+            "packs": [{"id": "p", "name": "Pack", "position": 47}],
+        }
+        for name, position, publisher in levels
+    ]
+    encoded = json.dumps(payload, ensure_ascii=False)
+    escaped = encoded.replace("\\", "\\\\").replace('"', '\\"')
+    return 'self.__next_f.push([1,"{\\"levels\\":' + escaped + '}\\n"])'
 
 
 class TestIdlFetch:
@@ -1388,18 +1373,14 @@ class TestIdlFetch:
         stub_requests: Any,
         make_response: Any,
     ) -> None:
-        # 故意倒序给，验证 fetch 内部按 position 重排
+        # /main now carries all 150 entries; a complete page needs no /extended.
         levels = [(f"Level {i}", i, f"Creator{i}") for i in range(2, 151)]
         levels.append(("⠀Level 1 ", 1, "Creator1"))
         levels.reverse()
         monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
         stub_requests.get(
             "insanedemonlist.com/main",
-            make_response(200, text=_idl_text(levels[:75])),
-        )
-        stub_requests.get(
-            "insanedemonlist.com/extended",
-            make_response(200, text=_idl_text(levels[75:])),
+            make_response(200, text=_idl_text(levels)),
         )
 
         idl.fetch()
@@ -1415,6 +1396,80 @@ class TestIdlFetch:
             "name": "Level 1",
             "creator": "creator1",
         }
+        assert stub_requests.urls == [idl.MAIN_URL]
+
+    def test_main_只有前_75_条时_再抓_extended_合并(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get(
+            "insanedemonlist.com/main",
+            make_response(
+                200, text=_idl_text([(f"Level {i}", i, f"C{i}") for i in range(1, 76)])
+            ),
+        )
+        stub_requests.get(
+            "insanedemonlist.com/extended",
+            make_response(
+                200, text=_idl_text([(f"Level {i}", i, f"C{i}") for i in range(76, 151)])
+            ),
+        )
+
+        idl.fetch()
+
+        payload = _read_json(data_dirs.staging / "idl.json")
+        assert [item["position"] for item in payload["levels"]] == [
+            str(i) for i in range(1, 151)
+        ]
+        assert stub_requests.urls == [idl.MAIN_URL, idl.EXTENDED_URL]
+
+    def test_extended_重定向回_main_时按排名去重(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        full = [(f"Level {i}", i, f"C{i}") for i in range(1, 151)]
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get(
+            "insanedemonlist.com/main",
+            make_response(200, text=_idl_text(full[:149])),
+        )
+        stub_requests.get(
+            "insanedemonlist.com/extended",
+            make_response(200, text=_idl_text(full)),
+        )
+
+        idl.fetch()
+
+        payload = _read_json(data_dirs.staging / "idl.json")
+        assert [item["position"] for item in payload["levels"]] == [
+            str(i) for i in range(1, 151)
+        ]
+
+    def test_名字里的转义字符能正确还原(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        levels = [(f"Level {i}", i, f"C{i}") for i in range(2, 151)]
+        levels.append(('Quote " and \\ slash', 1, "Creator1"))
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get(
+            "insanedemonlist.com/main", make_response(200, text=_idl_text(levels))
+        )
+
+        idl.fetch()
+
+        payload = _read_json(data_dirs.staging / "idl.json")
+        assert payload["levels"][0]["name"] == 'Quote " and \\ slash'
 
     def test_条数不是_150_就抛_RuntimeError_不落盘(
         self,
@@ -1429,12 +1484,52 @@ class TestIdlFetch:
             make_response(200, text=_idl_text([("Only", 1, "c")])),
         )
         stub_requests.get(
-            "insanedemonlist.com/extended", make_response(200, text=_idl_text([]))
+            "insanedemonlist.com/extended",
+            make_response(200, text=_idl_text([("Only", 1, "c")])),
         )
 
         with pytest.raises(RuntimeError, match="150"):
             idl.fetch()
         assert not (data_dirs.staging / "idl.json").exists()
+
+    def test_排名不连续也不落盘(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        broken = [(f"Level {i}", i, f"C{i}") for i in range(1, 150)]
+        broken.append(("Duplicate #1", 1, "c"))
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get(
+            "insanedemonlist.com/main", make_response(200, text=_idl_text(broken))
+        )
+        stub_requests.get(
+            "insanedemonlist.com/extended", make_response(200, text=_idl_text(broken))
+        )
+
+        with pytest.raises(RuntimeError, match="150"):
+            idl.fetch()
+        assert not (data_dirs.staging / "idl.json").exists()
+
+    def test_页面里没有_levels_数组直接报错_不落盘(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get(
+            "insanedemonlist.com/main",
+            make_response(200, text="<html>no levels here</html>"),
+        )
+
+        with pytest.raises(RuntimeError, match="levels"):
+            idl.fetch()
+        assert not (data_dirs.staging / "idl.json").exists()
+        assert stub_requests.urls == [idl.MAIN_URL]
 
     def test_HTTP_错误直接抛出去(
         self,
@@ -1486,7 +1581,11 @@ class TestListsLevelFetch:
             make_response(200, json_data={"id": 11, "author": 1, "name": "Alpha"}),
         )
         out = lists._fetch_level(
-            "https://hdl.pages.dev/data", "Alpha", 3, {"1": "Mapper"}
+            "https://hdl.pages.dev/data",
+            "Alpha",
+            3,
+            {"1": "Mapper"},
+            lists.RequestSession(),
         )
         assert out == {
             "id": "11",
@@ -1503,7 +1602,11 @@ class TestListsLevelFetch:
             make_response(200, json_data={"id": 11, "author": 2, "name": "Alpha"}),
         )
         out = lists._fetch_level(
-            "https://hdl.pages.dev/data", "Alpha", 1, {"1": "Mapper"}
+            "https://hdl.pages.dev/data",
+            "Alpha",
+            1,
+            {"1": "Mapper"},
+            lists.RequestSession(),
         )
         assert out["creator"] == "2"
 
@@ -1514,7 +1617,9 @@ class TestListsLevelFetch:
             "https://hdl.pages.dev/data/Alpha.json",
             make_response(200, json_data={"id": 11, "author": 7, "name": "Alpha"}),
         )
-        out = lists._fetch_level("https://hdl.pages.dev/data", "Alpha", 1, None)
+        out = lists._fetch_level(
+            "https://hdl.pages.dev/data", "Alpha", 1, None, lists.RequestSession()
+        )
         assert out["creator"] == "7"
 
 
@@ -2036,129 +2141,7 @@ class FakeSheetsService:
         return _FakeSpreadsheets(self)
 
 
-def _http_error(status: int) -> HttpError:
-    class _Resp:
-        def __init__(self, code: int) -> None:
-            self.status = code
-            self.reason = "fake"
-
-    return HttpError(_Resp(status), b"{}")
-
-
-class TestPersistently:
-    def test_一次成功就不重试(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        clock = FakeClock()
-        monkeypatch.setattr(googlesheetapi, "time", clock)
-        calls: list[int] = []
-
-        @googlesheetapi.persistently
-        def f() -> str:
-            calls.append(1)
-            return "ok"
-
-        assert f() == "ok"
-        assert len(calls) == 1
-        assert clock.slept == []
-
-    def test_保留原函数元信息(self) -> None:
-        @googlesheetapi.persistently
-        def some_name() -> None:
-            """文档串"""
-
-        assert some_name.__name__ == "some_name"
-        assert some_name.__doc__ == "文档串"
-
-    @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
-    def test_可重试的_HttpError_退避后重试(
-        self, monkeypatch: pytest.MonkeyPatch, status: int
-    ) -> None:
-        clock = FakeClock()
-        monkeypatch.setattr(googlesheetapi, "time", clock)
-        calls: list[int] = []
-
-        @googlesheetapi.persistently
-        def f() -> str:
-            calls.append(1)
-            if len(calls) < 3:
-                raise _http_error(status)
-            return "ok"
-
-        assert f() == "ok"
-        assert len(calls) == 3
-        assert clock.slept == ([60, 60] if status == 429 else [2, 4])
-
-    @pytest.mark.parametrize("status", [400, 403, 404])
-    def test_不可重试的_HttpError_直接抛(
-        self, monkeypatch: pytest.MonkeyPatch, status: int
-    ) -> None:
-        clock = FakeClock()
-        monkeypatch.setattr(googlesheetapi, "time", clock)
-        calls: list[int] = []
-
-        @googlesheetapi.persistently
-        def f() -> None:
-            calls.append(1)
-            raise _http_error(status)
-
-        with pytest.raises(HttpError):
-            f()
-        assert len(calls) == 1
-        assert clock.slept == []
-
-    def test_其他异常固定睡两秒再试(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        clock = FakeClock()
-        monkeypatch.setattr(googlesheetapi, "time", clock)
-        calls: list[int] = []
-
-        @googlesheetapi.persistently
-        def f() -> str:
-            calls.append(1)
-            raise ValueError("boom")
-
-        with pytest.raises(ValueError, match="boom"):
-            f()
-        assert len(calls) == 1
-        assert clock.slept == []
-
-    def test_五次都失败会再补一次调用(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        clock = FakeClock()
-        monkeypatch.setattr(googlesheetapi, "time", clock)
-        calls: list[int] = []
-
-        @googlesheetapi.persistently
-        def f() -> str:
-            calls.append(1)
-            raise _http_error(503)
-
-        with pytest.raises(HttpError):
-            f()
-        assert len(calls) == 5
-        assert clock.slept == [2, 4, 8, 16]
-
-    def test_第六次还失败就把异常抛出去(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        clock = FakeClock()
-        monkeypatch.setattr(googlesheetapi, "time", clock)
-        calls: list[int] = []
-
-        @googlesheetapi.persistently
-        def f() -> None:
-            calls.append(1)
-            raise ValueError("always")
-
-        with pytest.raises(ValueError, match="always"):
-            f()
-        assert len(calls) == 1
-
-    def test_参数原样透传(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(googlesheetapi, "time", FakeClock())
-
-        @googlesheetapi.persistently
-        def f(a: int, b: int = 0) -> int:
-            return a + b
-
-        assert f(1, b=2) == 3
-
-
+class TestSheetExecute:
     def test_sheet_execute_global_concurrency_is_one(self) -> None:
         active = 0
         maximum = 0
@@ -2538,7 +2521,7 @@ class TestRatedplusCollect:
         )
         monkeypatch.setattr(ratedplus, "http_request", endpoint)
 
-        got = ratedplus.collect(target=3, delay=0)
+        got = ratedplus.collect(delay=0)
 
         assert [item["name"] for item in got] == ["Alpha", "Beta", "Gamma"]
         assert [call["after"] for call in endpoint.calls] == [None, 3]
@@ -2561,14 +2544,15 @@ class TestRatedplusCollect:
                 None: first,
                 3: first,
                 13: [_rated_record(14, 4, "Delta", 400)],
+                14: [],
             }
         )
         monkeypatch.setattr(ratedplus, "http_request", endpoint)
 
-        got = ratedplus.collect(target=4, delay=0)
+        got = ratedplus.collect(delay=0)
 
         assert [item["name"] for item in got] == ["Alpha", "Beta", "Gamma", "Delta"]
-        assert [call["after"] for call in endpoint.calls] == [None, 3, 13]
+        assert [call["after"] for call in endpoint.calls] == [None, 3, 13, 14]
 
     def test_重复记录只收一次(self, monkeypatch: pytest.MonkeyPatch) -> None:
         first = [
@@ -2584,7 +2568,7 @@ class TestRatedplusCollect:
         )
         monkeypatch.setattr(ratedplus, "http_request", endpoint)
 
-        got = ratedplus.collect(target=3, delay=0)
+        got = ratedplus.collect(delay=0)
 
         assert [item["name"] for item in got] == ["Alpha", "Beta", "Gamma"]
 
@@ -2597,10 +2581,10 @@ class TestRatedplusCollect:
         )
         monkeypatch.setattr(ratedplus, "http_request", endpoint)
 
-        got = ratedplus.collect(target=1, delay=0)
+        got = ratedplus.collect(delay=0)
 
         assert [item["name"] for item in got] == ["Alpha"]
-        assert [call["limit"] for call in endpoint.calls] == [100, 50]
+        assert [call["limit"] for call in endpoint.calls] == [100, 50, 50]
 
     def test_其它状态码不降级直接失败(
         self, monkeypatch: pytest.MonkeyPatch
@@ -2609,7 +2593,7 @@ class TestRatedplusCollect:
         monkeypatch.setattr(ratedplus, "http_request", endpoint)
 
         with pytest.raises(ratedplus.RatedplusFetchError, match="HTTP 403"):
-            ratedplus.collect(target=1, delay=0)
+            ratedplus.collect(delay=0)
         assert [call["limit"] for call in endpoint.calls] == [100]
 
     def test_请求异常包成_fetch_error(
@@ -2621,7 +2605,7 @@ class TestRatedplusCollect:
         monkeypatch.setattr(ratedplus, "http_request", _boom)
 
         with pytest.raises(ratedplus.RatedplusFetchError, match="request failed"):
-            ratedplus.collect(target=1, delay=0)
+            ratedplus.collect(delay=0)
 
 
 class TestRatedplusVerify:
@@ -2816,22 +2800,6 @@ class TestMetadataHelpers:
     def test_normalize_creator_name(self, raw: str, expected: str) -> None:
         assert metadata.normalize_creator_name(raw) == expected
 
-    def test_get_cache_key_去掉_and_more_并规范作者(self) -> None:
-        assert metadata.get_cache_key("Null and more", "Rob & Bob") == (
-            "Null",
-            "rob and bob",
-        )
-        assert metadata.get_cache_key("  Null  ", "Rob") == ("Null", "rob")
-
-    def test_demon_type_从_7_起按顺序对上整张表(self) -> None:
-        """源码就是 `[...][code - 7]`，直接照着那张表走一遍。
-
-        （原来是 6 条参数化用例，一条盯一档；表本身在源码里是个字面量 list，
-        照着走一遍等价，而且表加一档时这里只要改一行。）
-        """
-        table = ["Unknown", "Easy", "Medium", "Hard", "Insane", "Extreme"]
-        assert [metadata.demon_type(7 + i) for i in range(len(table))] == table
-
     def test_缓存存读往返(self, tmp_path: Path) -> None:
         cache = [{"name": "Null", "creator": "someone", "id": 123}]
         metadata.save_metadata_cache(cache, str(tmp_path))
@@ -2968,10 +2936,6 @@ class TestFetchLevelData:
     ) -> None:
         monkeypatch.setattr(metadata, "http", FakeHttp(make_response(500)))
         assert metadata.fetch_level_data("Null", "Someone") is None
-
-    def test_MANUAL_FALLBACK_默认关闭(self) -> None:
-        # 打开的话 fetch_level_data 会走 input()，在 bot 里会把线程挂死
-        assert metadata.MANUAL_FALLBACK is False
 
 
 class TestEnrichLevelsWithIds:
@@ -3141,7 +3105,7 @@ def gm_data_dir(
     import 期就绑死了 —— 和 staged / staged_or_published 那种"运行时读
     paths 模块全局"的函数不一样，data_dirs 里改 paths.DATA_DIR 到不了它这。
     不单独指过来的话，enrich 的 cache_dir 会是仓库里真的 data/，
-    测试会往仓库写 metadata.json。（jobs/platapi.py 也是同样的写法。）
+    测试会往仓库写 metadata.json。
     """
     monkeypatch.setattr(getmetadata, "DATA_DIR", data_dirs.data)
     return data_dirs
@@ -3241,79 +3205,6 @@ class TestGetMetadata:
 
         assert called == []
         assert list(gm_data_dir.staging.iterdir()) == []
-
-    def test_test_函数也能跑起来(
-        self, gm_data_dir: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """同文件里的 test() 用的是同一批名字，以前也一样 NameError。"""
-        seen: list[Path] = []
-        monkeypatch.setattr(
-            getmetadata,
-            "enrich_levels_with_ids",
-            lambda levels, cache_dir, **kw: seen.append(Path(cache_dir)),
-        )
-        _write_json(
-            gm_data_dir.staging / "ids_levels.json",
-            {"levels": [{"name": "Acheron", "creator": "Someone"}]},
-        )
-
-        getmetadata.test()
-
-        assert seen == [gm_data_dir.data]
-
-
-# ==========================================================================
-# jobs/platapi.py —— 只测纯解析部分（这个模块目前没人 import，见返回说明）
-# ==========================================================================
-class TestJobsPlatApiParsing:
-    def test_from_dict_把各字段规整成字符串(self) -> None:
-        entry = jobs_platapi.PlatInfo.from_dict(
-            {
-                "id": 123,
-                "name": "  Null  ",
-                "tier": " 5 ",
-                "tpl": None,
-                "tags": ["a ", None, 7],
-                "enjoyment": "8.5",
-                "derived_levels": "不是列表",
-                "derived_from": None,
-            }
-        )
-        assert entry.id == "123"
-        assert entry.name == "Null"
-        assert entry.tier == "5"
-        assert entry.tpl is None
-        assert entry.tags == ["a", "7"]
-        assert entry.enjoyment == 8.5
-        assert entry.derived_levels == []
-        assert entry.is_main is True
-
-    def test_enjoyment_不能转数时落成_None(self) -> None:
-        entry = jobs_platapi.PlatInfo.from_dict({"id": "1", "enjoyment": "??"})
-        assert entry.enjoyment is None
-
-    def test_有_derived_from_的不是主词条(self) -> None:
-        entry = jobs_platapi.PlatInfo.from_dict({"id": "1", "derived_from": "Null"})
-        assert entry.is_main is False
-
-    def test_to_dict_from_dict_往返(self) -> None:
-        raw = {
-            "id": "1",
-            "name": "Null",
-            "tier": "5",
-            "tpl": "3",
-            "pemonlist": "9",
-            "creator": "A",
-            "tags": ["Coin"],
-            "enjoyment": 8.0,
-            "video": "https://v",
-            "weight": "2",
-            "section": "Top",
-            "derived_from": None,
-            "derived_levels": ["Null (Coin)"],
-        }
-        assert jobs_platapi.PlatInfo.from_dict(raw).to_dict() == raw
-
 
 
 # ==========================================================================

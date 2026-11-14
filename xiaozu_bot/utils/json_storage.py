@@ -66,9 +66,8 @@ class JsonRedis:
     hashes, glob-style key lookup, deletion, and automatic persistence.
     """
 
-    def __init__(self, file_path: str | Path, auto_save: bool = True) -> None:
+    def __init__(self, file_path: str | Path) -> None:
         self.file_path = Path(file_path)
-        self.auto_save = auto_save
         self.lock = threading.Lock()
         self.data: dict[str, Any] = {}
         self._load()
@@ -81,8 +80,7 @@ class JsonRedis:
         """
         if not (self.file_path.exists() and self.file_path.stat().st_size > 0):
             self.data = {}
-            if self.auto_save:
-                self._save()
+            self._save()
             return
 
         try:
@@ -132,8 +130,7 @@ class JsonRedis:
                 self.data[key] = {"_val": value, "_exp": time.time() + ex}
             else:
                 self.data[key] = value
-            if self.auto_save:
-                self._save()
+            self._save()
 
     def incr(self, key: str, amount: int = 1) -> int:
         """Atomically increase a counter and return the new value.
@@ -151,8 +148,7 @@ class JsonRedis:
             except (TypeError, ValueError):
                 value = amount
             self.data[key] = value
-            if self.auto_save:
-                self._save()
+            self._save()
             return value
 
     def hdel(self, name: str, *keys: str) -> int:
@@ -166,7 +162,7 @@ class JsonRedis:
                 if key in hash_map:
                     del hash_map[key]
                     removed += 1
-            if removed and self.auto_save:
+            if removed:
                 self._save()
             return removed
 
@@ -201,8 +197,7 @@ class JsonRedis:
             if name not in self.data or not isinstance(self.data.get(name), dict):
                 self.data[name] = {}
             self.data[name][key] = value
-            if self.auto_save:
-                self._save()
+            self._save()
 
     def _as_hash(self, name: str) -> dict[str, Any]:
         """Return a hash while excluding the internal expiring-value wrapper."""
@@ -240,5 +235,4 @@ class JsonRedis:
         with self.lock:
             if key in self.data:
                 del self.data[key]
-                if self.auto_save:
-                    self._save()
+                self._save()

@@ -65,11 +65,6 @@ def today_seed(today: date | None = None) -> int:
     return day.year * 10000 + day.month * 100 + day.day
 
 
-def pick_index(total: int, today: date | None = None) -> int:
-    """按日期在 [0, total) 里定出一个下标"""
-    return random.Random(today_seed(today)).randrange(total)
-
-
 def get_recent() -> list[int]:
     """最近挑过的关卡 id"""
     value = r.get(RECENT_KEY)
@@ -99,26 +94,25 @@ def get_cached_id(today: date | None = None) -> int | None:
 
 def get_daily_demon(
     today: date | None = None,
-) -> tuple[int | None, int, str]:
+) -> tuple[int | None, str]:
     """取今天这一关。
 
-    返回 (关卡, 符合条件的总数, 出错时的提示)。
-    总数只在当天第一次挑的时候才有意义，之后是 0。
+    返回 (关卡 id, 出错时的提示)。
     """
     day = _today(today)
 
     # 今天已经挑过了就直接用，别再受 GDDL 数据变动的影响
     cached_id = get_cached_id(day)
     if cached_id is not None:
-        return cached_id, 0, ""
+        return cached_id, ""
 
     head = Gddl.searchlevels(page=0, limit=1, sort="ID", **FILTERS)
     if head is None:
-        return None, 0, "GDDL 那边没响应，等会再试试"
+        return None, "GDDL 那边没响应，等会再试试"
 
     total = head.get("total", 0)
     if not total:
-        return None, 0, "错误：GDDL返回的信息显示存在0个符合条件的关卡（显然不应该发生）"
+        return None, "错误：GDDL返回的信息显示存在0个符合条件的关卡（显然不应该发生）"
 
     recent = get_recent()
     rng = random.Random(today_seed(day))
@@ -139,19 +133,12 @@ def get_daily_demon(
         )
 
     if level is None:
-        return None, total, "取今日关卡失败，等会再试试"
+        return None, "取今日关卡失败，等会再试试"
 
     r.set(_key(day), str(level.ID), ex=KEEP_SECONDS)
     remember(level.ID)
     logger.info(f"[dailydemon] {day} 定为 {level.Name}（ID {level.ID}），已存下")
-    return level.ID, total, ""
-
-
-def describe_conditions() -> str:
-    return (
-        f"tier {TIER_MIN}-{TIER_MAX}、enjoyment {ENJOYMENT_MIN}+、"
-        f"提交数 {SUBMISSION_MIN}+"
-    )
+    return level.ID, ""
 
 
 # ----------------------------------------------------------------- dailydemon
@@ -162,7 +149,7 @@ dailydemon = on_command("dailydemon")
 
 @dailydemon.handle()
 async def handle_dailydemon(bot: Bot, event: Event) -> None:
-    level_id, _total, err = await asyncio.to_thread(get_daily_demon)
+    level_id, err = await asyncio.to_thread(get_daily_demon)
     if level_id is None:
         await dailydemon.finish(err)
     await send_result(bot, event, int(level_id))

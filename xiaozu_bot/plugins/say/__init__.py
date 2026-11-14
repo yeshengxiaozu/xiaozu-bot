@@ -7,7 +7,7 @@ import wave
 from contextlib import suppress
 from pathlib import Path
 
-from nonebot import get_plugin_config, logger, on_command
+from nonebot import logger, on_command
 from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
@@ -30,19 +30,6 @@ __plugin_meta__ = PluginMetadata(
     config=Config,
 )
 
-
-def json_group_audio(group_id: int, path: str) -> dict:
-    return {
-        "group_id": group_id,
-        "message": [{"type": "record", "data": {"file": path}}],
-    }
-
-
-def json_private_audio(user_id: int, path: str) -> dict:
-    return {"user_id": user_id, "message": [{"type": "record", "data": {"file": path}}]}
-
-
-config = get_plugin_config(Config)
 
 say = on_command("say")
 say_instructed = on_command("say_i")

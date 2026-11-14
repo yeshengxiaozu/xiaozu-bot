@@ -64,7 +64,6 @@ from nonebot.adapters.qq.models.qq import (
 from nonebot.adapters.qq.utils import API
 from nonebot.compat import type_validate_python
 from nonebot.drivers import Request
-from nonebot.permission import Permission
 
 if TYPE_CHECKING:
     from nonebot.adapters import Bot, Message
@@ -315,17 +314,6 @@ def install_qq_rich_media_compat() -> None:
     QQBot._xiaozu_rich_media_compat = True
 
 
-async def _group_permission(event: Event) -> bool:
-    return is_group_event(event)
-
-
-GROUP = Permission(_group_permission)
-
-
-def is_onebot_v11(bot: Bot) -> bool:
-    return isinstance(bot, OneBotV11Bot)
-
-
 def is_qq(bot: Bot) -> bool:
     return isinstance(bot, QQBot)
 
@@ -388,24 +376,6 @@ def get_message_id(event: Event) -> str | int:
     return str(message_id)
 
 
-def get_user_name(event: Event) -> str:
-    sender = getattr(event, "sender", None)
-    if sender is not None:
-        return str(
-            getattr(sender, "card", None)
-            or getattr(sender, "nickname", None)
-            or get_user_id(event)
-        )
-    author = getattr(event, "author", None)
-    if author is not None:
-        return str(
-            getattr(author, "username", None)
-            or getattr(author, "id", None)
-            or get_user_id(event)
-        )
-    return get_user_id(event)
-
-
 def extract_sent_message_id(result: Any) -> str | int | None:
     if isinstance(result, Mapping):
         value = result.get("message_id") or result.get("id")
@@ -427,12 +397,6 @@ _QQ_MEDIA_SEGMENT_TYPES = {
     "file_video",
     "file_file",
 }
-
-
-def _onebot_file(source: ImageSource | AudioSource) -> Any:
-    if isinstance(source, Path):
-        return source
-    return source
 
 
 def _qq_local_file(source: ImageSource | AudioSource) -> bytes | BytesIO | Path:
@@ -472,7 +436,7 @@ def build_image_message(
             message.append(OneBotV11MessageSegment.at(mention_user_id))
         if before:
             message.append(OneBotV11MessageSegment.text(before))
-        message.append(OneBotV11MessageSegment.image(_onebot_file(image)))
+        message.append(OneBotV11MessageSegment.image(image))
         if after:
             message.append(OneBotV11MessageSegment.text(after))
         return message
@@ -498,7 +462,7 @@ def build_image_message(
 
 def build_audio_message(bot: Bot, audio: AudioSource) -> Message:
     if isinstance(bot, OneBotV11Bot):
-        return OneBotV11Message(OneBotV11MessageSegment.record(_onebot_file(audio)))
+        return OneBotV11Message(OneBotV11MessageSegment.record(audio))
     if isinstance(bot, QQBot):
         if isinstance(audio, str) and audio.startswith(("http://", "https://")):
             return QQMessage(QQMessageSegment.audio(audio))
@@ -594,19 +558,6 @@ async def send_group_with_keyboard(
             message=_qq_message_with_keyboard(message, keyboard),
         )
     return await send_group(bot, group_id, message)
-
-
-async def send_group_any(
-    bots: Mapping[str, Bot], group_id: str | int, message: Any
-) -> Any:
-    target = str(group_id)
-    expected = QQBot if target.startswith("qq:") else OneBotV11Bot
-    bot = next((item for item in bots.values() if isinstance(item, expected)), None)
-    if bot is None:
-        raise AdapterFeatureUnsupported(
-            f"no connected {expected.__name__} can send to {target}"
-        )
-    return await send_group(bot, target, message)
 
 
 async def send_private(bot: Bot, user_id: str | int, message: Any) -> Any:

@@ -74,31 +74,6 @@ class TestRequest:
 
         assert len(stub_requests.calls) == 3
 
-    def test_custom_retry_statuses_override_default(
-        self, stub_requests: Any, make_response: Any
-    ) -> None:
-        responses = [
-            make_response(418),
-            make_response(200, json_data={"ok": True}),
-        ]
-        seen: list[dict[str, Any]] = []
-
-        def _route(**call: Any) -> Any:
-            seen.append(call)
-            return responses[len(seen) - 1]
-
-        stub_requests.get("https://example.test/a", _route)
-
-        response = request(
-            "GET",
-            "https://example.test/a",
-            timeout=5,
-            retry_statuses={418},
-        )
-
-        assert response.json() == {"ok": True}
-        assert len(stub_requests.calls) == 2
-
 
 class TestRequestSession:
     def test_get_forwards_params_and_timeout(

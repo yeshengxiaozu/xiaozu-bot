@@ -7,14 +7,13 @@
 
 import random
 
-from nonebot import get_plugin_config, on_command
+from nonebot import on_command
 from nonebot.internal.adapter import Event, Message
 from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 
 from . import const
 from .config import Config
-from .const import *
 
 # 不要 random.seed()：那是重置**全局** Mersenne Twister，guess/zhua/joy 共用
 # 同一个 random，而且无参 seed 本来就是默认行为，纯属无意义的副作用。
@@ -27,8 +26,6 @@ __plugin_meta__ = PluginMetadata(
     usage="",
     config=Config,
 )
-
-config = get_plugin_config(Config)
 
 roulette = on_command("roulette")
 get_map = on_command("map")

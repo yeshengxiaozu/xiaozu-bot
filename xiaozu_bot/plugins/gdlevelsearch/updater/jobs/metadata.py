@@ -9,19 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
 
-import httpx
 from nonebot import logger
 
 from xiaozu_bot.utils.json_storage import write_json_atomic
 
 from ...api.http import RequestSession
-
-
-# 抄出来的ui函数
-def demon_type(cache_filter_difficulty):
-    return ["Unknown","Easy", "Medium","Hard", "Insane", "Extreme"][cache_filter_difficulty-7]
-
-MANUAL_FALLBACK = False #控制是否进行人工干预
 
 # ---------- 证书修复 ----------
 # certifi 是本项目的硬依赖（见 pyproject.toml）。拿不到 CA 包时**不能**悄悄
@@ -55,12 +47,6 @@ http = RequestSession(verify=DEFAULT_VERIFY, trust_env=False)
 def normalize_creator_name(name: str) -> str:
     """规范化作者名，与原 JS 逻辑保持一致"""
     return name.replace('&', 'and').strip().lower()
-
-def get_cache_key(name: str, creator: str) -> tuple:
-    """生成统一的缓存键（name, normalized_creator）"""
-    clean_name = name.replace(" and more", "").strip()
-    normalized_creator = normalize_creator_name(creator)
-    return (clean_name, normalized_creator)
 
 def save_metadata_cache(cache: list[dict], cache_dir: str):
     """保存 metadata 缓存到文件"""
@@ -132,21 +118,6 @@ def fetch_level_data(name: str, creator: str) -> dict | None:
         resp = http.get(GD_HISTORY_API, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-    except httpx.TimeoutException as e:
-        # 原来这里没写 as e，日志却引用了 e —— 真超时的时候会在 except 里
-        # 再抛一个 NameError，把超时伪装成别的错
-        logger.error(f"Request timed out for '{name}' by '{creator}': {e}")
-        return None
-    except httpx.HTTPStatusError as e:
-        status_code = getattr(e.response, 'status_code', 0) if hasattr(e, 'response') else 0
-        logger.error(f"HTTP error {status_code} for '{name}' by '{creator}': {e}")
-        return None
-    except httpx.ConnectError as e:
-        logger.error(f"Connection failed for '{name}' by '{creator}': {e}")
-        return None
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON response for '{name}' by '{creator}': {e}")
-        return None
     except Exception as e:
         logger.error(f"API request failed for '{name}' by '{creator}': {type(e).__name__}: {e}")
         return None
@@ -169,21 +140,8 @@ def fetch_level_data(name: str, creator: str) -> dict | None:
 
     # 如果没有结果
     if len(hits) == 0:
-        if not MANUAL_FALLBACK:
-            logger.info(f"gdhistory: No results found for '{name}' by '{creator}'")
-            return None
-        try:
-            manual_id = str(input(f"finding unmatched level, please manually enter id for {name} by {creator}").strip())
-            return {"online_id": int(manual_id)}
-        except ValueError:
-            logger.error("Invalid ID format entered")
-            return None
-
-    # 都不行就按 demon 难度从高到低排序，取最高难度的
-    # hits.sort(key=lambda h: h.get("cache_filter_difficulty", 0), reverse=True)
-    # 尝试手动选择
-    if len(hits) == 1:
-        return hits[0]
+        logger.info(f"gdhistory: No results found for '{name}' by '{creator}'")
+        return None
 
     # 过滤出名称匹配的关卡
     name_normalized = name.strip()
@@ -192,23 +150,8 @@ def fetch_level_data(name: str, creator: str) -> dict | None:
     if len(hits) == 1:
         return hits[0]
 
-    if not MANUAL_FALLBACK:
-        logger.info("Multiple levels found, manual selection required")
-        return None
-
-    if len(hits) == 0:
-        try:
-            manual_id = int(input(f"finding unmatched level, please manually enter id for {name} by {creator}").strip())
-            return {"online_id": manual_id}
-        except ValueError:
-            logger.error("Invalid ID format entered")
-            return None
-
-    logger.info("Multiple levels found, please select one:")
-    logger.info(f"Spreadsheet info: {name} by {creator}\n    results:")
-    for level in hits:
-        logger.info(f"{level['cache_level_name']} by {level['cache_username']} ({demon_type(level['cache_filter_difficulty'])} Demon)")
-    return hits[int(input())]
+    logger.info("Multiple levels found, manual selection required")
+    return None
 
 # ---------- 并发队列控制 ----------
 class RateLimiter:
@@ -347,19 +290,15 @@ def enrich_levels_with_ids(
         except Exception as e:
             logger.error(f"Error fetching metadata for '{name}' by '{creator_raw}': {e}")
 
-    if MANUAL_FALLBACK:
-        for level, name, creator_raw, creator_norm in to_fetch:
-            fetch_one(level,name,creator_raw, creator_norm)
-    else:
-        # 使用线程池并发
-        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
-            futures = [
-                executor.submit(fetch_one, level, name, creator_raw, creator_norm)
-                for level, name, creator_raw, creator_norm in to_fetch
-            ]
-            # 等待所有任务完成
-            for future in as_completed(futures):
-                future.result()  # 抛出异常（如果有）
+    # 使用线程池并发
+    with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+        futures = [
+            executor.submit(fetch_one, level, name, creator_raw, creator_norm)
+            for level, name, creator_raw, creator_norm in to_fetch
+        ]
+        # 等待所有任务完成
+        for future in as_completed(futures):
+            future.result()  # 抛出异常（如果有）
 
     # 保存缓存，并清理未匹配清单
     cache.extend(new_entries)

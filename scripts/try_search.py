@@ -23,59 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _bootstrap import REPO_ROOT, import_submodule
 
-MIN_ID_LEN = 4  # 和 __init__.py 里判断"这串数字是不是 id"的规则保持一致
-
-
-def reload_all() -> None:
-    """等价于插件里的 reload_all()，但不需要 import 整个插件包"""
-    for name in ("api.nlwapi", "api.platapi", "api.aredlapi"):
-        module = import_submodule(name)
-        module.reload()
-
-
-def search_by_name(name: str) -> list:
-    """复刻 __init__.py 里的 search_by_name，数据源和顺序保持一致"""
-    gddlapi = import_submodule("api.gddlapi")
-    nlwapi = import_submodule("api.nlwapi")
-    platapi = import_submodule("api.platapi")
-
-    normalized = name.strip().lower()
-    results: dict[int, dict] = {}
-
-    def add(level_id, lname, creator=None, tier=None, difficulty=None) -> None:
-        if level_id is None:
-            return
-        if level_id in results:
-            item = results[level_id]
-            item["creator"] = item["creator"] or creator
-            item["tier"] = item["tier"] or tier
-            return
-        results[level_id] = {
-            "id": level_id, "name": lname, "creator": creator,
-            "tier": tier, "difficulty": difficulty, "src": [],
-        }
-
-    for level in gddlapi.Gddl.getlevelsbyname(name) or []:
-        if not level or not getattr(level, "Meta", None):
-            continue
-        if getattr(level.Meta, "Name", "").strip().lower() == normalized:
-            add(
-                int(level.ID), level.Meta.Name, None,
-                str(round(level.Rating, 2)) if level.Rating else None,
-                level.Meta.Difficulty + (" Pemon" if level.is_pemon() else " Demon"),
-            )
-            results[int(level.ID)]["src"].append("GDDL")
-
-    for level in nlwapi.Nlw.getlevelbyname(name):
-        add(int(level.id or 0), level.name, getattr(level, "creator", None), None)
-        results[int(level.id or 0)]["src"].append(level.source)
-
-    plat_info = platapi.Platapi.getlevelbyname(name)
-    if plat_info:
-        add(int(plat_info.id), plat_info.name, plat_info.creator, plat_info.tier, None)
-        results[int(plat_info.id)]["src"].append("Plat")
-
-    return list(results.values())
+MIN_ID_LEN = 5  # 和 commands/search.py 的 MIN_ID_LENGTH 保持一致
 
 
 def _get_level(gdapi, level_id: int):
@@ -102,9 +50,10 @@ async def run(query: str, out: Path, do_reload: bool) -> int:
 
     if do_reload:
         print("== 先重载一遍本地缓存")
-        reload_all()
+        for name in ("api.nlwapi", "api.platapi", "api.aredlapi"):
+            import_submodule(name).reload()
 
-    if len(query) > MIN_ID_LEN and query.isdigit():
+    if len(query) >= MIN_ID_LEN and query.isdigit():
         print(f"== 按 id 查 {query}")
         level = _get_level(gdapi, int(query))
         if not level:
@@ -113,19 +62,19 @@ async def run(query: str, out: Path, do_reload: bool) -> int:
     else:
         print(f"== 按名字查 {query!r}")
         started = time.time()
-        results = search_by_name(query)
+        search = import_submodule("services.search")
+        results = search.search_by_name(query) or []
         print(f"   命中 {len(results)} 条，用了 {time.time() - started:.1f}s")
         for i, r in enumerate(results, start=1):
-            creator = f" by {r['creator']}" if r["creator"] else ""
-            tier = f" t{r['tier']}" if r["tier"] else ""
-            src = "/".join(r["src"]) or "?"
-            print(f"   {i}. {r['name']}{creator}{tier} (ID: {r['id']}) [{src}]")
+            creator = f" by {r.creator}" if r.creator else ""
+            tier = f" t{r.tier}" if r.tier else ""
+            print(f"   {i}. {r.name}{creator}{tier} (ID: {r.id})")
         if not results:
             print("! 一条都没查到。data/ 里没缓存的话这是正常的，先跑 run_updater.py")
             return 1
-        level = _get_level(gdapi, results[0]["id"])
+        level = _get_level(gdapi, results[0].id)
         if not level:
-            print(f"! 拿不到关卡详情，id={results[0]['id']}")
+            print(f"! 拿不到关卡详情，id={results[0].id}")
             return 1
 
     print(f"== 出图：{level.level_name}")

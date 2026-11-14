@@ -31,13 +31,6 @@ PUBLISHED_FILES = (
     "ratedplus.json",
 )
 
-# Intermediate inputs for platbatch; they are intentionally not published.
-INTERMEDIATE_FILES = (
-    "tpl.json",
-    "pemonlist.json",
-    "platdiff.json",
-)
-
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)

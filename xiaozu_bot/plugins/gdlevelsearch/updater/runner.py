@@ -35,7 +35,7 @@ JOBS: dict[str, Callable[[], None]] = {
     "platdiff": platdiff.fetch,
     "tpl": tpl.fetch,
     "pemonlist": pemonlist.fetch,
-    "platbatch": platbatch.batch,
+    "platbatch": platbatch.batch_process,
     "sfh": sfh.fetch,
     "ratedplus": ratedplus.fetch,
     "getmetadata": getmetadata.main,
@@ -104,10 +104,9 @@ async def run_all_async(stop_on_error: bool = True) -> dict:
                 )
                 break
 
-        fatal_failures = list(results["failed"])
-        if fatal_failures:
+        if results["failed"]:
             # Keep staging intact so operators can inspect the failed output.
-            raise RuntimeError(f"Updater failed: {fatal_failures}")
+            raise RuntimeError(f"Updater failed: {results['failed']}")
 
         results["published"] = publish()
         logger.info(f"[RUNNER] finished: {results}")

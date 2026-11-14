@@ -15,11 +15,9 @@ aredlapi 有模块级全局（aredllevels / arepllevels / aredl_dict）和落盘
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
 
@@ -63,13 +61,6 @@ def kv(fields: dict[int, str]) -> str:
 def b64(text: str) -> str:
     """按 GD 的习惯做 url-safe base64（描述字段用的就是这个）。"""
     return base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii")
-
-
-def xor_password(plain: str) -> str:
-    """按 GDLevel.XOR_KEY 反向算一个密码密文，用来测 decrypt_password 往返。"""
-    key = GDLevel.XOR_KEY.encode("utf-8")
-    raw = bytes(b ^ key[i % len(key)] for i, b in enumerate(plain.encode("utf-8")))
-    return base64.b64encode(raw).decode("ascii")
 
 
 def make_level(**fields: Any) -> GDLevel:
@@ -434,11 +425,6 @@ class TestGDLevelFromServerResponse:
         assert level.level_name == "X"
         assert not hasattr(level, "unknown_999")
 
-    def test_from_string_is_an_alias(self) -> None:
-        a = GDLevel.from_string(LEVEL_A)
-        b = GDLevel.from_server_response(LEVEL_A)
-        assert a.to_dict() == b.to_dict()
-
     def test_truncated_payload_keeps_what_it_could_read(self) -> None:
         """截断在半路的响应不抛异常，读到哪算哪。"""
         level = GDLevel.from_server_response("1:10565740:2:Bloodbath:18")
@@ -464,44 +450,43 @@ class TestGDLevelFromServerResponse:
 # ==========================================================================
 # GDLevel 歌曲相关
 # ==========================================================================
-# song_id / song_name / song_author / _get_song_display 读的是同一组输入
-# （song_info、official_song、custom_song_id），分支也一一对应，
-# 所以合成一张表：(song_info, official_song, custom_song_id) -> 四个输出。
-SONG_TABLE: list[tuple[Any, Any, Any, Any, str, str, str | None]] = [
+# song_id / song_name / song_author 读的是同一组输入
+# （song_info、official_song、custom_song_id），分支一一对应，
+# 所以合成一张表：(song_info, official_song, custom_song_id) -> 三个输出。
+SONG_TABLE: list[tuple[Any, Any, Any, Any, str, str]] = [
     # song_info 存在时压过一切（song_id 仍然只看 custom_song_id）
     (
         {"name": "NONG", "artist_name": "Nobody", "id": 1},
         13, 467339,
-        467339, "NONG", "Nobody", "NONG by Nobody (NG ID:1)",
+        467339, "NONG", "Nobody",
     ),
     # 有自定义歌曲 ID 但没拿到歌曲信息
-    (None, None, 467339, 467339, "Unknown", "Unknown", "Custom song (ID:467339) not loaded"),
+    (None, None, 467339, 467339, "Unknown", "Unknown"),
     # 官方歌曲：song_id 取负，跟 NG 的自定义 ID 区分开
-    (None, 13, 0, -13, "Clubstep", "DJ-Nate", "Clubstep by DJ-Nate (Official)"),
+    (None, 13, 0, -13, "Clubstep", "DJ-Nate"),
     # Stereo Madness（官方 0 号）取负还是 0，跟「没有歌曲」不好区分
-    (None, 0, 0, 0, "Stereo Madness", "Foreverbound", "Stereo Madness by Foreverbound (Official)"),
+    (None, 0, 0, 0, "Stereo Madness", "Foreverbound"),
     # custom_song_id 是 None 时退回官方歌曲
-    (None, 21, None, -21, "Dash", "MDK", "Dash by MDK (Official)"),
+    (None, 21, None, -21, "Dash", "MDK"),
     # 什么都没有
-    (None, None, None, None, "Unknown", "Unknown", None),
+    (None, None, None, None, "Unknown", "Unknown"),
     # 官方歌曲表里没有的编号：名字兜底成 Unknown，展示串直接没有
-    (None, 999, 0, -999, "Unknown", "Unknown", None),
-    (None, -2, 0, 2, "Unknown", "Unknown", None),
+    (None, 999, 0, -999, "Unknown", "Unknown"),
+    (None, -2, 0, 2, "Unknown", "Unknown"),
 ]
 
 
 class TestGDLevelSong:
     def test_song_lookup_table(self) -> None:
-        """整张歌曲取舍表一次走完，四个输出一起对。"""
+        """整张歌曲取舍表一次走完，三个输出一起对。"""
         for row in SONG_TABLE:
-            song_info, official, custom, song_id, name, author, display = row
+            song_info, official, custom, song_id, name, author = row
             level = make_level(
                 song_info=song_info, official_song=official, custom_song_id=custom
             )
             assert level.song_id == song_id, row
             assert level.song_name == name, row
             assert level.song_author == author, row
-            assert level._get_song_display() == display, row
 
     def test_song_info_missing_keys_returns_none(self) -> None:
         """song_info 存在但缺 key 时返回 None（不会退回官方歌曲表）。"""
@@ -509,57 +494,30 @@ class TestGDLevelSong:
         assert level.song_name is None
         assert level.song_author is None
 
-    def test_display_string_with_song(self) -> None:
-        level = GDLevel.from_server_response(LEVEL_A)
-        level.creator_name = "Riot"
-        level.song_info = {"name": "ATSOL", "artist_name": "Dimrain47", "id": 467339}
-        assert level.get_display_string() == (
-            "Bloodbath by Riot (ID:10565740) - Stars:10 "
-            "[ATSOL by Dimrain47 (NG ID:467339)]"
-        )
-
-    def test_display_string_unknown_creator_and_no_song(self) -> None:
-        level = make_level(
-            level_name="Nameless",
-            level_id=1,
-            stars=0,
-            official_song=None,
-            custom_song_id=0,
-        )
-        assert level.get_display_string() == "Nameless by Unknown (ID:1) - Stars:0"
-
-    def test_display_string_omits_stars_when_none(self) -> None:
-        """stars 为 None 时整段星级都不显示。"""
-        level = make_level(
-            level_name="X", level_id=2, official_song=None, custom_song_id=0
-        )
-        assert level.get_display_string() == "X by Unknown (ID:2)"
-
 
 # ==========================================================================
 # GDLevel 长度 / demon 判定
 # ==========================================================================
 class TestGDLevelFlags:
-    # (length, is_demon) -> (is_plat, is_pemon, is_demon_detail)
-    # 三个方法读的是同一对字段，合成一张表一次走完。
-    FLAG_TABLE: list[tuple[Any, Any, bool, bool, bool]] = [
-        (4, False, False, False, False),
-        (5, False, True, False, False),      # 长度 5 就是 platformer
-        (6, False, False, False, False),     # 越界的长度也不算 plat
-        (None, False, False, False, False),  # 长度缺失时不算 plat，而不是报错
-        ("5", False, True, False, False),    # int() 转换是显式的，字符串 "5" 也算
-        (3, True, False, False, True),       # 普通 demon
-        (5, True, True, True, False),        # platformer demon = pemon
-        (None, True, False, False, True),    # 长度缺失时按非 plat 处理
+    # (length, is_demon) -> (is_plat, is_pemon)
+    # 两个方法读的是同一对字段，合成一张表一次走完。
+    FLAG_TABLE: list[tuple[Any, Any, bool, bool]] = [
+        (4, False, False, False),
+        (5, False, True, False),      # 长度 5 就是 platformer
+        (6, False, False, False),     # 越界的长度也不算 plat
+        (None, False, False, False),  # 长度缺失时不算 plat，而不是报错
+        ("5", False, True, False),    # int() 转换是显式的，字符串 "5" 也算
+        (3, True, False, False),      # 普通 demon
+        (5, True, True, True),        # platformer demon = pemon
+        (None, True, False, False),   # 长度缺失时按非 plat 处理
     ]
 
     def test_flag_table(self) -> None:
         for row in self.FLAG_TABLE:
-            length, is_demon, plat, pemon, demon_detail = row
+            length, is_demon, plat, pemon = row
             level = make_level(length=length, is_demon=is_demon)
             assert level.is_plat() is plat, row
             assert level.is_pemon() is pemon, row
-            assert level.is_demon_detail() is demon_detail, row
 
 
 # ==========================================================================
@@ -635,39 +593,6 @@ class TestDifficultyLabel:
     def test_label_reads_stars_via_int(self) -> None:
         """stars 是字符串时也能工作（int() 显式转换过）。"""
         assert make_level(stars="4", length=3).difficulty_label() == "4⭐hard"
-
-
-# ==========================================================================
-# decrypt_password
-# ==========================================================================
-class TestDecryptPassword:
-    @pytest.mark.parametrize("value", [None, ""])
-    def test_falsy_password_returns_none(self, value: str | None) -> None:
-        assert make_level(password=value).decrypt_password() is None
-
-    @pytest.mark.parametrize("plain", ["1123456", "0", "1000000", "1"])
-    def test_round_trip(self, plain: str) -> None:
-        """XOR key 是 "26364"，密文 base64 解开再逐字节异或就是明文。"""
-        level = make_level(password=xor_password(plain))
-        assert level.decrypt_password() == plain
-
-    def test_non_utf8_result_falls_back_to_hex(self) -> None:
-        """解出来不是合法 utf-8 时给十六进制串，不抛异常。"""
-        payload = bytes([0xFF, 0xFE, 0x80])
-        key = GDLevel.XOR_KEY.encode()
-        cipher = bytes(b ^ key[i % len(key)] for i, b in enumerate(payload))
-        level = make_level(password=base64.b64encode(cipher).decode())
-        assert level.decrypt_password() == "fffe80"
-
-    def test_plain_zero_password_crashes(self) -> None:
-        """GD 对「不可复制」的关卡直接返回字面量 "0"，它不是合法 base64。
-
-        `decrypt_password()` 只兜了 UnicodeDecodeError，binascii.Error 会直接抛出去。
-        这是生产代码的问题，测试只把现状钉住。
-        """
-        level = make_level(password="0")
-        with pytest.raises(binascii.Error):
-            level.decrypt_password()
 
 
 # ==========================================================================
@@ -748,12 +673,6 @@ class TestGDUser:
         """脏的列表字段会让整个用户解析抛异常（comma_int_list 没有兜底）。"""
         with pytest.raises(ValueError, match="invalid literal for int"):
             GDUser.from_server_response("1:Riot:2:1:55:1,oops")
-
-    def test_from_string_is_an_alias(self) -> None:
-        assert (
-            GDUser.from_string(USER_RESPONSE).to_dict()
-            == GDUser.from_server_response(USER_RESPONSE).to_dict()
-        )
 
     def test_repr(self) -> None:
         user = GDUser.from_server_response(USER_RESPONSE)
@@ -896,12 +815,6 @@ class TestGDSongInfo:
         assert isinstance(song, GDSongInfo)
         assert song.name is None
 
-    def test_from_string_is_an_alias(self) -> None:
-        assert (
-            GDSongInfo.from_string(SONG_467339).to_dict()
-            == GDSongInfo.from_server_response(SONG_467339).to_dict()
-        )
-
     def test_to_dict_is_a_copy(self) -> None:
         song = GDSongInfo.from_server_response(SONG_467339)
         dumped = song.to_dict()
@@ -1004,14 +917,6 @@ class TestGetSongUsage:
         assert gdapi.get_song_usage(1) is None
         assert len(stub_requests.calls) == gdapi.GD_RETRIES
 
-    def test_non_text_response_returns_none(self, monkeypatch: Any) -> None:
-        """防御分支：httpx 的 .text 永远是 str，只能用替身触发。"""
-        monkeypatch.setattr(
-            gdapi, "http_request", lambda *_a, **_k: SimpleNamespace(text=None)
-        )
-
-        assert gdapi.get_song_usage(1) is None
-
 
 # ==========================================================================
 # get_song_info
@@ -1105,14 +1010,6 @@ class TestGetSongInfo:
             song.usage_detail,
         ) == (None, None, None, None)
 
-    def test_non_text_song_response_returns_none(self, monkeypatch: Any) -> None:
-        """防御分支，同 get_song_usage；非文本响应连 usage 都不去查。"""
-        monkeypatch.setattr(
-            gdapi, "http_request", lambda *_a, **_k: SimpleNamespace(text=None)
-        )
-
-        assert gdapi.get_song_info(1) is None
-
 
 # ==========================================================================
 # SearchPage
@@ -1152,7 +1049,7 @@ class TestSearchPage:
 class TestSearchLevelsRequest:
     def test_default_payload(self, stub_requests: Any) -> None:
         stub_requests.post(GD_LEVELS_URL, text="-1")
-        gdapi.search_levels(query="bloodbath")
+        gdapi._search_levels(query="bloodbath")
         call = stub_requests.calls[0]
         assert call["method"] == "POST"
         assert call["url"] == GD_LEVELS_URL
@@ -1171,138 +1068,24 @@ class TestSearchLevelsRequest:
     def test_query_none_omits_str(self, stub_requests: Any) -> None:
         """query 为 None 时不发 str 参数（用来做「按类型列表」而不是关键词搜）。"""
         stub_requests.post(GD_LEVELS_URL, text="-1")
-        gdapi.search_levels(query=None, page=3, search_type=6)
+        gdapi._search_levels(query=None, page=3)
         data = stub_requests.calls[0]["data"]
         assert "str" not in data
         assert data["page"] == 3
-        assert data["type"] == 6
 
     def test_empty_query_is_still_sent(self, stub_requests: Any) -> None:
         """空串不是 None，会被原样发出去。"""
         stub_requests.post(GD_LEVELS_URL, text="-1")
-        gdapi.search_levels(query="")
+        gdapi._search_levels(query="")
         assert stub_requests.calls[0]["data"]["str"] == ""
 
-    def test_bool_params_become_one_or_zero(self, stub_requests: Any) -> None:
-        """布尔筛选 True→"1"、False→"0"、None→整个参数不发。"""
+    def test_filters_are_mapped_to_gd_names(self, stub_requests: Any) -> None:
         stub_requests.post(GD_LEVELS_URL, text="-1")
-        gdapi.search_levels(
-            query="x",
-            featured=True,
-            original=False,
-            two_player=True,
-            coins=False,
-            epic=True,
-            legendary=False,
-            mythic=True,
-            no_star=False,
-            star=True,
-            custom_song=False,
-            uncompleted=True,
-            only_completed=False,
-            local=True,
-        )
+        gdapi._search_levels(query="x", diff=-2, demon_filter=5, star=True)
         data = stub_requests.calls[0]["data"]
-        assert data["featured"] == "1"
-        assert data["original"] == "0"
-        assert data["twoPlayer"] == "1"
-        assert data["coins"] == "0"
-        assert data["epic"] == "1"
-        assert data["legendary"] == "0"
-        assert data["mythic"] == "1"
-        assert data["noStar"] == "0"
-        assert data["star"] == "1"
-        assert data["customSong"] == "0"
-        assert data["uncompleted"] == "1"
-        assert data["onlyCompleted"] == "0"
-        assert data["local"] == "1"
-
-    def test_bool_params_omitted_when_none(self, stub_requests: Any) -> None:
-        stub_requests.post(GD_LEVELS_URL, text="-1")
-        gdapi.search_levels(query="x")
-        data = stub_requests.calls[0]["data"]
-        for name in (
-            "featured",
-            "original",
-            "twoPlayer",
-            "coins",
-            "epic",
-            "legendary",
-            "mythic",
-            "noStar",
-            "star",
-            "customSong",
-            "uncompleted",
-            "onlyCompleted",
-            "local",
-        ):
-            assert name not in data
-
-    def test_optional_params_are_renamed(self, stub_requests: Any) -> None:
-        """python 侧的下划线名要映射成 GD 的驼峰 / 缩写参数名。"""
-        stub_requests.post(GD_LEVELS_URL, text="-1")
-        gdapi.search_levels(
-            query="x",
-            diff="-2",
-            demon_filter=5,
-            length="5",
-            song=467339,
-            completed_levels="(1,2,3)",
-            gauntlet=7,
-            account_id=1234,
-            gjp2="hash",
-            udid="udid-x",
-            uuid="uuid-y",
-        )
-        data = stub_requests.calls[0]["data"]
-        assert data["diff"] == "-2"
+        assert data["diff"] == -2
         assert data["demonFilter"] == 5
-        assert data["len"] == "5"
-        assert data["song"] == 467339
-        assert data["completedLevels"] == "(1,2,3)"
-        assert data["gauntlet"] == 7
-        assert data["accountID"] == 1234
-        assert data["gjp2"] == "hash"
-        assert data["udid"] == "udid-x"
-        assert data["uuid"] == "uuid-y"
-
-    def test_optional_params_omitted_when_none(self, stub_requests: Any) -> None:
-        stub_requests.post(GD_LEVELS_URL, text="-1")
-        gdapi.search_levels(query="x")
-        data = stub_requests.calls[0]["data"]
-        for name in (
-            "diff",
-            "len",
-            "demonFilter",
-            "song",
-            "completedLevels",
-            "gauntlet",
-            "accountID",
-            "gjp2",
-            "udid",
-            "uuid",
-        ):
-            assert name not in data
-
-    def test_version_overrides(self, stub_requests: Any) -> None:
-        stub_requests.post(GD_LEVELS_URL, text="-1")
-        gdapi.search_levels(query="x", game_version=21, binary_version=35, gdw=1)
-        data = stub_requests.calls[0]["data"]
-        assert data["gameVersion"] == 21
-        assert data["binaryVersion"] == 35
-        assert data["gdw"] == 1
-
-    def test_extra_kwargs_are_passed_through_raw(self, stub_requests: Any) -> None:
-        """没显式声明的参数原样塞进表单，方便试 GD 的新字段。"""
-        stub_requests.post(GD_LEVELS_URL, text="-1")
-        gdapi.search_levels(query="x", someNewParam="42")
-        assert stub_requests.calls[0]["data"]["someNewParam"] == "42"
-
-    def test_kwargs_override_computed_values(self, stub_requests: Any) -> None:
-        """kwargs 是最后 update 的，能盖掉前面算好的值。"""
-        stub_requests.post(GD_LEVELS_URL, text="-1")
-        gdapi.search_levels(query="x", secret="overridden")
-        assert stub_requests.calls[0]["data"]["secret"] == "overridden"
+        assert data["star"] == "1"
 
 
 # ==========================================================================
@@ -1357,7 +1140,7 @@ class TestSearchLevelsResponse:
     def test_unknown_custom_song_shows_stereo_madness(self, stub_requests: Any) -> None:
         """custom_song_id 在歌曲段里找不到时 song_info 为 None。
 
-        然后 `_get_song_display()` 会**错误地**显示成 "Stereo Madness"：
+        song_name 会**错误地**显示成 "Stereo Madness"：
         用自定义歌曲的关卡，字段 12（official_song）真实值就是 0，
         而 0 在 OFFICIAL_SONG_MAP 里正好是 Stereo Madness，
         官方歌曲那条分支排在 custom 兜底前面，于是永远先命中。
@@ -1369,18 +1152,17 @@ class TestSearchLevelsResponse:
         assert level.custom_song_id == 467339
         assert level.official_song == 0
         assert level.song_info is None
-        assert level._get_song_display() == "Stereo Madness by Foreverbound (Official)"
         assert level.song_name == "Stereo Madness"
 
     def test_not_loaded_branch_needs_absent_official_song(
         self, stub_requests: Any
     ) -> None:
-        """只有响应里根本没给字段 12 时，才走得到「Custom song not loaded」那条兜底。"""
+        """只有响应里根本没给字段 12 时，song_name 才落到 Unknown。"""
         no_track = kv({k: v for k, v in LEVEL_A_FIELDS.items() if k != 12})
         stub_requests.post(GD_LEVELS_URL, text=search_response(levels=no_track, songs=""))
         level = gdapi.search_levels_page(query="x").levels[0]
         assert level.official_song is None
-        assert level._get_song_display() == "Custom song (ID:467339) not loaded"
+        assert level.song_name == "Unknown"
 
     def test_multiple_songs(self, stub_requests: Any) -> None:
         second = "1~|~123~|~2~|~Other~|~3~|~9~|~4~|~Someone~|~5~|~1.0~|~10~|~x"
@@ -1406,13 +1188,6 @@ class TestSearchLevelsResponse:
         )
         page = gdapi.search_levels_page(query="x")
         assert len(page.levels) == 2
-
-    def test_search_levels_returns_plain_list(self, stub_requests: Any) -> None:
-        """search_levels 是 search_levels_page 的「只要列表」版。"""
-        stub_requests.post(GD_LEVELS_URL, text=search_response())
-        levels = gdapi.search_levels(query="x")
-        assert isinstance(levels, list)
-        assert [lv.level_id for lv in levels] == [10565740, 90000001]
 
     def test_response_is_stripped(self, stub_requests: Any) -> None:
         """响应两头的空白会被 strip 掉，"-1\\n" 也算空页。"""
@@ -1676,10 +1451,6 @@ class TestGetUserInfo:
 
     def test_request_exception_returns_none(self, stub_requests: Any) -> None:
         stub_requests.post(GD_USERINFO_URL, requests.Timeout("timeout"))
-        assert gdapi.get_user_info(1) is None
-
-    def test_non_text_response_returns_none(self, stub_requests: Any) -> None:
-        stub_requests.post(GD_USERINFO_URL, text=None)
         assert gdapi.get_user_info(1) is None
 
 
@@ -2163,13 +1934,6 @@ class TestAredlGetLevelById:
         level = AREDLLevel(aredl_dict_payload(level_id=100))
         aredlapi.aredl_dict.clear()
         aredlapi.aredl_dict[100] = level
-        assert Aredl.getlevelbyid(100) is level
-
-    def test_falls_back_to_linear_scan(self, aredl_globals: Any) -> None:
-        """字典没建好时还有一条线性扫描的兜底路径。"""
-        level = AREDLLevel(aredl_dict_payload(level_id=100))
-        aredlapi.aredl_dict.clear()
-        aredlapi.aredllevels[:] = [level]
         assert Aredl.getlevelbyid(100) is level
 
     def test_dict_wins_over_list(self, aredl_globals: Any) -> None:

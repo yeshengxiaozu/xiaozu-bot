@@ -196,11 +196,6 @@ class PlatData:
             return None
         return self.by_name.get(name.strip().lower())
 
-    def to_dict(self) -> dict[str, Any]:
-        # 原来 self.__dict__.copy() 会把所有索引也复制进去。
-        # 如果只是导出关卡数据，这样更轻量；如果不需要 to_dict，也可以直接删掉。
-        return {"entries": [entry.to_dict() for entry in self.entries]}
-
 
 platdata = PlatData()
 platdata_entries: list[PlatInfo] = platdata.entries
