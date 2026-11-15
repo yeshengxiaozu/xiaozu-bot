@@ -177,6 +177,47 @@ async def gddl_snapshot_refresh_job() -> None:
         logger.info("[GDDL] snapshot refresh completed")
 
 
+async def _report_pipeline_error(err: Exception) -> None:
+    """Report a pipeline-level crash without letting the notification crash."""
+    from .notify import report_error
+
+    try:
+        await report_error(
+            title="数据更新失败",
+            err=err,
+            context={"job": "daily_update", "stage": "run_all"},
+        )
+    except Exception:
+        logger.exception("[UPDATER] 发送错误通知失败")
+
+
+async def _report_partial_failure(result: dict) -> None:
+    """Report the failed/skipped jobs, but never treat them as a total outage."""
+    from .notify import report_error
+
+    entries = list(result.get("failed") or []) + list(result.get("skipped") or [])
+    summary = "; ".join(
+        f"{entry.get('job')}: {entry.get('error') or entry.get('reason')}"
+        for entry in entries
+    )
+    stamp = result.get("finished_at")
+    # The notification dedup key is the error text; include the run time so a
+    # recurring failure is reported once per run instead of once forever.
+    err = RuntimeError(f"[{stamp}] {summary or '部分任务未完成'}")
+    try:
+        await report_error(
+            title="数据更新部分失败",
+            err=err,
+            context={
+                "job": "daily_update",
+                "stage": "partial",
+                "published": result.get("published") or [],
+            },
+        )
+    except Exception:
+        logger.exception("[UPDATER] 发送部分失败通知失败")
+
+
 async def daily_update_job() -> None:
     """
     每日自动更新入口。
@@ -192,7 +233,7 @@ async def daily_update_job() -> None:
     两者完全独立：
         - GDDL 失败不会导致主 updater 失败
         - 主 updater 失败不会取消 GDDL
-        - 主 updater 完成后立即执行 reload_all()
+        - 无论主 updater 是全部成功还是部分失败，都要执行 reload_all()
         - 不需要等待 GDDL 完成
     """
     logger.info("[UPDATER] 开始执行每日数据更新")
@@ -205,43 +246,27 @@ async def daily_update_job() -> None:
         gddl_update_job()
     )
 
+    result: dict | None = None
     try:
-        # 主 updater 正常执行。
         result = await run_all_async()
-
-        logger.info(
-            f"[UPDATER] 主数据更新完成: {result}"
-        )
-
-        # 抓完必须重载，否则新数据要等下次重启才生效。
-        from .. import reload_all
-
-        # reload_all 里 aredl 那步需要网络请求，
-        # 不能直接堵塞事件循环。
-        await asyncio.to_thread(reload_all)
-
-        logger.info("[UPDATER] 数据重载完成")
-
+        logger.info(f"[UPDATER] 主数据更新完成: {result}")
     except Exception as e:
-        logger.exception(
-            "[UPDATER] 主 updater 更新失败"
-        )
-
-        from .notify import report_error
-
+        logger.exception("[UPDATER] 主 updater 更新失败")
+        await _report_pipeline_error(e)
+    finally:
+        # reload_all 里 aredl 那步需要网络请求，不能直接堵塞事件循环。
+        # 部分失败也必须重载：成功的分支已经发布了新文件，而 aredl 的刷新
+        # 就挂在这一步，跳过它会让 aredl 一直停在过期的缓存上。
         try:
-            await report_error(
-                title="数据更新失败",
-                err=e,
-                context={
-                    "job": "daily_update",
-                    "stage": "run_all",
-                },
-            )
+            from .. import reload_all
+
+            await asyncio.to_thread(reload_all)
+            logger.info("[UPDATER] 数据重载完成")
         except Exception:
-            logger.exception(
-                "[UPDATER] 发送错误通知失败"
-            )
+            logger.exception("[UPDATER] 数据重载失败")
+
+    if result is not None and (result.get("failed") or result.get("skipped")):
+        await _report_partial_failure(result)
 
 
 def _register_cron(job_id: str, hour: int, func, label: str) -> bool:

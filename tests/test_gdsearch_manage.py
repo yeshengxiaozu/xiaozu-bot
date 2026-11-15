@@ -19,12 +19,14 @@ from xiaozu_bot.plugins.gdlevelsearch import (
     gdsearchstatus,
 )
 from xiaozu_bot.plugins.gdlevelsearch.commands import manage
+from xiaozu_bot.plugins.gdlevelsearch.updater import runner
 
 
 @pytest.fixture(autouse=True)
 def _clean_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
-    """每个用例独立的会话状态。"""
+    """每个用例独立的会话状态与上一次更新状态。"""
     monkeypatch.setattr(manage, "manage_sessions", {})
+    monkeypatch.setattr(runner, "load_last_run", lambda: None)
 
 
 @pytest.fixture
@@ -231,6 +233,42 @@ class TestGdsearchStatus:
         text = sent_texts(fake_bot)[-1]
         assert "待手动匹配关卡：0" in text
         assert "无" in text
+        assert "上一次更新：无记录" in text
+        assert "失败 job：无" in text
+
+    async def test_status_列出上一次更新的失败_job(
+        self,
+        fake_bot: FakeBot,
+        make_group_event: Any,
+        manage_paths: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(manage.paths, "DATA_DIR", manage_paths)
+        monkeypatch.setattr(
+            runner,
+            "load_last_run",
+            lambda: {
+                "finished_at": 1730000000.0,
+                "success": ["nlw", "lists"],
+                "failed": [
+                    {"job": "idl", "error": "预期连续的 150 个排名", "type": "RuntimeError"},
+                    {"job": "getmetadata:hds_levels.json", "error": "写回失败", "type": "OSError"},
+                ],
+                "skipped": [
+                    {"job": "platbatch", "reason": "上游未全部成功", "missing": ["tpl"]}
+                ],
+                "published": ["nlw_levels.json"],
+            },
+        )
+
+        await run_handler(gdsearchstatus, fake_bot, make_group_event("*gdsearch_status"))
+
+        text = sent_texts(fake_bot)[-1]
+        assert "上一次更新：" in text
+        assert "成功 2、失败 2、跳过 1、发布 1 个文件" in text
+        assert "失败 job：idl [RuntimeError] 预期连续的 150 个排名" in text
+        assert "失败 job：getmetadata:hds_levels.json [OSError] 写回失败" in text
+        assert "跳过 job：platbatch（上游未全部成功：tpl）" in text
 
 
 # ==========================================================================

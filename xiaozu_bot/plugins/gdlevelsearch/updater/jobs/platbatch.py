@@ -386,6 +386,9 @@ def clean_level_data(level: PlatLevel) -> None:
 def batch_process():
     """
     主函数：合并数据并处理附属词条
+
+    The runner schedules this job only when all three upstreams wrote fresh
+    staging files. A partial input set must never be merged or published.
     """
 
     # 合并数据

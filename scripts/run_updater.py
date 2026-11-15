@@ -3,9 +3,13 @@
 
 用法（必须在仓库根目录跑，因为有几个模块用的是相对 CWD 的路径）：
 
-    python scripts/run_updater.py            # 跑全部任务，遇错即停
-    python scripts/run_updater.py --continue  # 某个任务挂了也接着跑后面的
+    python scripts/run_updater.py            # 跑全部任务，按依赖闭包发布
+    python scripts/run_updater.py --continue  # 只影响下面「指定任务」模式
     python scripts/run_updater.py nlw ids     # 只跑指定的任务
+
+完整流水线永远跑完所有互不相关的任务：单个任务失败只跳过它的直接下游，
+成功分支照常发布，失败分支保留 data/ 里的旧快照。--continue 只控制
+「指定任务」模式遇错后要不要接着跑后面的任务。
 
 跑完会打印每个任务的成败，以及 data/ 下各个 json 的大小和更新时间。
 """
@@ -36,7 +40,7 @@ def main() -> int:
         "--continue",
         dest="keep_going",
         action="store_true",
-        help="某个任务失败也继续跑后面的",
+        help="指定任务模式下，某个任务失败也继续跑后面的",
     )
     args = parser.parse_args()
 
@@ -84,20 +88,31 @@ def main() -> int:
             moved = publish()
             print(f"\n已发布 {len(moved)} 个文件：{', '.join(moved) or '（无）'}")
     else:
-        # 跑完整流水线：分层并发，全绿才发布
-        print(f"== 跑完整流水线，共 {len(runner.STAGES)} 层")
-        for i, stage in enumerate(runner.STAGES, start=1):
-            print(f"   第 {i} 层（并发）：{', '.join(stage)}")
+        # 跑完整流水线：按直接依赖调度，只发布成功的闭包
+        print(f"== 跑完整流水线，共 {len(runner.JOBS)} 个任务")
+        for name, deps in runner.DEPS.items():
+            print(f"   依赖：{name} <- {', '.join(deps)}")
         try:
-            results = asyncio.run(runner.run_all_async(stop_on_error=not args.keep_going))
+            results = asyncio.run(runner.run_all_async())
         except Exception as e:
-            print(f"\n== 流水线失败：{e}")
-            print(f"   没有发布，data/ 保持上一次的样子；中间产物留在 {STAGING_DIR} 方便排查")
+            print(f"\n== 流水线异常：{e}")
+            print(f"   中间产物留在 {STAGING_DIR} 方便排查")
             return 1
         ok, failed = results["success"], results["failed"]
+        skipped = results.get("skipped") or []
         print(f"\n== 成功 {len(ok)}：{', '.join(ok)}")
+        if failed:
+            print(f"== 失败 {len(failed)}：")
+            for entry in failed:
+                print(f"   - {entry['job']} [{entry['type']}] {entry['error']}")
+        if skipped:
+            print(f"== 跳过 {len(skipped)}：")
+            for entry in skipped:
+                print(f"   - {entry['job']}：{entry['reason']}"
+                      f"（{', '.join(entry['missing'])}）")
         print(f"== 已发布 {len(results['published'])} 个文件："
               f"{', '.join(results['published']) or '（无）'}")
+        print("   失败分支的旧快照保持不动")
 
     print(f"\n== 共用时 {time.time() - started:.1f}s")
     for name, e in failed if args.jobs else []:

@@ -94,7 +94,12 @@ class TestDailyJobNeverEscapes:
         async def fake_report(**kw: Any) -> None:
             reported.append(kw.get("title", ""))
 
+        async def no_gddl() -> None:
+            """Keep the independent background job out of this assertion."""
+
         monkeypatch.setattr(updater, "run_all_async", boom)
+        monkeypatch.setattr(updater, "gddl_update_job", no_gddl)
+        monkeypatch.setattr(gdlevelsearch, "reload_all", lambda: None)
         monkeypatch.setattr(
             "xiaozu_bot.plugins.gdlevelsearch.updater.notify.report_error", fake_report
         )
@@ -141,7 +146,12 @@ class TestDailyJobNeverEscapes:
         def no_bots() -> Any:
             raise ValueError("There are no bots to get.")
 
+        async def no_gddl() -> None:
+            """Only the main pipeline is under test here."""
+
         monkeypatch.setattr(updater, "run_all_async", boom)
+        monkeypatch.setattr(updater, "gddl_update_job", no_gddl)
+        monkeypatch.setattr(gdlevelsearch, "reload_all", lambda: None)
         monkeypatch.setattr(notify, "get_bot", no_bots)
         monkeypatch.setattr(notify, "_last_error_key", None)
 

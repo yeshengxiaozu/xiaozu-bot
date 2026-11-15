@@ -2,7 +2,7 @@
 
 import asyncio
 
-from nonebot import on_command
+from nonebot import logger, on_command
 from nonebot.internal.adapter import Event
 from nonebot.permission import SUPERUSER
 
@@ -43,6 +43,25 @@ gdsearch_store_update = on_command(
 )
 
 
+def _format_partial(result: dict, failed: list, skipped: list) -> str:
+    lines = [
+        f"部分更新完成：成功 {len(result.get('success') or [])}、"
+        f"失败 {len(failed)}、跳过 {len(skipped)}，"
+        f"发布 {len(result.get('published') or [])} 个文件",
+        "失败分支保留旧快照；成功分支已发布并重载。",
+    ]
+    lines.extend(
+        f"失败 job：{entry.get('job')} [{entry.get('type')}] {entry.get('error')}"
+        for entry in failed
+    )
+    lines.extend(
+        f"跳过 job：{entry.get('job')}（{entry.get('reason')}："
+        f"{', '.join(entry.get('missing') or [])}）"
+        for entry in skipped
+    )
+    return "\n".join(lines)
+
+
 @update_cmd.handle()
 async def _handle(event: Event):
     from .. import reload_all  # 延迟导入，避免和插件包装配互相依赖
@@ -51,11 +70,22 @@ async def _handle(event: Event):
     try:
         result = await run_all_async()
     except Exception as e:
+        # A crash after publishing still leaves fresh files on disk.
+        try:
+            await asyncio.to_thread(reload_all)
+        except Exception:
+            logger.exception("[gdsearch_update] 更新失败后重载也失败")
         await update_cmd.finish(f"❌ 更新失败\n{e}")
-    else:
-        # 抓完立刻重载，这样不用重启就能查到新数据
-        await asyncio.to_thread(reload_all)
-        await update_cmd.finish(f"✅ 更新完成，缓存已重载\n{result}")
+        return
+
+    # Even a partial failure must reload: successful branches are live now,
+    # and aredlapi.reload() is one of the steps inside reload_all().
+    await asyncio.to_thread(reload_all)
+    failed = result.get("failed") or []
+    skipped = result.get("skipped") or []
+    if failed or skipped:
+        await update_cmd.finish(_format_partial(result, failed, skipped))
+    await update_cmd.finish(f"✅ 更新完成，缓存已重载\n{result}")
 
 
 @gdsearch_store_update.handle()

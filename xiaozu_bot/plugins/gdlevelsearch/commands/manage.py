@@ -52,7 +52,8 @@ USAGE = """*gdsearch_manage —— 手动给自动匹配失败的关卡补 id（
   输入「序号 关卡id」：把 id 写进 metadata 缓存并从未匹配清单移除
   n / p：翻页；结束：退出会话
   reload / 重载：只重读磁盘上的本地缓存，不抓网络（读坏了就保留旧数据）
-*gdsearch_status —— 查看待匹配数量、metadata 缓存与数据源状态（管理员）"""
+*gdsearch_status —— 查看待匹配数量、metadata 缓存、数据源状态
+                    与上一次更新的失败 job 列表（管理员）"""
 
 # session_id -> {"page": int, "expires_at": float}
 manage_sessions: dict[str, dict] = {}
@@ -268,6 +269,41 @@ def _fmt_time(ts: float | None) -> str:
 gdsearchstatus = on_command("gdsearch_status", permission=SUPERUSER, priority=1, block=True)
 
 
+def _format_last_run(last: dict | None) -> list[str]:
+    """Render the failed/skipped jobs recorded by the last updater run."""
+    if not last:
+        return ["上一次更新：无记录", "失败 job：无"]
+
+    ts = last.get("finished_at")
+    stamp = ts if isinstance(ts, (int, float)) else None
+    success = last.get("success") or []
+    failed = last.get("failed") or []
+    skipped = last.get("skipped") or []
+    published = last.get("published") or []
+    lines = [
+        f"上一次更新：{_fmt_time(stamp)}（成功 {len(success)}、失败 {len(failed)}、"
+        f"跳过 {len(skipped)}、发布 {len(published)} 个文件）"
+    ]
+
+    if not failed:
+        lines.append("失败 job：无")
+    for entry in failed:
+        if not isinstance(entry, dict):
+            lines.append(f"失败 job：{entry}")
+            continue
+        error = str(entry.get("error", ""))
+        lines.append(
+            f"失败 job：{entry.get('job')} [{entry.get('type', '')}] {error[:60]}"
+        )
+    lines.extend(
+        f"跳过 job：{entry.get('job')}（{entry.get('reason', '')}："
+        f"{', '.join(entry.get('missing') or [])}）"
+        for entry in skipped
+        if isinstance(entry, dict)
+    )
+    return lines
+
+
 def _collect_status() -> str:
     """把状态信息算出来。
 
@@ -300,6 +336,12 @@ def _collect_status() -> str:
         f"AREDL 关卡数：aredl {_file_count(aredl_path)}、arepl {_file_count(arepl_path)}",
         f"AREDL 最后修改时间（两者最早）：{_fmt_time(min(aredl_mtimes) if aredl_mtimes else None)}",
     ]
+
+    # The updater records every run in data/.updater_last_run.json. Read it here
+    # so a partial failure is visible without digging through bot logs.
+    from ..updater import runner as updater_runner
+
+    lines.extend(_format_last_run(updater_runner.load_last_run()))
     return "\n".join(lines)
 
 

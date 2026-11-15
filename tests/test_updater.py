@@ -2,10 +2,10 @@
 
 覆盖三块：
 
-1. `paths.py` —— staging / published 两级目录的划分，以及"跑完才发布"里
-   那个 `publish()` 的原子搬运语义；
-2. `runner.py` —— 分层并发编排，重点锁住 **任何一个 job 挂了就绝不发布**
-   这条不变量（commit 34cace4 就是为了它做的）；
+1. `paths.py` —— staging / published 两级目录的划分，以及 `publish(allowed)`
+   按依赖闭包发布的原子搬运语义；
+2. `runner.py` —— 直接依赖闭包调度，重点锁住 **单个 job 挂了只跳过它的
+   直接下游，互不相关的分支照常发布**（idl 连累 aredl 那类故障）；
 3. `jobs/*` —— 把"纯转换（原始表格列 -> 规整记录）"和"抓取"拆开，
    只测纯转换那一半，一个网络请求都不发。
 
@@ -234,6 +234,18 @@ class TestPaths:
         assert paths.publish() == ["lw_levels.json"]
         assert (data_dirs.data / "lw_levels.json").read_text(encoding="utf-8") == "new"
 
+    def test_publish_只发布_allowed_里的文件(self, data_dirs: SimpleNamespace) -> None:
+        (data_dirs.staging / "nlw_levels.json").write_text("new", encoding="utf-8")
+        (data_dirs.staging / "idl.json").write_text("new-idl", encoding="utf-8")
+        (data_dirs.data / "idl.json").write_text("old-idl", encoding="utf-8")
+
+        moved = paths.publish(allowed={"nlw_levels.json"})
+
+        assert moved == ["nlw_levels.json"]
+        assert (data_dirs.data / "idl.json").read_text(encoding="utf-8") == "old-idl"
+        # 闭包外的文件留在 staging 方便排查，线上保留旧快照
+        assert (data_dirs.staging / "idl.json").exists()
+
     def test_publish_staging_为空时返回空列表(
         self, data_dirs: SimpleNamespace
     ) -> None:
@@ -263,7 +275,7 @@ class TestPaths:
 
 
 # ==========================================================================
-# runner.py —— 分层并发 + "跑完才发布"
+# runner.py —— 直接依赖闭包调度
 # ==========================================================================
 @pytest.fixture
 def fresh_lock(monkeypatch: pytest.MonkeyPatch) -> asyncio.Lock:
@@ -278,14 +290,19 @@ def fresh_lock(monkeypatch: pytest.MonkeyPatch) -> asyncio.Lock:
 
 
 def _install_jobs(
-    monkeypatch: pytest.MonkeyPatch, jobs: dict, stages: tuple
+    monkeypatch: pytest.MonkeyPatch,
+    jobs: dict,
+    deps: dict | None = None,
+    outputs: dict | None = None,
 ) -> None:
+    """Install a small job graph. No downstream job unless deps is given."""
     monkeypatch.setattr(runner, "JOBS", jobs)
-    monkeypatch.setattr(runner, "STAGES", stages)
+    monkeypatch.setattr(runner, "DEPS", deps or {})
+    monkeypatch.setattr(runner, "OUTPUTS", outputs or {})
 
 
 class TestRunnerTables:
-    """JOBS / STAGES 这两张表本身"""
+    """JOBS / DEPS / OUTPUTS 这三张表本身"""
 
     def test_jobs_表就是这些且指向对的函数(self) -> None:
         assert {
@@ -304,29 +321,26 @@ class TestRunnerTables:
             "getmetadata": getmetadata.main,
         } == runner.JOBS
 
-    def test_stages_两层且不重不漏(self) -> None:
-        assert runner.STAGES == (
-            ("nlw", "ids", "lw", "hds",
-            "idl","lists","tpl","pemonlist",
-            "platdiff", "sfh", "ratedplus"),
-            ("platbatch", "getmetadata"),
-        )
-        flat = [name for stage in runner.STAGES for name in stage]
-        assert len(flat) == len(set(flat)), "同一个 job 不该出现在两层里"
-        assert set(flat) == set(runner.JOBS), "STAGES 必须正好覆盖 JOBS"
+    def test_依赖表只声明直接上游(self) -> None:
+        assert runner.DEPS == {
+            "getmetadata": ("nlw", "ids", "lw", "hds", "idl"),
+            "platbatch": ("tpl", "pemonlist", "platdiff"),
+        }
+        assert runner.STRICT_JOBS == frozenset({"platbatch"})
+        for name, upstreams in runner.DEPS.items():
+            assert name in runner.JOBS
+            assert all(up in runner.JOBS for up in upstreams)
 
-    def test_有依赖的_job_排在第二层(self) -> None:
-        # platbatch 要读 tpl/pemonlist/platdiff，
-        # getmetadata 要读 nlw/ids/lw/hds —— 它们的上游全在第一层
-        assert set(runner.STAGES[1]) == {"platbatch", "getmetadata"}
-        assert {"tpl", "platdiff", "pemonlist"} <= set(runner.STAGES[0])
-        assert {"nlw", "ids", "lw", "hds"} <= set(runner.STAGES[0])
+    def test_输出表覆盖所有会落盘的_job(self) -> None:
+        assert set(runner.OUTPUTS) == set(runner.JOBS)
+        assert runner.OUTPUTS["getmetadata"] == ()
+        assert runner.OUTPUTS["lists"] == ("hdl.json", "mdl.json", "edl.json")
 
 
 class TestRunnerRunAll:
-    """run_all_async 的编排语义"""
+    """run_all_async 的编排语义：失败只沿 DEPS 传播"""
 
-    async def test_全部成功才发布(
+    async def test_全部成功时发布整个闭包(
         self,
         data_dirs: SimpleNamespace,
         fresh_lock: asyncio.Lock,
@@ -341,7 +355,8 @@ class TestRunnerRunAll:
         _install_jobs(
             monkeypatch,
             {"nlw": job_nlw, "batch": job_batch},
-            (("nlw",), ("batch",)),
+            {"batch": ("nlw",)},
+            {"nlw": ("nlw_levels.json",), "batch": ("plat_combined.json",)},
         )
 
         result = await runner.run_all_async()
@@ -353,78 +368,83 @@ class TestRunnerRunAll:
         assert (
             data_dirs.data / "plat_combined.json"
         ).read_text(encoding="utf-8") == "COMBINED"
-        # 发布完 staging 里就空了
         assert list(data_dirs.staging.iterdir()) == []
 
-    async def test_某个_job_挂了就绝不发布_线上数据一动不动(
+    async def test_单个_job_失败只跳过它的直接下游(
         self,
         data_dirs: SimpleNamespace,
         fresh_lock: asyncio.Lock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """这条是整个 updater 最重要的不变量（commit 34cace4）。"""
-        (data_dirs.data / "nlw_levels.json").write_text("OLD", encoding="utf-8")
+        """核心不变量：失败不横向传染，互不相关的分支照常发布。"""
+        (data_dirs.data / "idl.json").write_text("OLD", encoding="utf-8")
         ran: list[str] = []
 
         def job_ok() -> None:
-            ran.append("ok")
+            ran.append("nlw")
             paths.staged("nlw_levels.json").write_text("NEW", encoding="utf-8")
 
         def job_bad() -> None:
-            ran.append("bad")
+            ran.append("idl")
             raise ValueError("表格挂了")
 
-        def job_second_layer() -> None:  # pragma: no cover - 不该被跑到
-            ran.append("second")
+        def job_unrelated() -> None:
+            ran.append("sfh")
+            paths.staged("nong_index.json").write_text("FRESH", encoding="utf-8")
+
+        def job_downstream() -> None:  # pragma: no cover - 不该被跑到
+            ran.append("batch")
 
         _install_jobs(
             monkeypatch,
-            {"ok": job_ok, "bad": job_bad, "second": job_second_layer},
-            (("ok", "bad"), ("second",)),
+            {
+                "nlw": job_ok,
+                "idl": job_bad,
+                "sfh": job_unrelated,
+                "batch": job_downstream,
+            },
+            {"batch": ("idl",)},
+            {
+                "nlw": ("nlw_levels.json",),
+                "idl": ("idl.json",),
+                "sfh": ("nong_index.json",),
+                "batch": ("plat_combined.json",),
+            },
         )
 
-        with pytest.raises(RuntimeError) as excinfo:
-            await runner.run_all_async()
+        # 部分失败用返回值表达，不再抛异常打断调用方的 reload_all()
+        result = await runner.run_all_async()
 
-        assert "Updater failed" in str(excinfo.value)
-        assert "表格挂了" in str(excinfo.value)
-        assert "ValueError" in str(excinfo.value)
-        # 第二层根本没起来
-        assert "second" not in ran
-        # 线上那份还是老的
-        assert (data_dirs.data / "nlw_levels.json").read_text(encoding="utf-8") == "OLD"
-        # staging 留着方便查问题
-        assert (
-            data_dirs.staging / "nlw_levels.json"
-        ).read_text(encoding="utf-8") == "NEW"
+        assert "nlw" in ran and "sfh" in ran
+        assert "batch" not in ran  # 只有直接下游被跳过
+        assert {entry["job"] for entry in result["failed"]} == {"idl"}
+        assert result["skipped"][0]["job"] == "batch"
+        assert "表格挂了" in result["failed"][0]["error"]
+        assert result["published"] == ["nlw_levels.json", "nong_index.json"]
+        assert (data_dirs.data / "nlw_levels.json").read_text(encoding="utf-8") == "NEW"
+        assert (data_dirs.data / "nong_index.json").read_text(encoding="utf-8") == "FRESH"
+        # 失败分支保留旧快照
+        assert (data_dirs.data / "idl.json").read_text(encoding="utf-8") == "OLD"
 
-    async def test_stop_on_error_false_会跑完所有层但依然不发布(
+    async def test_静默_return_没写文件也算失败(
         self,
         data_dirs: SimpleNamespace,
         fresh_lock: asyncio.Lock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        ran: list[str] = []
-
-        def job_bad() -> None:
-            ran.append("bad")
-            raise ValueError("boom")
-
-        def job_second() -> None:
-            ran.append("second")
-            paths.staged("hds_levels.json").write_text("NEW", encoding="utf-8")
-
+        """tpl/pemonlist/sfh 出错时只 return 不写文件，不能算成功。"""
         _install_jobs(
             monkeypatch,
-            {"bad": job_bad, "second": job_second},
-            (("bad",), ("second",)),
+            {"tpl": lambda: None, "platbatch": lambda: None},
+            {"platbatch": ("tpl",)},
+            {"tpl": ("tpl.json",), "platbatch": ("plat_combined.json",)},
         )
 
-        with pytest.raises(RuntimeError):
-            await runner.run_all_async(stop_on_error=False)
+        result = await runner.run_all_async()
 
-        assert ran == ["bad", "second"]  # 第二层照跑
-        assert not (data_dirs.data / "hds_levels.json").exists()  # 但还是不发布
+        assert result["failed"][0]["type"] == "MissingOutputError"
+        assert result["skipped"][0]["job"] == "platbatch"
+        assert result["published"] == []
 
     async def test_跑之前会清掉上次留下的残渣(
         self,
@@ -438,7 +458,10 @@ class TestRunnerRunAll:
         def job_nlw() -> None:
             paths.staged("nlw_levels.json").write_text("NEW", encoding="utf-8")
 
-        _install_jobs(monkeypatch, {"nlw": job_nlw}, (("nlw",),))
+        _install_jobs(
+            monkeypatch, {"nlw": job_nlw},
+            outputs={"nlw": ("nlw_levels.json",)},
+        )
 
         result = await runner.run_all_async()
 
@@ -466,7 +489,6 @@ class TestRunnerRunAll:
         _install_jobs(
             monkeypatch,
             {"a": make("a"), "b": make("b"), "c": make("c")},
-            (("a", "b", "c"),),
         )
 
         result = await runner.run_all_async()
@@ -493,19 +515,19 @@ class TestRunnerRunAll:
         _install_jobs(
             monkeypatch,
             {"a": make("a"), "b": make("b"), "c": make("c")},
-            (("a", "b"), ("c",)),
+            {"c": ("a", "b")},
         )
 
         await runner.run_all_async()
 
         assert set(events[:2]) == {"a", "b"}
-        assert events[2] == "c"  # 第二层一定在第一层全部结束之后
+        assert events[2] == "c"  # 下游一定在上游全部结束之后
 
     async def test_已经有一个在跑的时候直接拒绝(
         self, fresh_lock: asyncio.Lock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         called: list[str] = []
-        _install_jobs(monkeypatch, {"a": lambda: called.append("a")}, (("a",),))
+        _install_jobs(monkeypatch, {"a": lambda: called.append("a")})
 
         async with fresh_lock:
             with pytest.raises(RuntimeError, match="已经有一个更新任务在跑了"):
@@ -522,14 +544,14 @@ class TestRunnerRunAll:
         def job_bad() -> None:
             raise KeyError("missing-column")
 
-        _install_jobs(monkeypatch, {"bad": job_bad}, (("bad",),))
+        _install_jobs(monkeypatch, {"bad": job_bad})
 
-        with pytest.raises(RuntimeError) as excinfo:
-            await runner.run_all_async()
+        result = await runner.run_all_async()
 
-        text = str(excinfo.value)
-        assert "'job': 'bad'" in text
-        assert "'type': 'KeyError'" in text
+        entry = result["failed"][0]
+        assert entry["job"] == "bad"
+        assert entry["type"] == "KeyError"
+        assert "missing-column" in entry["error"]
 
     def test_run_all_同步版就是把_async_版跑一遍(
         self,
@@ -542,12 +564,117 @@ class TestRunnerRunAll:
         def job_nlw() -> None:
             paths.staged("nlw_levels.json").write_text("NEW", encoding="utf-8")
 
-        _install_jobs(monkeypatch, {"nlw": job_nlw}, (("nlw",),))
+        _install_jobs(
+            monkeypatch, {"nlw": job_nlw},
+            outputs={"nlw": ("nlw_levels.json",)},
+        )
 
         result = runner.run_all()
 
         assert result["success"] == ["nlw"]
         assert result["published"] == ["nlw_levels.json"]
+
+
+class TestDependencyIsolation:
+    """用真实 DEPS 表回归：idl 挂了不能连累无关分支，也不能冻结 aredl。"""
+
+    @staticmethod
+    def _fake_jobs(
+        monkeypatch: pytest.MonkeyPatch, failing: set[str]
+    ) -> list[str]:
+        """Replace every fetcher with a writer, leaving the real tables intact."""
+        seen_sources: list[str] = []
+
+        def make_writer(name: str):
+            def _job() -> None:
+                for filename in runner.OUTPUTS[name]:
+                    paths.staged(filename).write_text(f"NEW-{name}", encoding="utf-8")
+
+            return _job
+
+        def boom() -> None:
+            raise RuntimeError("上游挂了")
+
+        def meta(sources) -> dict:
+            seen_sources.extend(sources)
+            return {"processed": list(sources), "failed": {}}
+
+        fake = {}
+        for name in runner.JOBS:
+            if name in failing:
+                fake[name] = boom
+            elif name == "getmetadata":
+                fake[name] = meta
+            else:
+                fake[name] = make_writer(name)
+        monkeypatch.setattr(runner, "JOBS", fake)
+        return seen_sources
+
+    async def test_idl_失败时_其它分支照常发布且_metadata_只处理成功的上游(
+        self,
+        data_dirs: SimpleNamespace,
+        fresh_lock: asyncio.Lock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (data_dirs.data / "idl.json").write_text("OLD", encoding="utf-8")
+        seen_sources = self._fake_jobs(monkeypatch, {"idl"})
+
+        result = await runner.run_all_async()
+
+        assert [entry["job"] for entry in result["failed"]] == ["idl"]
+        assert "platbatch" in result["success"]  # 平台分支与 idl 无关
+        assert "lists" in result["success"]
+        assert "getmetadata" in result["success"]
+        assert "idl.json" not in seen_sources  # 失败上游不处理
+        assert "nlw_levels.json" in seen_sources
+        assert "idl.json" not in result["published"]  # 失败上游不发布
+        assert "plat_combined.json" in result["published"]
+        assert "nong_index.json" in result["published"]
+        assert (data_dirs.data / "idl.json").read_text(encoding="utf-8") == "OLD"
+        assert (data_dirs.data / "nlw_levels.json").exists()
+        assert runner.load_last_run()["failed"] == result["failed"]
+
+    async def test_platdiff_失败时_platbatch_被跳过但其它分支照常发布(
+        self,
+        data_dirs: SimpleNamespace,
+        fresh_lock: asyncio.Lock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (data_dirs.data / "plat_combined.json").write_text("OLD", encoding="utf-8")
+        self._fake_jobs(monkeypatch, {"platdiff"})
+
+        result = await runner.run_all_async()
+
+        assert [entry["job"] for entry in result["skipped"]] == ["platbatch"]
+        assert "plat_combined.json" not in result["published"]
+        assert (
+            data_dirs.data / "plat_combined.json"
+        ).read_text(encoding="utf-8") == "OLD"
+        # 元数据分支和完全独立的分支都不受影响
+        assert "nlw_levels.json" in result["published"]
+        assert "ratedplus.json" in result["published"]
+
+    async def test_getmetadata_整层挂掉时_五个榜单文件都不发布(
+        self,
+        data_dirs: SimpleNamespace,
+        fresh_lock: asyncio.Lock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._fake_jobs(monkeypatch, set())
+
+        def bad_meta(sources) -> dict:
+            raise RuntimeError("metadata 缓存坏了")
+
+        monkeypatch.setitem(runner.JOBS, "getmetadata", bad_meta)
+
+        result = await runner.run_all_async()
+
+        assert [entry["job"] for entry in result["failed"]] == ["getmetadata"]
+        assert "nlw_levels.json" not in result["published"]
+        assert "idl.json" not in result["published"]
+        assert not (data_dirs.data / "nlw_levels.json").exists()
+        # 平台分支不依赖 metadata，照常发布
+        assert "plat_combined.json" in result["published"]
 
 
 # ==========================================================================
@@ -3136,9 +3263,8 @@ class TestGetMetadata:
         """回归守卫：以前只 import 了 staged / staged_or_published，
 
         main() 里却用 DATA_DIR，第一行 logger.info 就 NameError。而
-        getmetadata 是 runner STAGES 第二层的 job，`stop_on_error=True` 下
-        它一挂 -> results['failed'] 非空 -> run_all_async 抛 RuntimeError
-        -> publish() 根本轮不到，整条流水线一次都发布不出去。
+        getmetadata 是 runner 的后处理 job；它读不到缓存目录会直接挂掉，
+        那一轮的五个榜单文件都会因为缺 metadata 而不发布。
         """
         assert getmetadata.DATA_DIR == paths.DATA_DIR
 
@@ -3205,6 +3331,50 @@ class TestGetMetadata:
 
         assert called == []
         assert list(gm_data_dir.staging.iterdir()) == []
+
+    def test_main_只处理传入的上游_其余不读不写(
+        self, gm_data_dir: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """runner 只把本轮成功抓到的文件名传进来，失败上游保持旧快照。"""
+        monkeypatch.setattr(
+            getmetadata,
+            "enrich_levels_with_ids",
+            lambda levels, cache_dir, **kw: [lv.__setitem__("id", 7) for lv in levels],
+        )
+        for name in ("nlw_levels.json", "idl.json"):
+            _write_json(
+                gm_data_dir.staging / name,
+                {"levels": [{"name": name, "creator": "Someone"}]},
+            )
+
+        result = getmetadata.main(["nlw_levels.json"])
+
+        assert result["processed"] == ["nlw_levels.json"]
+        assert result["failed"] == {}
+        assert _read_json(gm_data_dir.staging / "nlw_levels.json")["levels"][0]["id"] == 7
+        # idl.json 没被读、没被补、没被写回
+        assert "id" not in _read_json(gm_data_dir.staging / "idl.json")["levels"][0]
+
+    def test_main_单个源补失败时只隔离这一个源(
+        self, gm_data_dir: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_enrich(levels: list[dict], cache_dir: Path, **kw: Any) -> None:
+            if levels[0]["name"] == "bad.json":
+                raise RuntimeError("history API 挂了")
+            levels[0]["id"] = 9
+
+        monkeypatch.setattr(getmetadata, "enrich_levels_with_ids", fake_enrich)
+        for name in ("a.json", "bad.json"):
+            _write_json(
+                gm_data_dir.staging / name,
+                {"levels": [{"name": name, "creator": "Someone"}]},
+            )
+
+        result = getmetadata.main(["a.json", "bad.json"])
+
+        assert result["processed"] == ["a.json"]
+        assert "history API 挂了" in result["failed"]["bad.json"]
+        assert "id" not in _read_json(gm_data_dir.staging / "bad.json")["levels"][0]
 
 
 # ==========================================================================
@@ -3325,6 +3495,15 @@ class TestGddlUpdateJob:
 
 
 class TestDailyUpdateJob:
+    @pytest.fixture(autouse=True)
+    def _no_gddl(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Silence the independent GDDL background job in these assertions."""
+
+        async def noop() -> None:
+            return None
+
+        monkeypatch.setattr(updater_pkg, "gddl_update_job", noop)
+
     async def test_跑完之后重载内存缓存(self, monkeypatch: pytest.MonkeyPatch) -> None:
         order: list[str] = []
 
@@ -3339,7 +3518,8 @@ class TestDailyUpdateJob:
 
         assert order == ["run", "reload"]
 
-    async def test_失败时上报且不重载(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_失败时上报且照样重载(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """流水线整体崩了也要 reload：已发布的文件得进内存，aredl 不能冻结。"""
         order: list[str] = []
         reported: dict = {}
 
@@ -3355,10 +3535,42 @@ class TestDailyUpdateJob:
 
         await updater_pkg.daily_update_job()  # 不该往外抛
 
-        assert order == []
+        assert order == ["reload"]
         assert reported["title"] == "数据更新失败"
         assert isinstance(reported["err"], RuntimeError)
         assert reported["context"] == {"job": "daily_update", "stage": "run_all"}
+
+    async def test_部分失败时按部分失败上报且重载(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        order: list[str] = []
+        reported: dict = {}
+
+        async def fake_run_all_async() -> dict:
+            order.append("run")
+            return {
+                "success": ["nlw"],
+                "failed": [
+                    {"job": "idl", "error": "解析失败", "type": "RuntimeError"}
+                ],
+                "skipped": [],
+                "published": ["nlw_levels.json"],
+                "finished_at": 1730000000.0,
+            }
+
+        async def fake_report(title: str, err: Exception, context: Any = None) -> None:
+            reported.update({"title": title, "err": err, "context": context})
+
+        monkeypatch.setattr(updater_pkg, "run_all_async", fake_run_all_async)
+        monkeypatch.setattr(gdlevelsearch, "reload_all", lambda: order.append("reload"))
+        monkeypatch.setattr(notify, "report_error", fake_report)
+
+        await updater_pkg.daily_update_job()
+
+        assert order == ["run", "reload"]
+        assert reported["title"] == "数据更新部分失败"
+        assert "idl" in str(reported["err"])
+        assert reported["context"]["published"] == ["nlw_levels.json"]
 
 
 class TestSetupUpdaterSslPatch:

@@ -1,6 +1,7 @@
 # updater/paths.py
 
 import os
+from collections.abc import Iterable
 from pathlib import Path
 
 from nonebot import logger
@@ -73,8 +74,13 @@ def _entry_count(path: Path) -> "int | None":
     return len(data) if isinstance(data, list) else None
 
 
-def publish() -> list[str]:
+def publish(allowed: Iterable[str] | None = None) -> list[str]:
     """Atomically move valid staged outputs into the live data directory.
+
+    ``allowed`` restricts publication to the dependency closures that finished
+    cleanly. Files outside it stay in staging, so the live snapshot keeps the
+    previous version for a failed branch. ``None`` publishes every staged file
+    (the single-job script mode).
 
     Each file is replaced atomically and the returned list contains the files
     that were actually published.
@@ -87,8 +93,11 @@ def publish() -> list[str]:
     near-empty result. Upstream format changes can otherwise produce a
     successful job with a truncated file and destroy the only live snapshot.
     """
+    whitelist = None if allowed is None else set(allowed)
     moved: list[str] = []
     for name in PUBLISHED_FILES:
+        if whitelist is not None and name not in whitelist:
+            continue
         src = STAGING_DIR / name
         if not src.exists():
             continue

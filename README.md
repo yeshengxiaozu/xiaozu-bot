@@ -75,7 +75,8 @@ nb run --reload
 
 - 测试与 CI 怎么查、改什么会红几个用例，看 [MAINTAINING.md](MAINTAINING.md)。
 - 项目结构、脚本用法、数据持久化约定，以及 GD 关卡缓存怎么抓怎么发布，看
-  [AGENTS.md](AGENTS.md)（其中的「数据更新流程」一节）。
+  [AGENTS.md](AGENTS.md)（其中的「数据更新流程」一节）。单个数据源挂掉只会跳过它的
+  直接下游，其余分支照常发布；管理员发 `*gdsearch_status` 可看上一次更新的失败 job 列表。
 - 新克隆之后：跑一次 `python scripts/run_updater.py` 生成关卡缓存；`guess` / `zhua` 的
   图库要自己放（仓库里没有，也不影响跑测试）。
 - 提 PR 前跑 `python -m pytest` 和 `ruff check .`，确认没带上缓存、`data/` 下的运行时文件

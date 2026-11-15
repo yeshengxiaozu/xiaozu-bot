@@ -252,6 +252,18 @@ py -3.13 -m venv .venv313
 
 ## 8. 更新器（gdlevelsearch 的数据更新）出问题时
 
+### 失败隔离策略（2026-11-14 起）
+
+主流水线不再「一个任务挂了就全不发布」。`runner.py` 的 `DEPS` 只声明直接依赖：
+`getmetadata <- nlw/ids/lw/hds/idl`（软依赖，有几个成功上游就处理几个），
+`platbatch <- tpl/pemonlist/platdiff`（硬依赖，三个必须全绿）。其余任务互不相关，
+单个失败只跳过它的直接下游；`publish(allowed=...)` 按依赖闭包发布成功分支，失败分支
+保留 `data/` 里的旧快照。`run_all_async()` 用返回值表达部分失败，不再抛异常，
+`reload_all()` 无论成败都执行（aredl 的刷新就在这一步，以前 idl 挂掉会连它一起冻住）。
+
+排查一次部分失败：看 `data/.updater_last_run.json`，或直接发 `*gdsearch_status`，
+里面会列出上一次失败的 job、被跳过的下游、发布时间与发布文件数。
+
 手动跑一次（不需要 bot 在线，也不需要连 QQ）：
 
 ```bash
@@ -302,8 +314,9 @@ python scripts/run_updater.py tpl
 
 ⚠️ **两条硬规矩**：
 
-1. **别在指定任务名的时候加 `--continue`。** `scripts/run_updater.py:81` 那个分支
-   在「有任务失败但加了 --continue」的情况下**照样会发布**。
+1. **别在指定任务名的时候加 `--continue`。** 指定任务分支在「有任务失败但加了
+   --continue」的情况下**照样会发布**。完整流水线不受这个参数影响：它永远跑完
+   所有独立分支，并按依赖闭包发布成功部分。
 2. **跑全量之前先备份 `data/`。** 那个目录基本都在 `.gitignore` 里，被盖掉就找不回来了
    （只有 `gdlevelsearch/data/unrated_levels.json` 是入库的，删了还能 `git checkout` 救）：
    ```bash
@@ -312,24 +325,27 @@ python scripts/run_updater.py tpl
 
 ### 已知还没修的坑，出问题先怀疑这几个
 
-- `updater/jobs/getmetadata.py` —— 写回失败只记日志不报错。而且 `open("w")` 是先截断的，
-  所以写到一半失败会在 staging 留下一个 0 字节或者半截的文件，然后被发布出去。
-  （下面那道下限检查能拦住变空的情况，但拦不住「半截但还有一半」。）
-- `updater/jobs/fetchsfh.py` —— 拿到非 200 直接静默 return，不记日志，
-  于是你会以为 NONG 索引更新了，其实还是昨天的
+- `updater/jobs/sfh.py`（以及 `tpl.py` / `pemonlist.py`）—— 拿到非 200 会静默
+  return，不写文件。runner 现在会在任务结束后校验 `OUTPUTS`：没落盘就记
+  `MissingOutputError` 并跳过直接下游，但 job 内部的日志仍是排查第一手信息。
 - `nong_index.json` 发布了但没人 reload 它 —— `draw.py` 的 `nong_index` 是 import 期读一次，
   要等重启 bot 才生效
 
 ### 已经修掉的（别再照着老文档怀疑它们）
 
+- ~~单个任务失败就整轮不发布、连 aredl 重载都跳过~~ —— 现在按直接依赖闭包隔离；
+  `getmetadata` 按可用上游逐个处理，`platbatch` 保持三个上游全绿的硬门槛。
+- ~~`getmetadata` 写回失败只记日志~~ —— `save_json_file` 现在让异常上抛，
+  `main()` 逐源捕获，失败源不进入 `processed`，不会被当成新数据发布。
 - ~~`publish()` 没有下限检查~~ —— 现在有了。新数据条目数不到旧数据的 50% 就拒绝发布
   那个文件，其余文件照常。上游表格改格式导致解析出空列表时，线上数据不会被盖掉。
   （门槛设在 50% 是因为实测一次真实更新的波动是 -3.9% ~ +3.4%。）
 - ~~`notify.py` 的 `get_bot()` 写在 try 外面~~ —— 现在拿不到 bot 就把整份报告写进日志，
   不会再用「There are no bots to get.」把真正的错误顶掉。
 
-`tests/test_updater_isolation.py` 专门盯这些「更新器出事会不会连累 bot」的性质，
-21 个用例，删了任何一个都等于把对应的坑重新挖开。
+`tests/test_updater_isolation.py` 和 `tests/test_updater.py::TestDependencyIsolation`
+专门盯「更新器出事会不会连累 bot、会不会连累互不相关的分支」，删了任何一个
+都等于把对应的坑重新挖开。
 
 ---
 

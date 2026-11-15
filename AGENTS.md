@@ -54,24 +54,27 @@ python scripts/try_search.py Tartarus
 - GDDL 快照另有每天 07:00 的独立刷新任务；写入 `data/gddl_levels.json`，除首页外的失败页
   不会作废整轮扫描，而是按 ID 合并保留旧记录并记 `partial` / `failedPages`
 
-两条路径跑完都会调 `reload_all()` 把新数据读进内存，**不需要重启 bot**。各 api 模块在
-import 时把数据读进模块级 list/dict，少了这一步，新 json 要等下次重启才生效。
+主更新无论全部成功、部分失败还是整体崩溃，都会调 `reload_all()` 把新数据读进内存，
+**不需要重启 bot**。各 api 模块在 import 时把数据读进模块级 list/dict，少了这一步，新
+json 要等下次重启才生效；aredl 的刷新也挂在这里，跳过它会让 aredl 停在过期缓存上。
 
-### 分层并发 + 跑完才发布
+### 直接依赖闭包 + 按分支发布
 
-任务按依赖分两层，同层并发（都是网络 IO，丢线程池里）：
+`runner.py` 用 `DEPS` / `OUTPUTS` 两张表描述直接依赖，只有 8 条边：
 
 ```
-第 1 层： nlw  ids  lw  hds  idl  lists  tpl  pemonlist  platdiff  sfh  ratedplus
-第 2 层： platbatch（要 tpl/pemonlist/platdiff）  getmetadata（要 nlw/ids/lw/hds）
+getmetadata <- nlw ids lw hds idl      软依赖：有几个成功上游就处理几个
+platbatch   <- tpl pemonlist platdiff  硬依赖：三个必须全部成功才执行
 ```
 
-抓下来的东西先写 `data/.staging/`，**全部任务成功后才原子地搬进 `data/`**。原因：
-`nlw`/`ids`/`lw`/`hds` 抓回来的数据不带 metadata，要等最后 `getmetadata` 回填。以前直接
-写 `data/`，中间任何一步失败（runner 默认遇错即停）都会让 bot 读到缺 metadata 的半成品、
-把好数据冲掉。现在任一任务失败就不发布，`data/` 保持上一次的样子，中间产物留在
-`.staging/` 方便排查。GDDL 不在这个流水线里，作为独立后台任务与主更新同时启动，失败只上报
-管理员，不影响主流水线。`ratedplus` 抓 pointercrate 的 `/api/v2/demons/listed/`（全表
+`lists` / `sfh` / `ratedplus` 完全独立；GDDL 不在这个流水线里，作为独立后台任务与主更新
+同时启动，失败只上报管理员。所有无上游的任务并发跑完（网络 IO 丢线程池），单个任务失败
+**只跳过它的直接下游和这些下游的输出文件**：`publish(allowed=...)` 只搬「整条依赖闭包
+成功」的文件，失败分支在 `data/` 里保留上一份快照，中间产物留在 `.staging/` 方便排查。
+`getmetadata` 只处理本轮成功抓到的上游，失败的上游不读、不补、不写回 staging。
+`run_all_async()` 不再因部分失败抛异常，而是返回 `success` / `failed` / `skipped` /
+`published`，并把结果写到 `data/.updater_last_run.json`；`*gdsearch_status` 会展示上一次
+更新的失败 job 列表。`ratedplus` 抓 pointercrate 的 `/api/v2/demons/listed/`（全表
 700+ 条、8 页），落成 `data/ratedplus.json`；`position` 必须从 1 开始连续，否则这一轮不
 发布，线上保留上一份快照。
 

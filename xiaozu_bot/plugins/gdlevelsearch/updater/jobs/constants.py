@@ -64,11 +64,12 @@ HDS_PLATFORMER_LEVELS_NAME = "THE Plat List"
 FRUITY_LEVELS_HDS = {
     "Limen                                         its really big so you can see it better": "Limen",
     "ABLAZE (New Info)": "ABLAZE",
-    "Shackles by Cheeseman": "Shackles"
+    "Shackles by Cheeseman": "Shackles",
+    "Ti dichario fumato": "Ti dichiaro fumato"
 }
 
 FRUITY_CREATORS_HDS = {
-    # NO IDEA
+    # NO IDEA BUT DONT DELETE
 }
 
 # ------------------------------
