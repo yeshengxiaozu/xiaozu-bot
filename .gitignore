@@ -88,6 +88,9 @@ htmlcov/
 temp/
 temp/*
 audio_*.wav
+# Test-run temp dirs that land in the repo root when TMP points at the cwd
+/pytest-of-*/
+/tmp*
 
 # Local model/cache folders (examples)
 models/
