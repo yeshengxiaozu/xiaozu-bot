@@ -65,7 +65,7 @@ from xiaozu_bot.plugins.gdlevelsearch.commands import (
     search as cmd_search,
 )
 from xiaozu_bot.plugins.gdlevelsearch.services import search as svc_search
-from xiaozu_bot.utils.adapter_compat import get_context_id
+from xiaozu_bot.utils.adapter_compat import get_context_id, get_user_context_id
 
 # ==========================================================================
 # 造数据
@@ -1075,20 +1075,40 @@ class TestGetLevelInfo:
 # 会话字典与几个 Rule
 # ==========================================================================
 class TestSessionBookkeeping:
-    def test_has_cache_looks_at_the_chat_context(self, make_group_event: Any) -> None:
-        """缓存按会话（群/频道）隔离，不按裸 user_id。
+    def test_has_cache_is_scoped_to_chat_and_user(self, make_group_event: Any) -> None:
+        """缓存按「群 + 人」隔离。
 
-        否则同一个人在 A 群搜完，跑到 B 群发个数字就会选中 A 群的结果。
+        只按 user_id：A 群搜完跑到 B 群发个数字会选中 A 群的结果。
+        只按群：群里任何人发个数字都能替你选中（曾经就是这么坏的）。
         """
         event = make_group_event("随便")
         assert gdlevelsearch.has_cache(event) is False
-        gdlevelsearch.search_cache[get_context_id(event)] = []
+        gdlevelsearch.search_cache[get_user_context_id(event)] = []
         assert gdlevelsearch.has_cache(event) is True
 
-    def test_has_cache_ignores_another_user_id(self, make_group_event: Any) -> None:
-        """防止将来又退回按 user_id 存：别人的 key 不该命中"""
+    def test_has_cache_ignores_another_user_in_the_same_group(
+        self, make_group_event: Any
+    ) -> None:
+        """同一个群里别人的待选结果不该被抢走"""
+        owner = make_group_event("随便")
+        other = make_group_event("1", user_id=DEFAULT_USER_ID + 1)
+        gdlevelsearch.search_cache[get_user_context_id(owner)] = []
+        assert gdlevelsearch.has_cache(other) is False
+
+    def test_has_cache_ignores_another_group(self, make_group_event: Any) -> None:
+        """同一个人在另一个群里也不该命中"""
+        owner = make_group_event("随便")
+        elsewhere = make_group_event("1", group_id=999)
+        gdlevelsearch.search_cache[get_user_context_id(owner)] = []
+        assert gdlevelsearch.has_cache(elsewhere) is False
+
+    def test_has_cache_ignores_a_bare_user_id_or_chat_id(
+        self, make_group_event: Any
+    ) -> None:
+        """防止将来又退回按 user_id / 群号存：两种旧 key 都不该命中"""
         event = make_group_event("随便")
         gdlevelsearch.search_cache[str(DEFAULT_USER_ID)] = []
+        gdlevelsearch.search_cache[get_context_id(event)] = []
         assert gdlevelsearch.has_cache(event) is False
 
     def test_has_fullsearch_and_has_ratings_look_at_session_id(
@@ -1129,7 +1149,7 @@ class TestSessionBookkeeping:
         """三个选择器同时只能活一个，开新的之前把旧的全清掉"""
         event = make_group_event("随便")
         session_id = event.get_session_id()
-        session_key = get_context_id(event)
+        session_key = get_user_context_id(event)
 
         async def forever() -> None:
             await asyncio.sleep(3600)
@@ -1355,7 +1375,7 @@ class TestHandleGdsearch:
         )
         await asyncio.sleep(0)
 
-        session_key = get_context_id(event)
+        session_key = get_user_context_id(event)
         assert gdlevelsearch.search_cache[session_key] is results
         assert session_key in gdlevelsearch.timeout_tasks
         assert no_timeout_tasks == [f"search:{session_key}"]
@@ -1372,7 +1392,7 @@ class TestHandleChoice:
         results = results or [
             SearchResult(11, "First"), SearchResult(22, "Second"),
         ]
-        gdlevelsearch.search_cache[get_context_id(event)] = results
+        gdlevelsearch.search_cache[get_user_context_id(event)] = results
         return results
 
     async def test_no_cache_means_silence(
@@ -1405,7 +1425,7 @@ class TestHandleChoice:
         self._prime(event)
         await run_handler(gdlevelsearch.gdsearchselect, fake_bot, event)
         assert fake_bot.calls == []
-        assert get_context_id(event) in gdlevelsearch.search_cache  # 缓存还在
+        assert get_user_context_id(event) in gdlevelsearch.search_cache  # 缓存还在
 
     @pytest.mark.parametrize("choice", ["0", "3", "99"])
     async def test_out_of_range_index_complains(
@@ -1417,7 +1437,21 @@ class TestHandleChoice:
         # 行为是「提示一句 + 缓存留着让人重选」，别的什么都不发
         assert len(sent_texts(fake_bot)) == 1
         assert image_segments(fake_bot) == []
-        assert get_context_id(event) in gdlevelsearch.search_cache  # 没清掉，可以再选
+        assert get_user_context_id(event) in gdlevelsearch.search_cache  # 没清掉，可以再选
+
+    async def test_another_member_of_the_group_cannot_pick_the_result(
+        self, fake_bot: FakeBot, make_group_event: Any, stub_image: list[int]
+    ) -> None:
+        """同一个群里别人发序号不能替你选中（曾经按群号存的时候会）"""
+        owner = make_group_event("*gdsearch X")
+        self._prime(owner)
+        intruder = make_group_event("1", user_id=DEFAULT_USER_ID + 1)
+
+        await run_handler(gdlevelsearch.gdsearchselect, fake_bot, intruder)
+
+        assert stub_image == []
+        assert fake_bot.calls == []
+        assert get_user_context_id(owner) in gdlevelsearch.search_cache
 
     async def test_valid_index_sends_the_level_and_clears_the_cache(
         self, fake_bot: FakeBot, make_group_event: Any,

@@ -367,6 +367,17 @@ def get_context_id(event: Event) -> str:
     return f"{event.get_event_name()}:{event.get_session_id()}"
 
 
+def get_user_context_id(event: Event) -> str:
+    """Return a stable per-chat *and* per-user key for interactive sessions.
+
+    ``get_context_id`` alone is shared by everyone in the same group/channel,
+    so a pending prompt keyed by it can be answered by any member. Interactive
+    prompts (choose an index, pick a page) must belong to the person who
+    started them.
+    """
+    return f"{get_context_id(event)}:user:{get_user_id(event)}"
+
+
 def get_message_id(event: Event) -> str | int:
     if isinstance(event, OneBotV11MessageEvent):
         return event.message_id

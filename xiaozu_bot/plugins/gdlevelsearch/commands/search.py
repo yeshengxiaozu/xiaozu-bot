@@ -8,7 +8,7 @@ from nonebot.internal.adapter import Bot, Event, Message
 from nonebot.params import CommandArg
 from nonebot.rule import Rule
 
-from xiaozu_bot.utils.adapter_compat import get_context_id
+from xiaozu_bot.utils.adapter_compat import get_user_context_id
 
 from ..api.gdapi import GDAPIUnavailable
 from ..services.search import (
@@ -35,7 +35,7 @@ MIN_ID_LENGTH = 5
 
 
 def has_cache(event: Event) -> bool:
-    return get_context_id(event) in search_cache
+    return get_user_context_id(event) in search_cache
 
 
 def _drop_search(session_key: str) -> None:
@@ -69,9 +69,9 @@ async def handle_gdsearch(
     if name == "":
         await gdsearch.finish("请提供关卡的名字或id")
 
-    # 用会话键而不是裸 user_id：否则同一个人在 A 群搜完，跑到 B 群发个数字
-    # 就会选中 A 群的结果。
-    session_key = get_context_id(event)
+    # Keyed by chat *and* user: a bare user_id would leak across groups, while
+    # a bare chat id would let any group member answer someone else's prompt.
+    session_key = get_user_context_id(event)
     # 清除旧缓存/任务，两个选择器的都要清（同时只能活一个）
     _clear_all_sessions(event)
 
@@ -122,7 +122,7 @@ async def handle_gdsearch(
 @gdsearchselect.handle()
 async def handle_choice(bot: Bot, event: Event) -> None:
     """处理用户对gdsearch返回多结果的回复"""
-    session_key = get_context_id(event)
+    session_key = get_user_context_id(event)
     if session_key not in search_cache:
         await gdsearchselect.finish()
 

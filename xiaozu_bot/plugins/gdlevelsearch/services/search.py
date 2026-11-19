@@ -13,7 +13,7 @@ from io import BytesIO
 from nonebot import logger
 from nonebot.internal.adapter import Bot, Event
 
-from xiaozu_bot.utils.adapter_compat import get_context_id, send_image
+from xiaozu_bot.utils.adapter_compat import get_user_context_id, send_image
 
 from ..api.gdapi import GDLevel, get_level_by_id, search_levels_by_name
 from ..api.gddlapi import Gddl, GDDLSearchEntry
@@ -348,6 +348,6 @@ def _clear_all_sessions(event: Event) -> None:
 
     _drop_fullsearch(event.get_session_id())
     _drop_ratings(event.get_session_id())
-    # Keyed by chat context, not by user id, so one person searching in two
-    # chats cannot select the other chat's results.
-    _drop_search(get_context_id(event))
+    # Keyed by chat *and* user so neither another chat nor another member of
+    # the same chat can pick up this session.
+    _drop_search(get_user_context_id(event))
