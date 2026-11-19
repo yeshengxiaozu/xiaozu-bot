@@ -143,6 +143,34 @@ def get_arepl_levels() -> list[AREDLLevel]:
 aredllevels: list[AREDLLevel] = []
 arepllevels: list[AREDLLevel] = []
 aredl_dict: dict[int, AREDLLevel] = {}
+# level_id -> the AREDL entry of the solo version / the 2P version.
+# aredl_dict keeps only one entry per level id (the better placement), so it
+# cannot answer "what are both ranks" for a level listed on the solo and the
+# 2P charts at once. Both indexes come from aredllevels only, same reason as
+# the position index below: AREPL positions are a separate ranking.
+aredl_solo_dict: dict[int, AREDLLevel] = {}
+aredl_two_player_dict: dict[int, AREDLLevel] = {}
+# position -> level, built from aredllevels only. AREPL has its own numbering,
+# so platformer placements must not leak into the AREDL rank lookup.
+aredl_position_dict: dict[int, AREDLLevel] = {}
+# Highest rank currently on the AREDL list (0 when nothing is loaded).
+# Commands use it to reject out-of-range input without touching the dict.
+aredl_max_position: int = 0
+
+
+def _rebuild_indexes() -> None:
+    """Rebuild the rank indexes in place from aredllevels."""
+    global aredl_max_position
+
+    aredl_position_dict.clear()
+    aredl_solo_dict.clear()
+    aredl_two_player_dict.clear()
+    for level in aredllevels:
+        # Keep the first entry per position, same tie-break as aredl_dict.
+        aredl_position_dict.setdefault(level.position, level)
+        target = aredl_two_player_dict if level.two_player else aredl_solo_dict
+        target.setdefault(level.level_id, level)
+    aredl_max_position = max(aredl_position_dict, default=0)
 
 
 def reload() -> None:
@@ -169,7 +197,12 @@ def reload() -> None:
         if level.level_id not in aredl_dict:
             aredl_dict[level.level_id] = level
 
-    logger.info(f"[aredlapi] 已加载 {len(aredl_dict)} 条关卡")
+    _rebuild_indexes()
+
+    logger.info(
+        f"[aredlapi] 已加载 {len(aredl_dict)} 条关卡，"
+        f"AREDL 最大排名 {aredl_max_position}"
+    )
 
 
 def load_from_cache_only() -> None:
@@ -196,6 +229,8 @@ def load_from_cache_only() -> None:
     for level in (*aredllevels, *arepllevels):
         if level.level_id not in aredl_dict:
             aredl_dict[level.level_id] = level
+
+    _rebuild_indexes()
     logger.info(f"[aredlapi] 启动时从缓存载入 {len(aredl_dict)} 条关卡")
 
 
@@ -215,6 +250,25 @@ class Aredl:
             )
             return aredl_dict[level_id]
         return None
+
+    @staticmethod
+    def getlevelbyposition(position: int) -> AREDLLevel | None:
+        """Look a level up by its AREDL rank (1-based)."""
+        return aredl_position_dict.get(position)
+
+    @staticmethod
+    def getmaxposition() -> int:
+        """Highest AREDL rank currently loaded; 0 when the list is empty."""
+        return aredl_max_position
+
+    @staticmethod
+    def getrankpair(level_id: int) -> tuple[AREDLLevel | None, AREDLLevel | None]:
+        """Return (solo, 2P) AREDL entries for one GD level id.
+
+        Either side is None when that version is not on the list. Only the
+        AREDL chart feeds these indexes; AREPL entries are unreachable here.
+        """
+        return aredl_solo_dict.get(level_id), aredl_two_player_dict.get(level_id)
 
 # 这里原本自己挂了一个 3 点的 scheduled_job，但它是坏的：赋值的是局部变量，
 # 没有 global，抓完数据就丢了，模块全局一直是启动时那份。

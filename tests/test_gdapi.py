@@ -1535,7 +1535,7 @@ def aredl_dict_payload(**over: Any) -> dict[str, Any]:
 
 @pytest.fixture
 def aredl_globals() -> Any:
-    """快照 aredlapi 的三个模块级全局，测完原样还回去。
+    """快照 aredlapi 的模块级全局，测完原样还回去。
 
     这些全局是 import 期 `load_from_cache_only()` 填好的，别的测试文件
     （以及 gdlevelsearch 本身）都拿着同一份引用，不还原会污染整轮测试。
@@ -1543,6 +1543,10 @@ def aredl_globals() -> Any:
     saved_aredl = list(aredlapi.aredllevels)
     saved_arepl = list(aredlapi.arepllevels)
     saved_dict = dict(aredlapi.aredl_dict)
+    saved_positions = dict(aredlapi.aredl_position_dict)
+    saved_solo = dict(aredlapi.aredl_solo_dict)
+    saved_two_player = dict(aredlapi.aredl_two_player_dict)
+    saved_max = aredlapi.aredl_max_position
     try:
         yield
     finally:
@@ -1550,6 +1554,13 @@ def aredl_globals() -> Any:
         aredlapi.arepllevels[:] = saved_arepl
         aredlapi.aredl_dict.clear()
         aredlapi.aredl_dict.update(saved_dict)
+        aredlapi.aredl_position_dict.clear()
+        aredlapi.aredl_position_dict.update(saved_positions)
+        aredlapi.aredl_solo_dict.clear()
+        aredlapi.aredl_solo_dict.update(saved_solo)
+        aredlapi.aredl_two_player_dict.clear()
+        aredlapi.aredl_two_player_dict.update(saved_two_player)
+        aredlapi.aredl_max_position = saved_max
 
 
 @pytest.fixture
@@ -1929,6 +1940,114 @@ class TestLoadFromCacheOnly:
         assert aredlapi.aredl_dict == {}
 
 
+class TestAredlRankPairIndex:
+    """solo / 2P 两条排位的索引：渲染时要同时画出两个名次。"""
+
+    def test_both_entries_are_indexed_separately(
+        self, stub_requests: Any, aredl_workdir: Path, aredl_globals: Any
+    ) -> None:
+        stub_requests.get(
+            AREDL_URL,
+            json_data=[
+                aredl_dict_payload(level_id=100, position=83, name="solo"),
+                aredl_dict_payload(
+                    level_id=100, position=1059, name="2p", two_player=True
+                ),
+            ],
+        )
+        stub_requests.get(AREPL_URL, json_data=[])
+        aredlapi.reload()
+
+        solo, two_player = Aredl.getrankpair(100)
+
+        assert solo is not None and solo.position == 83 and solo.two_player is False
+        assert two_player is not None
+        assert two_player.position == 1059
+        assert two_player.two_player is True
+
+    def test_2p_entry_can_outrank_the_solo_one(
+        self, stub_requests: Any, aredl_workdir: Path, aredl_globals: Any
+    ) -> None:
+        """2P 名次比 solo 靠前时（DICHOTOMY），索引不能被 aredl_dict 的取舍带偏。"""
+        stub_requests.get(
+            AREDL_URL,
+            json_data=[
+                aredl_dict_payload(
+                    level_id=100, position=10, name="2p", two_player=True
+                ),
+                aredl_dict_payload(level_id=100, position=11, name="solo"),
+            ],
+        )
+        stub_requests.get(AREPL_URL, json_data=[])
+        aredlapi.reload()
+
+        assert aredlapi.aredl_dict[100].two_player is True
+        solo, two_player = Aredl.getrankpair(100)
+        assert solo is not None and solo.position == 11
+        assert two_player is not None and two_player.position == 10
+
+    def test_solo_only_level_has_no_2p_entry(
+        self, stub_requests: Any, aredl_workdir: Path, aredl_globals: Any
+    ) -> None:
+        stub_requests.get(AREDL_URL, json_data=[aredl_dict_payload(level_id=100)])
+        stub_requests.get(AREPL_URL, json_data=[])
+        aredlapi.reload()
+
+        solo, two_player = Aredl.getrankpair(100)
+
+        assert solo is not None and solo.position == 1
+        assert two_player is None
+
+    def test_arepl_entries_stay_out_of_the_pair_index(
+        self, stub_requests: Any, aredl_workdir: Path, aredl_globals: Any
+    ) -> None:
+        """AREPL 自己一套编号，混进来会让 2P 名次指向错误的榜。"""
+        stub_requests.get(AREDL_URL, json_data=[])
+        stub_requests.get(
+            AREPL_URL,
+            json_data=[aredl_dict_payload(level_id=300, two_player=True)],
+        )
+        aredlapi.reload()
+
+        assert Aredl.getrankpair(300) == (None, None)
+
+    def test_startup_cache_fills_the_pair_index(
+        self, stub_requests: Any, aredl_workdir: Path, aredl_globals: Any
+    ) -> None:
+        """启动只读缓存时也要建好索引，否则重启后第一张图就少了 2P 名次。"""
+        write_cache(
+            aredl_workdir / "aredl_levels.json",
+            [
+                aredl_dict_payload(level_id=100, position=83),
+                aredl_dict_payload(level_id=100, position=1059, two_player=True),
+            ],
+            age_seconds=0,
+        )
+        write_cache(aredl_workdir / "arepl_levels.json", [], age_seconds=0)
+        aredlapi.load_from_cache_only()
+
+        solo, two_player = Aredl.getrankpair(100)
+        assert solo is not None and solo.position == 83
+        assert two_player is not None and two_player.position == 1059
+        assert stub_requests.calls == []
+
+    def test_reload_clears_stale_pairs(
+        self, stub_requests: Any, aredl_workdir: Path, aredl_globals: Any
+    ) -> None:
+        """空榜也要把旧的 2P 索引清掉，不能留着上一轮的名次。"""
+        stale = AREDLLevel(aredl_dict_payload(level_id=100, two_player=True))
+        aredlapi.aredl_solo_dict[100] = stale
+        aredlapi.aredl_two_player_dict[100] = stale
+
+        stub_requests.get(AREDL_URL, json_data=[])
+        stub_requests.get(AREPL_URL, json_data=[])
+        aredlapi.reload()
+
+        assert aredlapi.aredl_solo_dict == {}
+        assert aredlapi.aredl_two_player_dict == {}
+        assert Aredl.getrankpair(100) == (None, None)
+
+
 class TestAredlGetLevelById:
     def test_dict_hit(self, aredl_globals: Any) -> None:
         level = AREDLLevel(aredl_dict_payload(level_id=100))
@@ -1957,3 +2076,69 @@ class TestAredlGetLevelById:
         aredlapi.aredllevels[:] = []
         aredlapi.arepllevels[:] = [plat]
         assert Aredl.getlevelbyid(300) is plat
+
+
+class TestAredlPositionIndex:
+    """position -> level 索引和最大排名：*aredlrank 用它们做边界判断。"""
+
+    def test_reload_builds_index_and_max_position(
+        self, stub_requests: Any, aredl_workdir: Path, aredl_globals: Any
+    ) -> None:
+        stub_requests.get(
+            AREDL_URL,
+            json_data=[
+                aredl_dict_payload(level_id=100, position=1),
+                aredl_dict_payload(level_id=200, position=2),
+                aredl_dict_payload(level_id=300, position=42),
+            ],
+        )
+        stub_requests.get(AREPL_URL, json_data=[])
+        aredlapi.reload()
+
+        assert aredlapi.aredl_position_dict is not None
+        assert Aredl.getmaxposition() == 42
+        assert Aredl.getlevelbyposition(2).level_id == 200
+        assert Aredl.getlevelbyposition(3) is None
+
+    def test_arepl_positions_do_not_move_the_bound(
+        self, stub_requests: Any, aredl_workdir: Path, aredl_globals: Any
+    ) -> None:
+        """AREPL 自己一套编号，不能把 AREDL 的最大排名顶上去。"""
+        stub_requests.get(AREDL_URL, json_data=[aredl_dict_payload(level_id=100, position=1)])
+        stub_requests.get(
+            AREPL_URL,
+            json_data=[aredl_dict_payload(level_id=300, position=99)],
+        )
+        aredlapi.reload()
+
+        assert Aredl.getmaxposition() == 1
+        assert Aredl.getlevelbyposition(99) is None
+
+    def test_startup_cache_builds_index_and_max_position(
+        self, stub_requests: Any, aredl_workdir: Path, aredl_globals: Any
+    ) -> None:
+        """启动路径也要建索引，否则重启后命令要等后台刷新才能用。"""
+        write_cache(
+            aredl_workdir / "aredl_levels.json",
+            [
+                aredl_dict_payload(level_id=100, position=1),
+                aredl_dict_payload(level_id=200, position=7),
+            ],
+            age_seconds=0,
+        )
+        write_cache(aredl_workdir / "arepl_levels.json", [], age_seconds=0)
+        aredlapi.load_from_cache_only()
+
+        assert Aredl.getmaxposition() == 7
+        assert Aredl.getlevelbyposition(7).level_id == 200
+        assert stub_requests.calls == []
+
+    def test_empty_list_reports_zero(
+        self, stub_requests: Any, aredl_workdir: Path, aredl_globals: Any
+    ) -> None:
+        stub_requests.get(AREDL_URL, json_data=[])
+        stub_requests.get(AREPL_URL, json_data=[])
+        aredlapi.reload()
+
+        assert Aredl.getmaxposition() == 0
+        assert Aredl.getlevelbyposition(1) is None

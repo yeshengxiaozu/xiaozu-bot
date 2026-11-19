@@ -28,6 +28,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from xiaozu_bot.plugins.gdlevelsearch import draw
 from xiaozu_bot.plugins.gdlevelsearch.api import http as http_transport
+from xiaozu_bot.plugins.gdlevelsearch.api.aredlapi import AREDLLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import GDLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.gddlapi import GDDLLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.thumbnail import (
@@ -814,3 +815,124 @@ class TestDetailTextSections:
         await create_image_from_gdlevel(123)
 
         assert rendered["detail_text"] == "Note: 白名单里的留言"
+
+
+# ==========================================================================
+# AREDL 名次行
+#
+# 2P 关卡在 AREDL 上同时有一条 solo 排位和一条 2P 排位，红线要求两个名次
+# 一起出现：`AREDL #83 / #1059 (2P)`。只排了一侧的关卡不能凭空补数字。
+# ==========================================================================
+def _aredl_level(**overrides: Any) -> AREDLLevel:
+    payload: dict[str, Any] = {
+        "id": "00000000-0000-0000-0000-000000000000",
+        "name": "Level",
+        "position": 1,
+        "points": 100,
+        "status": "MainList",
+        "level_id": 123,
+        "two_player": False,
+        "tags": [],
+        "description": None,
+        "song": None,
+        "edel_enjoyment": None,
+        "is_edel_pending": False,
+        "gddl_tier": None,
+        "nlw_tier": None,
+    }
+    payload.update(overrides)
+    return AREDLLevel(payload)
+
+
+class TestAredlRankLine:
+    def test_2p_level_shows_solo_and_2p_ranks(self) -> None:
+        solo = _aredl_level(position=83)
+        two_player = _aredl_level(position=1059, two_player=True)
+        data = _fetched(aredl_info=solo, aredl_solo_info=solo, aredl_two_player_info=two_player)
+
+        assert draw._build_render_data(data).rank_line == "AREDL #83 / #1059 (2P)"
+
+    def test_2p_entry_found_through_the_better_placement(self) -> None:
+        """aredl_dict 里留住的是 2P 名次时（比 solo 靠前），两个名次照样都要出。"""
+        solo = _aredl_level(position=11)
+        two_player = _aredl_level(position=10, two_player=True)
+        data = _fetched(
+            aredl_info=two_player, aredl_solo_info=solo, aredl_two_player_info=two_player
+        )
+
+        assert draw._build_render_data(data).rank_line == "AREDL #11 / #10 (2P)"
+
+    def test_solo_only_level_keeps_a_single_number(self) -> None:
+        solo = _aredl_level(position=83)
+        data = _fetched(aredl_info=solo, aredl_solo_info=solo)
+
+        assert draw._build_render_data(data).rank_line == "AREDL #83"
+
+    def test_2p_only_level_is_marked(self) -> None:
+        two_player = _aredl_level(position=1624, two_player=True)
+        data = _fetched(aredl_info=two_player, aredl_two_player_info=two_player)
+
+        assert draw._build_render_data(data).rank_line == "AREDL #1624 (2P)"
+
+    def test_legacy_stays_unranked(self) -> None:
+        solo = _aredl_level(position=1629, status="Legacy")
+        two_player = _aredl_level(position=1628, status="Legacy", two_player=True)
+        data = _fetched(
+            aredl_info=two_player, aredl_solo_info=solo, aredl_two_player_info=two_player
+        )
+
+        assert draw._build_render_data(data).rank_line == "AREDL #Legacy"
+
+    def test_missing_pair_index_falls_back_to_the_exposed_entry(self) -> None:
+        """AREPL / 旧缓存没有 pair 索引，不能因此把名次整个丢掉。"""
+        primary = _aredl_level(position=42)
+        data = _fetched(aredl_info=primary)
+
+        assert draw._build_render_data(data).rank_line == "AREDL #42"
+
+    def test_no_aredl_entry_draws_no_rank(self) -> None:
+        assert draw._build_render_data(_fetched()).rank_line == ""
+
+    async def test_pipeline_feeds_both_entries_into_the_card(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_fetch_all_data 真的会去查 2P 那条记录，而不只是看 aredl_dict 的取舍。"""
+        solo = _aredl_level(position=83)
+        two_player = _aredl_level(position=1059, two_player=True)
+        monkeypatch.setattr(draw, "get_level_by_id", lambda _id: None)
+        monkeypatch.setattr(draw.Gddl, "getlevelbyid", lambda *_args: None)
+        monkeypatch.setattr(draw.Gddl, "getleveltags", lambda _id: [])
+        monkeypatch.setattr(draw, "fetch_thumbnail", lambda *_args: _none())
+        monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: solo)
+        monkeypatch.setattr(draw.Aredl, "getrankpair", lambda _id: (solo, two_player))
+        monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Lists, "search_level", lambda _id: None)
+
+        fetched = await draw._fetch_all_data(123)
+
+        assert fetched.aredl_solo_info is solo
+        assert fetched.aredl_two_player_info is two_player
+        assert draw._build_render_data(fetched).rank_line == "AREDL #83 / #1059 (2P)"
+
+    async def test_pipeline_skips_the_pair_lookup_without_an_aredl_entry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(draw, "get_level_by_id", lambda _id: None)
+        monkeypatch.setattr(draw.Gddl, "getlevelbyid", lambda *_args: None)
+        monkeypatch.setattr(draw.Gddl, "getleveltags", lambda _id: [])
+        monkeypatch.setattr(draw, "fetch_thumbnail", lambda *_args: _none())
+        monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: None)
+
+        def _boom(_id: int) -> Any:
+            raise AssertionError("no AREDL entry means no pair lookup")
+
+        monkeypatch.setattr(draw.Aredl, "getrankpair", _boom)
+        monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Lists, "search_level", lambda _id: None)
+
+        fetched = await draw._fetch_all_data(123)
+
+        assert fetched.aredl_solo_info is None
+        assert fetched.aredl_two_player_info is None

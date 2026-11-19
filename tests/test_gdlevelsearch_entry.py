@@ -38,6 +38,9 @@ from xiaozu_bot.plugins.gdlevelsearch.api.nlwapi import Level as NlwLevel
 from xiaozu_bot.plugins.gdlevelsearch.api.platapi import PlatInfo
 from xiaozu_bot.plugins.gdlevelsearch.api.ratedplusapi import RatedplusLevel
 from xiaozu_bot.plugins.gdlevelsearch.commands import (
+    aredlrank as cmd_aredlrank,
+)
+from xiaozu_bot.plugins.gdlevelsearch.commands import (
     dailydemon as cmd_dailydemon,
 )
 from xiaozu_bot.plugins.gdlevelsearch.commands import (
@@ -2370,6 +2373,118 @@ class TestHandleDailyDemon:
         assert stub_image == [777]
         assert sent_texts(fake_bot) == [""]
         assert len(image_segments(fake_bot)) == 1
+
+
+# ==========================================================================
+# *aredlrank
+# ==========================================================================
+class TestHandleAredlRank:
+    @pytest.mark.parametrize("arg", ["", "abc", "0", "-1", "11", "1 2"])
+    async def test_bad_arguments_are_rejected(
+        self,
+        arg: str,
+        fake_bot: FakeBot,
+        make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """非数字、越界（0 / 负数 / 超过最大排名）、多个参数都只回一句话。"""
+        asked: list[int] = []
+        monkeypatch.setattr(cmd_aredlrank.Aredl, "getmaxposition", lambda: 10)
+        monkeypatch.setattr(
+            cmd_aredlrank.Aredl, "getlevelbyposition", asked.append
+        )
+
+        await run_handler(
+            gdlevelsearch.aredlrank,
+            fake_bot,
+            make_group_event("*aredlrank"),
+            arg=arg,
+        )
+
+        assert len(sent_texts(fake_bot)) == 1
+        assert asked == []
+        assert image_segments(fake_bot) == []
+
+    async def test_out_of_range_message_carries_the_current_bound(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cmd_aredlrank.Aredl, "getmaxposition", lambda: 12)
+        await run_handler(
+            gdlevelsearch.aredlrank,
+            fake_bot,
+            make_group_event("*aredlrank"),
+            arg="13",
+        )
+        assert "12" in sent_texts(fake_bot)[0]
+
+    async def test_rank_is_forwarded_and_rendered(
+        self,
+        fake_bot: FakeBot,
+        make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_image: list[int],
+    ) -> None:
+        asked: list[int] = []
+        monkeypatch.setattr(cmd_aredlrank.Aredl, "getmaxposition", lambda: 10)
+
+        def lookup(position: int) -> SimpleNamespace:
+            asked.append(position)
+            return SimpleNamespace(level_id=4242)
+
+        monkeypatch.setattr(cmd_aredlrank.Aredl, "getlevelbyposition", lookup)
+
+        await run_handler(
+            gdlevelsearch.aredlrank,
+            fake_bot,
+            make_group_event("*aredlrank"),
+            arg="3",
+        )
+
+        assert asked == [3]
+        assert stub_image == [4242]
+        assert len(image_segments(fake_bot)) == 1
+
+    async def test_missing_rank_logs_an_error_and_reports_to_the_user(
+        self,
+        fake_bot: FakeBot,
+        make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """排名在范围内但索引里没有：日志要报错，用户要收到提示，不出图。"""
+        logged: list[str] = []
+        monkeypatch.setattr(cmd_aredlrank.Aredl, "getmaxposition", lambda: 10)
+        monkeypatch.setattr(cmd_aredlrank.Aredl, "getlevelbyposition", lambda _p: None)
+        # nonebot 的 logger 是 loguru，caplog 抓不到，直接换掉 error
+        monkeypatch.setattr(
+            cmd_aredlrank.logger, "error", lambda msg, *a, **k: logged.append(msg)
+        )
+
+        await run_handler(
+            gdlevelsearch.aredlrank,
+            fake_bot,
+            make_group_event("*aredlrank"),
+            arg="5",
+        )
+
+        assert len(logged) == 1
+        assert "[aredlrank]" in logged[0]
+        assert len(sent_texts(fake_bot)) == 1
+        assert "5" in sent_texts(fake_bot)[0]
+        assert image_segments(fake_bot) == []
+
+    async def test_empty_dataset_sends_text_only(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """数据还没载入时最大排名是 0，别回一句「排名要在 1-0 之间」。"""
+        monkeypatch.setattr(cmd_aredlrank.Aredl, "getmaxposition", lambda: 0)
+        await run_handler(
+            gdlevelsearch.aredlrank,
+            fake_bot,
+            make_group_event("*aredlrank"),
+            arg="1",
+        )
+        assert len(sent_texts(fake_bot)) == 1
+        assert image_segments(fake_bot) == []
 
 
 # ==========================================================================

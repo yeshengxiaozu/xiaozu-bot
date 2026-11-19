@@ -78,6 +78,7 @@ from . import updater  # noqa: E402, F401, RUF100
 # 命令模块：import 即注册 matcher。下面这些名字同时是包级 re-export，
 # 保持 `gdlevelsearch.gdsearch` 这类旧引用（含测试）继续可用。
 # ---------------------------------------------------------------------------
+from .commands.aredlrank import aredlrank  # noqa: F401
 from .commands.dailydemon import dailydemon  # noqa: F401
 from .commands.fullsearch import (  # noqa: F401
     _drop_fullsearch,

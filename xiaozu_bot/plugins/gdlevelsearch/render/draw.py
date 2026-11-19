@@ -296,6 +296,10 @@ class FetchedData:
     gddl_info: GDDLLevel | GDDLSearchEntry | None = None
     thumb_bytes: bytes | None = None
     aredl_info: AREDLLevel | None = None
+    # Solo / 2P entries behind aredl_info. aredl_dict collapses the two into the
+    # better placement, so they are looked up separately to draw both ranks.
+    aredl_solo_info: AREDLLevel | None = None
+    aredl_two_player_info: AREDLLevel | None = None
     nlw_info: NLWLevel | None = None
     plat_info: PlatInfo | None = None
     list_rank: str | None = None
@@ -604,6 +608,12 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
     thumb_bytes = _optional_remote_result(thumb_bytes, "thumbnail")
 
     aredl_info = Aredl.getlevelbyid(level_id)
+    # An AREDL entry can stand for the 2P version (DICHOTOMY: the 2P placement
+    # is better), so pull the solo entry too instead of trusting aredl_info to
+    # be the solo one. Skipped when the level is not on AREDL at all.
+    aredl_solo_info, aredl_two_player_info = (
+        Aredl.getrankpair(level_id) if aredl_info is not None else (None, None)
+    )
     nlw_info = Nlw.getlevelbyid(level_id)
     plat_info = Platapi.getlevelbyid(level_id)
     if gddl_info is None:
@@ -628,6 +638,8 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
         gddl_info=gddl_info,
         thumb_bytes=thumb_bytes,
         aredl_info=aredl_info,
+        aredl_solo_info=aredl_solo_info,
+        aredl_two_player_info=aredl_two_player_info,
         nlw_info=nlw_info,
         plat_info=plat_info,
         list_rank=list_rank,
@@ -635,6 +647,32 @@ async def _fetch_all_data(level_id: int) -> FetchedData:
         nong_song=nong_song,
         unrated_note=unrated_note,
     )
+
+
+def _aredl_rank_text(
+    primary: AREDLLevel | None,
+    solo: AREDLLevel | None,
+    two_player: AREDLLevel | None,
+) -> str:
+    """Format the AREDL line, listing both placements for a 2P level.
+
+    ``AREDL #83 / #1059 (2P)`` means solo rank 83 and 2P rank 1059. Levels
+    that are only on one of the two charts keep a single number, and a level
+    that is not on AREDL at all yields "".
+    """
+    if primary is None:
+        return ""
+    # Legacy entries sit at the tail of the list with no meaningful rank.
+    if getattr(primary, "status", None) == "Legacy":
+        return "AREDL #Legacy"
+    if solo is not None and two_player is not None:
+        return f"AREDL #{solo.position} / #{two_player.position} (2P)"
+    if two_player is not None:
+        return f"AREDL #{two_player.position} (2P)"
+    # solo/two_player are empty when the entry came from AREPL, an older cache
+    # or a caller-built stub; fall back to whatever aredl_dict exposed.
+    ranked = solo or primary
+    return f"AREDL #{ranked.position}"
 
 
 def _build_render_data(data: FetchedData) -> LevelRenderData:
@@ -686,10 +724,11 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
         elif aredl_info:
             rank_parts.append(f"{aredl_info.position}(AREDL)")
     elif aredl_info:
-        if getattr(aredl_info, "status", False) == "Legacy":
-            rank_parts.append("AREDL #Legacy")
-        else:
-            rank_parts.append(f"AREDL #{aredl_info.position}")
+        aredl_rank = _aredl_rank_text(
+            aredl_info, data.aredl_solo_info, data.aredl_two_player_info
+        )
+        if aredl_rank:
+            rank_parts.append(aredl_rank)
         edel = getattr(aredl_info, "edel_enjoyment", None)
         if edel is not None and not getattr(aredl_info, "is_edel_pending", False):
             rank_parts.append(f"EDEL {edel:.1f}")
