@@ -662,6 +662,21 @@ class TestZhuaCommand:
     def store(self, patch_storage):
         return patch_storage(zhua)
 
+    @pytest.fixture
+    def fake_library(self, monkeypatch, tmp_path):
+        """A tiny image library, independent of the gitignored runtime data.
+
+        zhua/data holds deployment-only images, so a clean checkout has no
+        pictures at all. Command tests must not depend on what happens to be
+        on the developer's disk.
+        """
+        folder = tmp_path / "zhua-lib"
+        folder.mkdir()
+        for name in ("按钮卒.gif", "捏捏卒.PNG"):
+            (folder / name).write_bytes(b"fake image")
+        monkeypatch.setattr(zhua, "DATA_DIR", folder)
+        return folder
+
     def test_every_description_key_points_to_a_real_file(self):
         """descriptions 里不能有指向不存在文件的键。
 
@@ -669,12 +684,16 @@ class TestZhuaCommand:
         FileNotFoundError，用户什么都收不到。候选项现在以目录为准，这条断言
         保证手写字典本身也不会再骗人。
         """
+        # The image library is not checked in; this guard can only run where
+        # the deployment data actually exists (developer machine / server).
+        if not zhua._available_files():
+            pytest.skip("zhua image library is deployment-only runtime data")
         missing = [
             name for name in zhua.descriptions if not (zhua.DATA_DIR / name).exists()
         ]
         assert missing == []
 
-    def test_candidates_come_from_the_folder_not_the_dict(self):
+    def test_candidates_come_from_the_folder_not_the_dict(self, fake_library):
         """候选项是目录里真实存在的图片，不是手写字典的键"""
         candidates = zhua._available_files()
         assert candidates, "图库目录里应该有图片"
@@ -682,7 +701,7 @@ class TestZhuaCommand:
             assert (zhua.DATA_DIR / name).is_file()
 
     async def test_picks_an_image_and_sets_cooldown(
-        self, store, fake_bot, make_group_event, monkeypatch
+        self, store, fake_bot, make_group_event, monkeypatch, fake_library
     ):
         monkeypatch.setattr(random, "choice", lambda seq: seq[0])
         assert await run_handler(zhua.zhua, fake_bot, make_group_event()) is True
@@ -694,7 +713,7 @@ class TestZhuaCommand:
         assert store.get(f"zhua_cd_{DEFAULT_USER_ID}") == "waiting"
 
     async def test_cooldown_ttl_is_600(
-        self, store, fake_bot, make_group_event, monkeypatch
+        self, store, fake_bot, make_group_event, monkeypatch, fake_library
     ):
         monkeypatch.setattr(random, "choice", lambda seq: seq[0])
         await run_handler(zhua.zhua, fake_bot, make_group_event())
@@ -719,7 +738,7 @@ class TestZhuaCommand:
         assert 0 < int(numbers[0]) <= 600
 
     async def test_cooldown_is_per_user(
-        self, store, fake_bot, make_group_event, monkeypatch
+        self, store, fake_bot, make_group_event, monkeypatch, fake_library
     ):
         store.set(f"zhua_cd_{DEFAULT_USER_ID}", "waiting", ex=600)
         monkeypatch.setattr(random, "choice", lambda seq: seq[0])
