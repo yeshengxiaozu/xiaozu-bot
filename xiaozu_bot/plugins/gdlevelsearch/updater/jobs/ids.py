@@ -24,6 +24,7 @@ from .constants import (
     IDS_LEVELS_NAME,
     IDS_PLATFORMER_LEVELS_NAME,
 )
+from .tier_label import split_tier_header
 
 
 # ------------------------------
@@ -76,6 +77,7 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
 
     level_objs = []
     last_tier = None
+    last_tier_label = None
 
     for i in range(len(levels)):
         lvl = levels[i] if i < len(levels) else ''
@@ -89,13 +91,15 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
         if not lvl:
             break
         if lvl.startswith('↓'):
-            last_tier = lvl[2:-2].strip()
+            last_tier_label, last_tier = split_tier_header(lvl[2:-2])
             continue
 
         if not last_tier or last_tier in {"Other", "Spreadsheet Fakes (Legacy)"}:
             continue # 干什么。。。
         if last_tier == 'Hard Demon/Extreme Demon Rerates':
-            last_tier = 'Legacy' #demoted or promoted
+            # Demoted or promoted: the sheet has no label for this, both name
+            # and label become "Legacy" so the card prints no suffix.
+            last_tier_label = last_tier = 'Legacy'
 
         name = FRUITY_LEVELS.get(lvl, lvl).strip()
 
@@ -105,6 +109,7 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
         level_objs.append({
             'sheetIndex': i,
             'tier': last_tier,
+            'tier_label': last_tier_label,
             'name': name,
             'creator': creator_clean,
             'length': length,

@@ -51,6 +51,9 @@ from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
     sfh,
     tpl,
 )
+from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
+    tier_label as tier_label_job,
+)
 
 pytestmark = pytest.mark.updater
 
@@ -1931,6 +1934,7 @@ def _arrow_header(tier: str) -> str:
 _BASE_FIELDS = {
     "sheetIndex",
     "tier",
+    "tier_label",
     "name",
     "creator",
     "length",
@@ -2215,6 +2219,53 @@ class TestLwBuild:
         cols = _lw_cols(["| Easy Tier", "Alpha", "", "Beta"])
         entries = lw.build_level_list(cols)
         assert [e["name"] for e in entries] == ["Alpha", "", "Beta"]
+
+
+# ==========================================================================
+# jobs/tier_label.py —— 档名表头不一定以 "Tier" 结尾
+#
+# 卡片上的档名是照表格原文印的：`| Extreme Tier` 印 "Extreme Tier"，
+# `| Low End` / `↓ Legacy ↓` 就印原文，不再硬加一个 " Tier"。
+# 所以落档时除了去掉 " Tier" 的 tier 之外，还要把原文存成 tier_label。
+# ==========================================================================
+class TestTierLabel:
+    @pytest.mark.parametrize(
+        ("raw", "label", "tier"),
+        [
+            ("Extreme Tier", "Extreme Tier", "Extreme"),
+            ("Extreme  tier", "Extreme  tier", "Extreme"),
+            ("Low End", "Low End", "Low End"),
+            ("Low End Range", "Low End Range", "Low End Range"),
+            ("Legacy", "Legacy", "Legacy"),
+            ("   Beginner Tier   ", "Beginner Tier", "Beginner"),
+            # 只有 "Tier" 两个字时不能把名字剥成空串
+            ("Tier", "Tier", "Tier"),
+        ],
+    )
+    def test_表头拆成原文和档名(self, raw: str, label: str, tier: str) -> None:
+        assert tier_label_job.split_tier_header(raw) == (label, tier)
+
+    def test_不以_Tier_结尾的表头不再被补一个_Tier(self) -> None:
+        cols = _nlw_cols(["| Low End Range", "Alpha", "| Extreme Tier", "Beta"])
+        assert [(e["tier"], e["tier_label"]) for e in nlw.build_level_list(cols)] == [
+            ("Low End Range", "Low End Range"),
+            ("Extreme", "Extreme Tier"),
+        ]
+
+    def test_区间名整行当表头时原文也不带_Tier(self) -> None:
+        cols = _lw_cols(["Mid Range", "Alpha"])
+        entry = lw.build_level_list(cols)[0]
+        assert (entry["tier"], entry["tier_label"]) == ("Mid Range", "Mid Range")
+
+    def test_箭头表头落成不带_Tier_的原文(self) -> None:
+        cols = _ids_cols([_arrow_header("Legacy"), "Alpha"])
+        entry = ids.build_level_list(cols)[0]
+        assert (entry["tier"], entry["tier_label"]) == ("Legacy", "Legacy")
+
+    def test_改写成_Legacy_的分档原文也跟着改(self) -> None:
+        cols = _hds_cols([_arrow_header("Plegacy"), "Alpha"])
+        entry = hds.build_level_list(cols)[0]
+        assert (entry["tier"], entry["tier_label"]) == ("Legacy", "Legacy")
 
 
 # ==========================================================================

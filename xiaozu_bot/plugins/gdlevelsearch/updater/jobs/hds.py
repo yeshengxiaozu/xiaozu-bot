@@ -24,6 +24,7 @@ from .constants import (
     HDS_LEVELS_NAME,
     HDS_PLATFORMER_LEVELS_NAME,
 )
+from .tier_label import split_tier_header
 
 
 # ------------------------------
@@ -76,6 +77,7 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
 
     level_objs = []
     last_tier = None
+    last_tier_label = None
 
     for i in range(len(levels)):
         lvl = levels[i] if i < len(levels) else ''
@@ -89,16 +91,18 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
         if not lvl:
             break
         if lvl.startswith('↓'):
-            last_tier = lvl[2:-2].strip()
+            last_tier_label, last_tier = split_tier_header(lvl[2:-2])
             continue
         if lvl in {"Demoted", "Promoted"}:
-            last_tier = "Legacy"
+            # A synthetic section, not a sheet label, so both name and label
+            # are "Legacy" and nothing gets appended on the card.
+            last_tier_label = last_tier = "Legacy"
             continue
 
         if not last_tier or last_tier == "Plending":
             continue # 干什么。。'。
         if last_tier == "Plegacy":
-            last_tier = "Legacy"
+            last_tier_label = last_tier = "Legacy"
 
         name = FRUITY_LEVELS.get(lvl, lvl).strip()
         creator_clean = FRUITY_CREATORS.get(creator, creator)
@@ -113,6 +117,7 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
         level_objs.append({
             'sheetIndex': i,
             'tier': last_tier,
+            'tier_label': last_tier_label,
             'name': name,
             'creator': creator_clean,
             'length': length,

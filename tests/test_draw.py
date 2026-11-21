@@ -818,6 +818,53 @@ class TestDetailTextSections:
 
 
 # ==========================================================================
+# 档名行（Tier X / 表格原文）
+#
+# 卡片印的是表格原文：`| Extreme Tier` -> "Extreme Tier"，
+# `| Low End Range` / `↓ Legacy ↓` -> 原文，不再硬加 " Tier"。
+# ==========================================================================
+class TestTierLabelLine:
+    def test_表头本来带_Tier_就照印(self) -> None:
+        data = _fetched(nlw_info=_Stub(source="NLW", tier="Extreme", tier_label="Extreme Tier"))
+
+        rendered = draw._build_render_data(data)
+
+        assert rendered.tier_prefix == "NLW "
+        assert rendered.tier_category_line == "Extreme Tier"
+        # 颜色仍然按去掉后缀的档名查，不然色表全查不到
+        assert rendered.tier_color == draw.TIER_COLOR_MAP["Extreme"]
+
+    def test_不以_Tier_结尾的档名不再被补_Tier(self) -> None:
+        data = _fetched(
+            nlw_info=_Stub(source="NLW", tier="Low End Range", tier_label="Low End Range")
+        )
+
+        rendered = draw._build_render_data(data)
+
+        assert rendered.tier_category_line == "Low End Range"
+
+    def test_Legacy_这种非档名原样显示(self) -> None:
+        data = _fetched(nlw_info=_Stub(source="HDS", tier="Legacy", tier_label="Legacy"))
+
+        assert draw._build_render_data(data).tier_category_line == "Legacy"
+
+    def test_没有_tier_label_的旧缓存按档名原样显示(self) -> None:
+        """旧 json 里只有去掉后缀的 tier，没有原文可还原，就不给补"""
+        data = _fetched(nlw_info=_Stub(source="NLW", tier="Beginner"))
+
+        assert draw._build_render_data(data).tier_category_line == "Beginner"
+
+    def test_AREDL_的来源档名仍然补_Tier(self) -> None:
+        """AREDL 的 nlw_tier 是个裸档名（不是表格原文），这里保持原样"""
+        data = _fetched(aredl_info=_Stub(nlw_tier="Beginner", position=3))
+
+        rendered = draw._build_render_data(data)
+
+        assert rendered.tier_prefix == "NLW "
+        assert rendered.tier_category_line == "Beginner Tier"
+
+
+# ==========================================================================
 # AREDL 名次行
 #
 # 2P 关卡在 AREDL 上同时有一条 solo 排位和一条 2P 排位，红线要求两个名次

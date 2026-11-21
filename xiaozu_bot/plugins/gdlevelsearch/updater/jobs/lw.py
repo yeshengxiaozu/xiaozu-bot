@@ -15,6 +15,7 @@ except ImportError:
 import contextlib
 
 from .constants import LW_ID, LW_LEVELS_NAME, LW_PENDING_LEVELS_NAME
+from .tier_label import split_tier_header
 
 
 # ------------------------------
@@ -68,6 +69,7 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
 
     level_objs = []
     last_tier = None
+    last_tier_label = None
 
     for i in range(len(levels)):
         lvl = levels[i] if i < len(levels) else ''
@@ -82,11 +84,13 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
             break
 
         if lvl.startswith('| '):
-            last_tier = lvl[2:].replace(' Tier', '').strip()
+            last_tier_label, last_tier = split_tier_header(lvl[2:])
             continue
 
         if lvl in ["Low End","Low-Mid Range","Mid Range","Mid-High Range","High End","Ouchie","Unknown"]:
-            last_tier = lvl
+            # Range names double as section headers without the "| " marker and
+            # are not tier names, so nothing may be appended to them later.
+            last_tier_label, last_tier = split_tier_header(lvl)
             continue
 
         if not last_tier or last_tier == "Shortcuts":
@@ -110,6 +114,7 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
         level_objs.append({
             'sheetIndex': i,
             'tier': last_tier,
+            'tier_label': last_tier_label,
             'name': name,
             'creator': creator_clean,
             'length': length,

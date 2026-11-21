@@ -17,6 +17,10 @@ class Level:
     description: str | None = None
     video: str | None = None
     tier: str | None = None  # for elimate the red lines
+    # The tier as the sheet wrote it ("Extreme Tier", "Low End Range", "Legacy").
+    # A header without the word Tier stays without it; the card prints this
+    # verbatim instead of bolting " Tier" onto every tier name.
+    tier_label: str | None = None
     skillset: str | None = None  # for elimate the red lines
 
     def __init__(self, jsondict: dict[str, Any]) -> None:
@@ -27,6 +31,9 @@ class Level:
         self.id = jsondict.get("id")
         self.description = jsondict.get("description")
         self.video = jsondict["video"]
+        # Caches written before tier_label existed only carry the stripped
+        # tier, so they fall back to that: "Beginner" prints as "Beginner".
+        self.tier_label = jsondict.get("tier_label") or jsondict.get("tier")
 
 class NLWlevel(Level):
     tier: str | None = None

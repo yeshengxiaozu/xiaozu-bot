@@ -675,6 +675,18 @@ def _aredl_rank_text(
     return f"AREDL #{ranked.position}"
 
 
+def _tier_label_text(level: object) -> str:
+    """Tier text to print on the card, exactly as the sheet wrote it.
+
+    Headers such as "| Extreme Tier" keep the suffix, while range names and
+    non-tier sections ("| Low End", "↓ Legacy ↓") must not grow one. Caches
+    that predate tier_label only have the stripped tier, so they fall back to
+    that instead of getting " Tier" appended back.
+    """
+    label = getattr(level, "tier_label", None) or getattr(level, "tier", None)
+    return str(label) if label else ""
+
+
 def _build_render_data(data: FetchedData) -> LevelRenderData:
     gdlevel = data.gdlevel
     gddl_info = data.gddl_info
@@ -743,7 +755,9 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
     tier_value = ""
     if nlw_info and getattr(nlw_info, "tier", None):
         tier_prefix = f"{nlw_info.source} "
-        tier_category_line = f"{nlw_info.tier} Tier"
+        # The sheet label already carries its own wording: "Beginner Tier" when
+        # the header said Tier, plain "Low End Range" / "Legacy" when it did not.
+        tier_category_line = _tier_label_text(nlw_info)
         tier_value = str(nlw_info.tier)
     elif aredl_info and getattr(aredl_info, "nlw_tier", None):
         tier_prefix = "NLW "

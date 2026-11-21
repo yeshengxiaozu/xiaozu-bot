@@ -24,6 +24,7 @@ from .constants import (
     NLW_REGULAR_LEVELS_NAME,
     NLW_REGULAR_PLATFORMER_LEVELS_NAME,
 )
+from .tier_label import split_tier_header
 
 
 # ------------------------------
@@ -69,6 +70,7 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
 
     level_objs = []
     last_tier = None
+    last_tier_label = None
 
     for i in range(len(levels)):
         lvl = levels[i] if i < len(levels) else ''
@@ -84,7 +86,7 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
             break
 
         if lvl.startswith('| '):
-            last_tier = lvl[2:].replace(' Tier', '').strip()
+            last_tier_label, last_tier = split_tier_header(lvl[2:])
             continue
 
         if not last_tier or last_tier == "Shortcuts":
@@ -113,6 +115,7 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
         level_objs.append({
             'sheetIndex': i,
             'tier': last_tier,
+            'tier_label': last_tier_label,
             'name': name,
             'creator': creator_clean,
             'length': length,
