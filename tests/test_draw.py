@@ -851,50 +851,87 @@ class TestDetailTextSections:
 
 
 # ==========================================================================
-# 档名行（Tier X / 表格原文）
+# 档名行
 #
-# 卡片印的是表格原文：`| Extreme Tier` -> "Extreme Tier"，
-# `| Low End Range` / `↓ Legacy ↓` -> 原文，不再硬加 " Tier"。
+# 真档名（Beginner / Medium / Extreme …）后面跟 " Tier"；表里拿档名格当
+# 分区标题用的词（Legacy / Pending / Demote / 区间名）原样印，不补后缀。
 # ==========================================================================
 class TestTierLabelLine:
-    def test_表头本来带_Tier_就照印(self) -> None:
-        data = _fetched(nlw_info=_Stub(source="NLW", tier="Extreme", tier_label="Extreme Tier"))
+    @pytest.mark.parametrize(
+        "tier", ["Beginner", "Medium", "Extreme", "Very Hard", "Fuck"]
+    )
+    def test_真档名带上_Tier(self, tier: str) -> None:
+        data = _fetched(nlw_info=_Stub(source="NLW", tier=tier))
 
         rendered = draw._build_render_data(data)
 
         assert rendered.tier_prefix == "NLW "
-        assert rendered.tier_category_line == "Extreme Tier"
-        # 颜色仍然按去掉后缀的档名查，不然色表全查不到
-        assert rendered.tier_color == draw.TIER_COLOR_MAP["Extreme"]
+        assert rendered.tier_category_line == f"{tier} Tier"
+        # 颜色仍然按档名查
+        assert rendered.tier_color == draw.TIER_COLOR_MAP[tier]
 
-    def test_不以_Tier_结尾的档名不再被补_Tier(self) -> None:
-        data = _fetched(
-            nlw_info=_Stub(source="NLW", tier="Low End Range", tier_label="Low End Range")
-        )
+    @pytest.mark.parametrize(
+        "tier",
+        [
+            "Legacy",
+            "Pending",
+            "Demote",
+            "Low End",
+            "Low End Range",
+            "Mid Range",
+            "Unknown",
+            "New Rates",
+            "Leaderboard Mods Wall Of Shame",
+            "Other",
+        ],
+    )
+    def test_不是档名的分区标题原样印(self, tier: str) -> None:
+        data = _fetched(nlw_info=_Stub(source="HDS", tier=tier))
 
-        rendered = draw._build_render_data(data)
+        assert draw._build_render_data(data).tier_category_line == tier
 
-        assert rendered.tier_category_line == "Low End Range"
+    def test_大小写不影响判断(self) -> None:
+        assert draw._tier_label_text("beginner") == "beginner Tier"
+        assert draw._tier_label_text("LEGACY") == "LEGACY"
 
-    def test_Legacy_这种非档名原样显示(self) -> None:
-        data = _fetched(nlw_info=_Stub(source="HDS", tier="Legacy", tier_label="Legacy"))
+    def test_空档名印空串(self) -> None:
+        assert draw._tier_label_text(None) == ""
+        assert draw._tier_label_text("") == ""
 
-        assert draw._build_render_data(data).tier_category_line == "Legacy"
-
-    def test_没有_tier_label_的旧缓存按档名原样显示(self) -> None:
-        """旧 json 里只有去掉后缀的 tier，没有原文可还原，就不给补"""
-        data = _fetched(nlw_info=_Stub(source="NLW", tier="Beginner"))
-
-        assert draw._build_render_data(data).tier_category_line == "Beginner"
-
-    def test_AREDL_的来源档名仍然补_Tier(self) -> None:
-        """AREDL 的 nlw_tier 是个裸档名（不是表格原文），这里保持原样"""
+    def test_AREDL_的裸档名走同一套规则(self) -> None:
         data = _fetched(aredl_info=_Stub(nlw_tier="Beginner", position=3))
 
         rendered = draw._build_render_data(data)
 
         assert rendered.tier_prefix == "NLW "
         assert rendered.tier_category_line == "Beginner Tier"
+
+    def test_色表里每一个档名都在_TIER_NAMES_里(self) -> None:
+        """色表和档名表是两份手写清单，漏一个就会出现「有颜色但不带 Tier」"""
+        non_tiers = {
+            "Demote", "Legacy", "Leaderboard Mods Wall Of Shame", "Unknown",
+            "New Rates", "Potential Extremes", "Low End", "Low-Mid Range",
+            "Mid Range", "Mid-High Range", "High End",
+        }
+        sentinels = {
+            f"{i} - {name}"
+            for i, name in enumerate(
+                ["BEGINNER", "EASY", "MODERATE", "INTERMEDIATE", "TOUGH",
+                 "CHALLENGING", "DIFFICULT", "FORMIDABLE", "CRUEL", "INSANE",
+                 "DEADLY", "EXTREME", "TERRIFYING"],
+                start=1,
+            )
+        }
+
+        missing = [
+            key
+            for key in draw.TIER_COLOR_MAP
+            if key not in non_tiers
+            and key not in sentinels
+            and key.casefold() not in draw.TIER_NAMES
+        ]
+
+        assert missing == []
 
 
 # ==========================================================================

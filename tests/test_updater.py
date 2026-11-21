@@ -51,9 +51,6 @@ from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
     sfh,
     tpl,
 )
-from xiaozu_bot.plugins.gdlevelsearch.updater.jobs import (
-    tier_label as tier_label_job,
-)
 
 pytestmark = pytest.mark.updater
 
@@ -1934,7 +1931,6 @@ def _arrow_header(tier: str) -> str:
 _BASE_FIELDS = {
     "sheetIndex",
     "tier",
-    "tier_label",
     "name",
     "creator",
     "length",
@@ -2174,9 +2170,55 @@ class TestHdsBuild:
         assert hds.build_level_list(cols)[0]["skillset"] == "<" * 27
 
 
+class TestHdsColumns:
+    """classic 表和 plat 表的列布局不一样，抄错一列是静默错位
+
+    "THE List" 现在是 A 占位 / B 关名 / C 视频 / D 作者 / E 长度 / F skillset /
+    G FUN / H 描述 / I 关卡 ID，只取其中五项；G/I 跳过不读。
+    """
+
+    def test_classic_表只读它需要的那几列(self) -> None:
+        service = FakeSheetsService(
+            values_result={}, get_results=[{"sheets": [{"data": [{}]}]}]
+        )
+
+        hds.fetch_regular_cells(service, constants.HDS_LEVELS_NAME)
+
+        assert [call["range"] for call in service.values_calls] == [
+            f"'{constants.HDS_LEVELS_NAME}'!B:B",  # 关名
+            f"'{constants.HDS_LEVELS_NAME}'!D:D",  # 作者
+            f"'{constants.HDS_LEVELS_NAME}'!E:E",  # 长度
+            f"'{constants.HDS_LEVELS_NAME}'!F:F",  # skillset
+            f"'{constants.HDS_LEVELS_NAME}'!H:H",  # 描述
+        ]
+        # 视频走 hyperlink 那一支，在 C 列
+        assert service.get_calls[0]["ranges"] == [
+            f"'{constants.HDS_LEVELS_NAME}'!C:C"
+        ]
+
+    def test_plat_表布局没变(self) -> None:
+        service = FakeSheetsService(
+            values_result={}, get_results=[{"sheets": [{"data": [{}]}]}]
+        )
+
+        hds.fetch_platformer_cells(service, constants.HDS_PLATFORMER_LEVELS_NAME)
+
+        assert [call["range"] for call in service.values_calls] == [
+            f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!A:A",
+            f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!C:C",
+            f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!D:D",
+            f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!F:F",
+            f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!G:G",
+        ]
+        assert service.get_calls[0]["ranges"] == [
+            f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!B:B"
+        ]
+
+
 class TestLwBuild:
     """lw 独有的分支 —— 它和另外三张差得最多：没有 FRUITY 改名表、没有
     checkpoints 列，空行的处理也是另一套（下面最后两条）。"""
+
 
     def test_区间名整行也能当分档表头(self) -> None:
         # 源码里那张区间名清单是个字面量 list，这里照着摆一遍：一行档名 + 一行关卡
@@ -2219,53 +2261,6 @@ class TestLwBuild:
         cols = _lw_cols(["| Easy Tier", "Alpha", "", "Beta"])
         entries = lw.build_level_list(cols)
         assert [e["name"] for e in entries] == ["Alpha", "", "Beta"]
-
-
-# ==========================================================================
-# jobs/tier_label.py —— 档名表头不一定以 "Tier" 结尾
-#
-# 卡片上的档名是照表格原文印的：`| Extreme Tier` 印 "Extreme Tier"，
-# `| Low End` / `↓ Legacy ↓` 就印原文，不再硬加一个 " Tier"。
-# 所以落档时除了去掉 " Tier" 的 tier 之外，还要把原文存成 tier_label。
-# ==========================================================================
-class TestTierLabel:
-    @pytest.mark.parametrize(
-        ("raw", "label", "tier"),
-        [
-            ("Extreme Tier", "Extreme Tier", "Extreme"),
-            ("Extreme  tier", "Extreme  tier", "Extreme"),
-            ("Low End", "Low End", "Low End"),
-            ("Low End Range", "Low End Range", "Low End Range"),
-            ("Legacy", "Legacy", "Legacy"),
-            ("   Beginner Tier   ", "Beginner Tier", "Beginner"),
-            # 只有 "Tier" 两个字时不能把名字剥成空串
-            ("Tier", "Tier", "Tier"),
-        ],
-    )
-    def test_表头拆成原文和档名(self, raw: str, label: str, tier: str) -> None:
-        assert tier_label_job.split_tier_header(raw) == (label, tier)
-
-    def test_不以_Tier_结尾的表头不再被补一个_Tier(self) -> None:
-        cols = _nlw_cols(["| Low End Range", "Alpha", "| Extreme Tier", "Beta"])
-        assert [(e["tier"], e["tier_label"]) for e in nlw.build_level_list(cols)] == [
-            ("Low End Range", "Low End Range"),
-            ("Extreme", "Extreme Tier"),
-        ]
-
-    def test_区间名整行当表头时原文也不带_Tier(self) -> None:
-        cols = _lw_cols(["Mid Range", "Alpha"])
-        entry = lw.build_level_list(cols)[0]
-        assert (entry["tier"], entry["tier_label"]) == ("Mid Range", "Mid Range")
-
-    def test_箭头表头落成不带_Tier_的原文(self) -> None:
-        cols = _ids_cols([_arrow_header("Legacy"), "Alpha"])
-        entry = ids.build_level_list(cols)[0]
-        assert (entry["tier"], entry["tier_label"]) == ("Legacy", "Legacy")
-
-    def test_改写成_Legacy_的分档原文也跟着改(self) -> None:
-        cols = _hds_cols([_arrow_header("Plegacy"), "Alpha"])
-        entry = hds.build_level_list(cols)[0]
-        assert (entry["tier"], entry["tier_label"]) == ("Legacy", "Legacy")
 
 
 # ==========================================================================

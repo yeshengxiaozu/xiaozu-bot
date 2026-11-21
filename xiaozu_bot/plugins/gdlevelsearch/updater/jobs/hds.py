@@ -24,19 +24,22 @@ from .constants import (
     HDS_LEVELS_NAME,
     HDS_PLATFORMER_LEVELS_NAME,
 )
-from .tier_label import split_tier_header
 
 
 # ------------------------------
 # 数据抓取函数（现在接收 sheet_name 而非 sheet_id）
 # ------------------------------
 def fetch_regular_cells(service, sheet_name: str) -> dict[str, list]:
+    # "THE List" columns: A spacer, B level, C video, D creator, E length,
+    # F skillset, G FUN, H description, I level id. Only five of them are
+    # consumed here; G/I are skipped, so skillset/description must come from
+    # F/H or the card shows the FUN score and the id in their place.
     levels = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'B')
     videos = SheetAPI.get_hyperlink_column(service, HDS_ID, sheet_name, 'C')
     creators = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'D')
     lengths = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'E')
-    skillsets = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'G')
-    descriptions = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'I')
+    skillsets = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'F')
+    descriptions = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'H')
 
     return {
         'levels': levels,
@@ -77,7 +80,6 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
 
     level_objs = []
     last_tier = None
-    last_tier_label = None
 
     for i in range(len(levels)):
         lvl = levels[i] if i < len(levels) else ''
@@ -91,18 +93,16 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
         if not lvl:
             break
         if lvl.startswith('↓'):
-            last_tier_label, last_tier = split_tier_header(lvl[2:-2])
+            last_tier = lvl[2:-2].strip()
             continue
         if lvl in {"Demoted", "Promoted"}:
-            # A synthetic section, not a sheet label, so both name and label
-            # are "Legacy" and nothing gets appended on the card.
-            last_tier_label = last_tier = "Legacy"
+            last_tier = "Legacy"
             continue
 
         if not last_tier or last_tier == "Plending":
             continue # 干什么。。'。
         if last_tier == "Plegacy":
-            last_tier_label = last_tier = "Legacy"
+            last_tier = "Legacy"
 
         name = FRUITY_LEVELS.get(lvl, lvl).strip()
         creator_clean = FRUITY_CREATORS.get(creator, creator)
@@ -117,7 +117,6 @@ def build_level_list(columns: dict[str, list]) -> list[dict[str, Any]]:
         level_objs.append({
             'sheetIndex': i,
             'tier': last_tier,
-            'tier_label': last_tier_label,
             'name': name,
             'creator': creator_clean,
             'length': length,

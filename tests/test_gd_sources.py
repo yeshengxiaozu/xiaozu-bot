@@ -1250,21 +1250,6 @@ class TestNlwModels:
             assert level.tier == "Fuck"
             assert level.skillset == "wave"
 
-    def test_tier_label_keeps_the_sheet_wording(self) -> None:
-        """卡片印原文：带 "Tier" 的表头留后缀，没写的就不补"""
-        for cls, _source in NLW_SOURCES:
-            assert cls(make_nlw_row(tier="Extreme", tier_label="Extreme Tier")).tier_label == (
-                "Extreme Tier"
-            )
-            assert cls(make_nlw_row(tier="Low End Range", tier_label="Low End Range")).tier_label == (
-                "Low End Range"
-            )
-
-    def test_missing_tier_label_falls_back_to_the_plain_tier(self) -> None:
-        """旧缓存没有 tier_label，只能拿去掉后缀的档名顶上，不再补 " Tier" """
-        for cls, _source in NLW_SOURCES:
-            assert cls(make_nlw_row(tier="Beginner")).tier_label == "Beginner"
-
     def test_nlw_and_lw_carry_enjoyment(self) -> None:
         assert NLWlevel(make_nlw_row(enjoyment=62.0)).enjoyment == 62.0
         assert LWlevel(make_nlw_row(enjoyment=None)).enjoyment is None
