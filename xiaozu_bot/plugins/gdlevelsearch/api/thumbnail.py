@@ -31,11 +31,8 @@ def _thumbnail_id_for(level_id: int | None) -> str:
     return str(level_id)
 
 
-async def _fetch_thumbnail(thumbnail_id: str) -> bytes | None:
-    """Fetch a thumbnail with bounded retries and a 404 fast path."""
-    url = f"https://levelthumbs.prevter.me/thumbnail/{thumbnail_id}/medium"
-    headers = {"User-Agent": USER_AGENT, "Accept": "image/webp,image/*;q=0.8"}
-
+async def _fetch_url(url: str, headers: dict[str, str]) -> bytes | None:
+    """Fetch one thumbnail URL with bounded retries and a 404 fast path."""
     try:
         response = await async_request(
             "GET",
@@ -46,21 +43,29 @@ async def _fetch_thumbnail(thumbnail_id: str) -> bytes | None:
             retry_if=lambda resp: resp.status_code == HTTP_OK and not resp.content,
         )
     except Exception as exc:
-        logger.warning(
-            f"[thumbnail] exhausted retries; using placeholder: {thumbnail_id}: {exc}"
-        )
+        logger.warning(f"[thumbnail] exhausted retries: {url}: {exc}")
         return None
 
     if response.status_code == HTTP_NOT_FOUND:
-        logger.info(f"[thumbnail] no thumbnail (404): {thumbnail_id}")
+        logger.info(f"[thumbnail] no thumbnail (404): {url}")
         return None
     if response.status_code == HTTP_OK and response.content:
         return response.content
-    logger.warning(
-        f"[thumbnail] non-retryable HTTP {response.status_code}; "
-        f"using placeholder: {thumbnail_id}"
-    )
+    logger.warning(f"[thumbnail] non-retryable HTTP {response.status_code}: {url}")
     return None
+
+
+async def _fetch_thumbnail(thumbnail_id: str) -> bytes | None:
+    """Fetch a thumbnail, retrying without the /medium suffix on failure."""
+    headers = {"User-Agent": USER_AGENT, "Accept": "image/webp,image/*;q=0.8"}
+    base_url = f"https://levelthumbs.prevter.me/thumbnail/{thumbnail_id}"
+
+    content = await _fetch_url(f"{base_url}/medium", headers)
+    if content is not None:
+        return content
+
+    logger.info(f"[thumbnail] retrying without /medium: {thumbnail_id}")
+    return await _fetch_url(base_url, headers)
 
 async def fetch_thumbnail(level_id: int|str) -> bytes | None:
     return await _fetch_thumbnail(_thumbnail_id_for(int(level_id)))

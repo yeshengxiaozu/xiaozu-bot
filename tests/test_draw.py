@@ -11,7 +11,7 @@ draw.py 是仓库第二大的模块（545 条语句），之前一条测试都�
 - `_thumbnail_id_for`：一张写死的映射表，边界一擦就错；
 - `create_vertical_gradient` / `rounded_image`：像素级契约可以直接读回来验；
 - `_load_font`：缺字体文件时的降级路径（新克隆就是这个状态）；
-- `_fetch_thumbnail`：重试/404 不重试/退避时长，用 stub_httpx 走完整条真实请求路径。
+- `_fetch_thumbnail`：重试/404 不重试/退避时长/去掉 /medium 的兜底，用 stub_httpx 走完整条真实请求路径。
 """
 
 from __future__ import annotations
@@ -419,6 +419,7 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 
 THUMB_URL = "https://levelthumbs.prevter.me/thumbnail/128/medium"
+THUMB_BASE_URL = "https://levelthumbs.prevter.me/thumbnail/128"
 
 
 class TestFetchThumbnail:
@@ -445,14 +446,27 @@ class TestFetchThumbnail:
         assert req.headers["user-agent"] == USER_AGENT
         assert req.headers["accept"] == "image/webp,image/*;q=0.8"
 
-    async def test_404_returns_none_without_retrying(
+    async def test_404_falls_back_to_url_without_medium(
         self, stub_httpx: Any, no_sleep: list[float]
     ) -> None:
-        """「这关本来就没图」不该白等三倍时间"""
+        """medium 没图时再按原图 URL 试一次，两个 URL 都不重试不退避"""
         stub_httpx.get(THUMB_URL, httpx.Response(404))
+        stub_httpx.get(THUMB_BASE_URL, httpx.Response(404))
 
         assert await _fetch_thumbnail("128") is None
-        assert len(stub_httpx.requests) == 1
+        assert stub_httpx.urls == [THUMB_URL, THUMB_BASE_URL]
+        assert no_sleep == []
+
+    async def test_fallback_without_medium_returns_the_bytes(
+        self, stub_httpx: Any, no_sleep: list[float]
+    ) -> None:
+        """medium 404 但原图存在时，兜底 URL 的图片要能被取回来"""
+        payload = png_bytes()
+        stub_httpx.get(THUMB_URL, httpx.Response(404))
+        stub_httpx.get(THUMB_BASE_URL, httpx.Response(200, content=payload))
+
+        assert await _fetch_thumbnail("128") == payload
+        assert stub_httpx.urls == [THUMB_URL, THUMB_BASE_URL]
         assert no_sleep == []
 
     async def test_recovers_after_an_empty_200_response(
@@ -476,21 +490,28 @@ class TestFetchThumbnail:
     async def test_other_4xx_also_stops_immediately(
         self, stub_httpx: Any, no_sleep: list[float]
     ) -> None:
-        """4xx（403 之类）重试也没意义，直接放弃"""
+        """4xx（403 之类）重试没意义，但仍要走一次无 /medium 的兜底"""
         stub_httpx.get(THUMB_URL, httpx.Response(403, content=b"nope"))
+        stub_httpx.get(THUMB_BASE_URL, httpx.Response(403, content=b"nope"))
 
         assert await _fetch_thumbnail("128") is None
-        assert len(stub_httpx.requests) == 1
+        assert stub_httpx.urls == [THUMB_URL, THUMB_BASE_URL]
 
-    async def test_5xx_is_retried_up_to_three_times(
+    async def test_5xx_is_retried_on_both_urls(
         self, stub_httpx: Any, no_sleep: list[float]
     ) -> None:
-        """5xx 当成暂时性故障，重试满 3 次，退避 0.6 / 1.2（最后一次不再睡）"""
+        """每个 URL 各重试满 3 次，退避 0.6 / 1.2（最后一次不再睡）"""
         stub_httpx.get(THUMB_URL, httpx.Response(503))
+        stub_httpx.get(THUMB_BASE_URL, httpx.Response(503))
 
         assert await _fetch_thumbnail("128") is None
-        assert len(stub_httpx.requests) == 3
-        assert no_sleep == [pytest.approx(0.6), pytest.approx(1.2)]
+        assert stub_httpx.urls == [THUMB_URL] * 3 + [THUMB_BASE_URL] * 3
+        assert no_sleep == [
+            pytest.approx(0.6),
+            pytest.approx(1.2),
+            pytest.approx(0.6),
+            pytest.approx(1.2),
+        ]
 
     async def test_recovers_on_a_later_attempt(
         self, stub_httpx: Any, no_sleep: list[float]
@@ -510,24 +531,36 @@ class TestFetchThumbnail:
     async def test_transport_exceptions_are_retried_too(
         self, stub_httpx: Any, no_sleep: list[float]
     ) -> None:
-        """超时/连接错误走的是 except 分支，同样重试满 3 次"""
+        """超时/连接错误走的是 except 分支，两个 URL 各重试满 3 次"""
         stub_httpx.get(THUMB_URL, httpx.ConnectTimeout("boom"))
+        stub_httpx.get(THUMB_BASE_URL, httpx.ConnectTimeout("boom"))
 
         assert await _fetch_thumbnail("128") is None
-        assert len(stub_httpx.requests) == 3
-        assert no_sleep == [pytest.approx(0.6), pytest.approx(1.2)]
+        assert stub_httpx.urls == [THUMB_URL] * 3 + [THUMB_BASE_URL] * 3
+        assert no_sleep == [
+            pytest.approx(0.6),
+            pytest.approx(1.2),
+            pytest.approx(0.6),
+            pytest.approx(1.2),
+        ]
 
     async def test_200_with_empty_body_is_treated_as_a_failure(
         self, stub_httpx: Any, no_sleep: list[float]
     ) -> None:
         """`resp.status_code == 200 and resp.content` —— 空 body 不算成功，
-        但 200 < 500 所以第一次就放弃了，不重试。
+        两个 URL 都会按 retry_if 打满 3 次。
         """
         stub_httpx.get(THUMB_URL, httpx.Response(200, content=b""))
+        stub_httpx.get(THUMB_BASE_URL, httpx.Response(200, content=b""))
 
         assert await _fetch_thumbnail("128") is None
-        assert len(stub_httpx.requests) == 3
-        assert no_sleep == [pytest.approx(0.6), pytest.approx(1.2)]
+        assert stub_httpx.urls == [THUMB_URL] * 3 + [THUMB_BASE_URL] * 3
+        assert no_sleep == [
+            pytest.approx(0.6),
+            pytest.approx(1.2),
+            pytest.approx(0.6),
+            pytest.approx(1.2),
+        ]
 
 
 # ========================================================================
