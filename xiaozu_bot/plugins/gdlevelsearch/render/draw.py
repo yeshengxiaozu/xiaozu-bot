@@ -606,15 +606,32 @@ def create_level_image(data: LevelRenderData) -> Image.Image:
     return img.convert("RGB")
 
 
-async def _fetch_all_data(level_id: int) -> FetchedData:
-    gdlevel, gddl_info, gddl_tags, thumb_bytes = await asyncio.gather(
-        asyncio.to_thread(get_level_by_id, level_id),
+async def _immediate(value: T) -> T:
+    """Wrap an already-fetched value so it can join an asyncio.gather()."""
+    return value
+
+
+async def _fetch_all_data(level_id: int, gdlevel: GDLevel | None = None) -> FetchedData:
+    """Fetch everything one card needs.
+
+    ``gdlevel`` lets a caller that already holds the official record (the ID
+    search path, *gdfullsearch) skip a second boomlings round trip. That call
+    is the slowest and least reliable part of rendering, so re-fetching it
+    just to draw the same level can double the command's worst-case latency.
+    """
+    gd_source = (
+        _immediate(gdlevel)
+        if gdlevel is not None
+        else asyncio.to_thread(get_level_by_id, level_id)
+    )
+    gdlevel_result, gddl_info, gddl_tags, thumb_bytes = await asyncio.gather(
+        gd_source,
         asyncio.to_thread(Gddl.getlevelbyid, level_id, False),
         asyncio.to_thread(Gddl.getleveltags, level_id),
         fetch_thumbnail(level_id),
         return_exceptions=True,
     )
-    gdlevel = _optional_remote_result(gdlevel, "GD level")
+    gdlevel = _optional_remote_result(gdlevel_result, "GD level")
     gddl_info = _optional_remote_result(gddl_info, "GDDL level")
     gddl_tags = _optional_remote_result(gddl_tags, "GDDL tags")
     thumb_bytes = _optional_remote_result(thumb_bytes, "thumbnail")
@@ -946,8 +963,15 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
     )
 
 
-async def create_image_from_gdlevel(level_id: int) -> Image.Image:
-    fetched = await _fetch_all_data(level_id)
+async def create_image_from_gdlevel(
+    level_id: int, gdlevel: GDLevel | None = None
+) -> Image.Image:
+    """Render one level card.
+
+    Pass ``gdlevel`` when the official record is already at hand; leaving it
+    out makes this function fetch it, which is the expensive default.
+    """
+    fetched = await _fetch_all_data(level_id, gdlevel)
     # Rendering is pure CPU work on a 1280x720 canvas (blur, resize, a
     # per-row gradient loop). Running it inline freezes every matcher in the
     # process for hundreds of milliseconds, so hand it to a worker thread.

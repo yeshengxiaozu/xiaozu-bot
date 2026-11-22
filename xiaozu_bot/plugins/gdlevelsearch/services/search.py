@@ -330,9 +330,15 @@ def getlevelinfo(level_id: int) -> GDLevel | None:
     return get_level_by_id(level_id)
 
 
-async def send_result(bot: Bot, event: Event, level_id: int) -> None:
-    """Render a level and send its PNG through the adapter compatibility layer."""
-    image = await create_image_from_gdlevel(level_id)
+async def send_result(
+    bot: Bot, event: Event, level_id: int, gdlevel: GDLevel | None = None
+) -> None:
+    """Render a level and send its PNG through the adapter compatibility layer.
+
+    ``gdlevel`` is forwarded to the renderer so callers that already hold the
+    official record do not pay for a second boomlings request.
+    """
+    image = await create_image_from_gdlevel(level_id, gdlevel)
     buffer = BytesIO()
     # PNG encoding of a full-size card is another few hundred milliseconds of
     # pure CPU; keep it off the event loop too.

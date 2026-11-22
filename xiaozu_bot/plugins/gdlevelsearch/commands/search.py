@@ -84,8 +84,11 @@ async def handle_gdsearch(
             await gdsearch.finish(GD_API_UNAVAILABLE_MESSAGE)
         # 服务不可用时上面已经 finish 了；走到这里说明服务正常但没这个 id。
         if gdlevel is None:
-            await gdsearch.finish("不存在符合这个id的demon关卡")
-        await send_result(bot, event, level_id)
+            await gdsearch.finish(
+                f"没有找到 ID 为 {level_id} 的关卡（可能尚未发布，或搜索结果没有返回它）"
+            )
+        # 官方记录已经拿到，交给出图复用，别再打一次 boomlings
+        await send_result(bot, event, level_id, gdlevel)
         return
 
     # 名称搜索（要打 GDDL，别堵事件循环）

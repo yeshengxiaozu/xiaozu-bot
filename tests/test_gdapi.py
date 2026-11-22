@@ -208,7 +208,19 @@ class TestOfficialSongMap:
         assert gdapi.LENGTH_PLAT == 5
         assert gdapi.GD_PAGE_SIZE == 10
         assert gdapi.GD_TOTAL_CAP == 9999
-        assert gdapi.GD_TIMEOUT == 15
+        assert gdapi.GD_TIMEOUT == 8
+
+    def test_retry_budget_stays_short(self) -> None:
+        """超时和重试次数是绑在一起的一笔预算。
+
+        一次 `*gdsearch <id>` 只该等一次 boomlings 调用；8s x 2 加上退避
+        后仍在 20s 以内。调大任何一个都要重新算这笔账，别让上游抖动
+        变成用户侧的一分钟等待。
+        """
+        assert gdapi.GD_RETRIES == 2
+        assert gdapi.GD_RETRY_POLICY.attempts == gdapi.GD_RETRIES
+        worst = gdapi.GD_TIMEOUT * gdapi.GD_RETRIES + gdapi.GD_RETRY_BACKOFF
+        assert worst < 20
 
 
 # ==========================================================================

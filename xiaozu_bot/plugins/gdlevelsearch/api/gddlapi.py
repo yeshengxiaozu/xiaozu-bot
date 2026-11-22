@@ -24,8 +24,9 @@ apikey = "3244ce47ed4cf932ec348d68cdf72496de68ee48a2846044db906baa28a7cf7d"
 GDDL_PLAT_LENGTH = 6
 # 提交评分一页放几条。网页上是 10 条一页，跟着来。
 GDDL_SUBMISSION_LIMIT = 10
-# gdladder 的请求超时
-GDDL_TIMEOUT = 15
+# gdladder 的请求超时。正常响应远快于此，出图路径上还有别的东西在等，
+# 所以不跟着「宁可等久一点」的思路走。
+GDDL_TIMEOUT = 8
 # 名称搜索跑在 SOURCE_LOOKUP_TIMEOUT 这条公共 deadline 底下，所以它的
 # 「单次超时 × 重试次数」总预算必须**小于**那条 deadline，否则这次调用必然在
 # 收集阶段被整轮丢弃：调用方只看到 gddl 没值，于是无论搜什么都回「GDDL 无法访问」，

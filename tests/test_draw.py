@@ -1169,3 +1169,49 @@ class TestLengthLine:
         data = _fetched(gddl_info=_gddl_with_song(seconds=120))
 
         assert draw._build_render_data(data).id_line.endswith("(2:00)")
+
+
+class TestLevelPassthrough:
+    """调用方已经拿到官方记录时，出图不该再打一次 boomlings。"""
+
+    async def test_supplied_level_skips_the_second_fetch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        level = _gd_with_song(
+            custom_song_id=900,
+            song_info={"name": "Game Song", "artist_name": "Game Artist"},
+        )
+
+        def _boom(_id: int) -> Any:
+            raise AssertionError("调用方给了 gdlevel 就不该再查一次")
+
+        monkeypatch.setattr(draw, "get_level_by_id", _boom)
+        monkeypatch.setattr(draw.Gddl, "getlevelbyid", lambda *_args: None)
+        monkeypatch.setattr(draw.Gddl, "getleveltags", lambda _id: [])
+        monkeypatch.setattr(draw, "fetch_thumbnail", lambda *_args: _none())
+        monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Lists, "search_level", lambda _id: None)
+
+        fetched = await draw._fetch_all_data(123, level)
+
+        assert fetched.gdlevel is level
+        assert draw._build_render_data(fetched).level_line == "Level"
+
+    async def test_without_a_supplied_level_it_still_fetches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        asked: list[int] = []
+        monkeypatch.setattr(draw, "get_level_by_id", asked.append)
+        monkeypatch.setattr(draw.Gddl, "getlevelbyid", lambda *_args: None)
+        monkeypatch.setattr(draw.Gddl, "getleveltags", lambda _id: [])
+        monkeypatch.setattr(draw, "fetch_thumbnail", lambda *_args: _none())
+        monkeypatch.setattr(draw.Aredl, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Nlw, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Platapi, "getlevelbyid", lambda _id: None)
+        monkeypatch.setattr(draw.Lists, "search_level", lambda _id: None)
+
+        await draw._fetch_all_data(123)
+
+        assert asked == [123]

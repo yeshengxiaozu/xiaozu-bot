@@ -1191,6 +1191,28 @@ class TestSendResult:
         assert len(segs) == 1
         assert segs[0].data["file"].startswith("base64://")
 
+    async def test_forwards_an_already_fetched_level_to_the_renderer(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """调用方手里已有官方记录时，出图不该再打一次 boomlings。
+
+        `*gdsearch <id>` 先查一次拿记录，如果出图再查一次，一条命令就是两个
+        最慢请求；上游抖动时用户会等两倍时间，两次结果还可能不是同一关。
+        """
+        event = make_group_event("随便")
+        level = gd_level(name="X")
+        seen: list[tuple[int, Any]] = []
+
+        async def _fake(level_id: int, gdlevel: Any = None) -> Image.Image:
+            seen.append((level_id, gdlevel))
+            return Image.new("RGB", (1, 1), (7, 8, 9))
+
+        monkeypatch.setattr(svc_search, "create_image_from_gdlevel", _fake)
+
+        await gdlevelsearch.send_result(fake_bot, event, level.level_id, level)
+
+        assert seen == [(level.level_id, level)]
+
 
 # ==========================================================================
 # *gdsearch

@@ -315,7 +315,9 @@ async def handle_gdfullsearch(
 
     # 只有一条就别让人再选一次了，和 gdsearch 的行为保持一致
     if len(session.current_levels) == 1:
-        await send_result(bot, event, int(session.current_levels[0].level_id))
+        only = session.current_levels[0]
+        # 这条记录本身就是官方搜索返回的完整数据，直接拿去出图
+        await send_result(bot, event, int(only.level_id), only)
         await gdfullsearch.finish()
 
     fullsearch_sessions[session_id] = session
@@ -354,5 +356,5 @@ async def handle_fullsearch_choice(bot: Bot, event: Event) -> None:
 
     level = levels[index - 1]
     _drop_fullsearch(session_id)
-    await send_result(bot, event, int(level.level_id))
+    await send_result(bot, event, int(level.level_id), level)
     await gdfullsearchselect.finish()

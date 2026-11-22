@@ -6,7 +6,7 @@ from urllib.parse import unquote
 import httpx
 from nonebot import logger
 
-from ..constants import HTTP_RETRY_ATTEMPTS, HTTP_RETRY_BACKOFF
+from .http import RetryPolicy
 from .http import request as http_request
 
 DEMON_STARS = 10
@@ -14,9 +14,15 @@ LENGTH_PLAT = 5
 
 # boomlings 是 RobTop 自己的服务器，经常半死不活。
 # 网络请求必须带超时，一个卡住的连接能让调用方等到天荒地老。
-GD_TIMEOUT = 15
-GD_RETRIES = HTTP_RETRY_ATTEMPTS
-GD_RETRY_BACKOFF = HTTP_RETRY_BACKOFF
+# 8s 已经比正常响应（通常 <1s）宽出一个数量级；再长就等于让一条命令
+# 替一次上游抖动买单。配合 GD_RETRY_POLICY 的两次尝试，单次调用最坏
+# 约 16s，而不是原来 15s x 3 = 45s 的量级。
+GD_TIMEOUT = 8
+# 只有两次尝试：这个接口的失败几乎都是「服务器整体不可用」，
+# 第 3 次重试换来的成功率远小于它带来的等待时间。
+GD_RETRIES = 2
+GD_RETRY_BACKOFF = 0.4
+GD_RETRY_POLICY = RetryPolicy(attempts=GD_RETRIES, backoff=GD_RETRY_BACKOFF)
 USER_AGENT = "" #似乎对于这个网站空ua更不容易被拦截
 
 # GD 服务器一页固定给 10 条
@@ -647,6 +653,7 @@ def _search_levels(
             data=data,
             headers=headers,
             timeout=GD_TIMEOUT,
+            policy=GD_RETRY_POLICY,
             allow_retry=True,
         )
     except httpx.HTTPError as e:
@@ -761,6 +768,7 @@ def get_user_info(
             data=data,
             headers=headers,
             timeout=GD_TIMEOUT,
+            policy=GD_RETRY_POLICY,
             allow_retry=True,
         )
     except httpx.HTTPError as e:
@@ -787,6 +795,7 @@ def search_user(
             data=data,
             headers=headers,
             timeout=GD_TIMEOUT,
+            policy=GD_RETRY_POLICY,
             allow_retry=True,
         )
     except httpx.HTTPError as e:
@@ -825,6 +834,7 @@ def get_song_usage(
             data=data,
             headers=headers,
             timeout=GD_TIMEOUT,
+            policy=GD_RETRY_POLICY,
             allow_retry=True,
         )
     except httpx.HTTPError as e:
@@ -879,6 +889,7 @@ def get_song_info(
             data=data,
             headers=headers,
             timeout=GD_TIMEOUT,
+            policy=GD_RETRY_POLICY,
             allow_retry=True,
         )
     except httpx.HTTPError as e:
