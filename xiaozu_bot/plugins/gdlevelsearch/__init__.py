@@ -121,6 +121,7 @@ from .commands.search import (  # noqa: F401
 )
 from .services.search import (  # noqa: F401
     SearchResult,
+    SearchResults,
     _add_search_result,
     _clear_all_sessions,
     get_creator,

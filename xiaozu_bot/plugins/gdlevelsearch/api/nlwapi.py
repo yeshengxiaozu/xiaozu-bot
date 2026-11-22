@@ -195,7 +195,9 @@ class Nlw:
         for level in (*nlwlevels, *idslevels, *lwlevels, *hdslevels):
             if not level or not getattr(level, "name", None):
                 continue
-            if level.name.strip().lower() == normalized:
+            # The spreadsheets are maintained by hand; a name cell that came
+            # through as a number must not raise AttributeError here.
+            if str(level.name).strip().lower() == normalized:
                 levels.append(level)
         return levels
 

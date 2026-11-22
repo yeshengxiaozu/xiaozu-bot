@@ -26,7 +26,7 @@ from PIL import Image
 
 from tests.conftest import DEFAULT_USER_ID, FakeBot, only_text, run_handler, sent_texts
 from xiaozu_bot.plugins import gdlevelsearch
-from xiaozu_bot.plugins.gdlevelsearch import SearchResult, icons
+from xiaozu_bot.plugins.gdlevelsearch import SearchResult, SearchResults, icons
 from xiaozu_bot.plugins.gdlevelsearch.api.gdapi import (
     GDAPIUnavailable,
     GDLevel,
@@ -522,10 +522,10 @@ class TestSearchByName:
         sources(gddl=None, nlw=[], ratedplus=[], plat=None)
         assert gdlevelsearch.search_by_name("Nope") == []
 
-    def test_only_a_total_outage_is_reported_as_none(
+    def test_only_a_total_outage_is_reported_as_unavailable(
         self, sources: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """五个源全都没答上来才返回 None，命令层据此提示数据源不可用"""
+        """五个源全都没答上来时才标记 sources_available=False"""
 
         def _broken(_name: str) -> Any:
             raise RuntimeError("outage")
@@ -537,7 +537,21 @@ class TestSearchByName:
         monkeypatch.setattr(installed.ratedplus, "getlevelbyname", _broken)
         monkeypatch.setattr(svc_search, "search_levels_by_name", _broken)
 
-        assert gdlevelsearch.search_by_name("Nope") is None
+        got = gdlevelsearch.search_by_name("Nope")
+
+        assert got == []
+        assert got.sources_available is False
+
+    def test_an_answered_search_is_available_even_when_empty(
+        self, sources: Any
+    ) -> None:
+        """有源答上来、只是没匹配到 —— 这不算故障。"""
+        sources(gddl=[])
+
+        got = gdlevelsearch.search_by_name("Nope")
+
+        assert got == []
+        assert got.sources_available is True
 
     def test_gddl_exact_match_only(self, sources: Any) -> None:
         """GDDL 是模糊搜索，这里只留名字完全对得上的（去空格 + 忽略大小写）"""
@@ -1240,7 +1254,7 @@ class TestHandleGdsearch:
         """
         seen: list[str] = []
         monkeypatch.setattr(
-            cmd_search, "search_by_name", lambda n: seen.append(n) or []
+            cmd_search, "search_by_name", lambda n: seen.append(n) or SearchResults()
         )
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg=text
@@ -1299,7 +1313,7 @@ class TestHandleGdsearch:
     async def test_no_name_match_says_so(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(cmd_search, "search_by_name", lambda _n: [])
+        monkeypatch.setattr(cmd_search, "search_by_name", lambda _n: SearchResults())
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="Nope"
         )
@@ -1311,7 +1325,10 @@ class TestHandleGdsearch:
         self, fake_bot: FakeBot, make_group_event: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr(cmd_search, "search_by_name", lambda _n: None)
+        monkeypatch.setattr(
+            cmd_search, "search_by_name",
+            lambda _n: SearchResults(sources_available=False),
+        )
 
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="Nope"
@@ -1326,7 +1343,7 @@ class TestHandleGdsearch:
     ) -> None:
         """只有一个结果就不再让人选一次，也不建缓存"""
         monkeypatch.setattr(
-            cmd_search, "search_by_name", lambda _n: [SearchResult(9, "Only")]
+            cmd_search, "search_by_name", lambda _n: SearchResults([SearchResult(9, "Only")])
         )
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="Only"
@@ -1341,11 +1358,11 @@ class TestHandleGdsearch:
         """三条结果一条消息发完，每条查到的东西都得在里面；列表怎么排版不算行为"""
         monkeypatch.setattr(
             cmd_search, "search_by_name",
-            lambda _n: [
+            lambda _n: SearchResults([
                 SearchResult(111, "Full", "Cr", "35.0", "Extreme Demon"),
                 SearchResult(222, "NoCreator", None, "12.5", "Insane Demon"),
                 SearchResult(333, "NoTier", "Cr2", None, "Hard Demon"),
-            ],
+            ]),
         )
         monkeypatch.setattr(
             cmd_search, "get_difficulty", lambda _i: pytest.fail("有 difficulty 就不该再打 gdapi")
@@ -1364,6 +1381,35 @@ class TestHandleGdsearch:
         ):
             assert token in texts[0], token
 
+    async def test_missing_difficulty_and_tier_are_omitted_not_printed_as_none(
+        self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """没有难度就整段不写；tier 只有数值才加 "t" 前缀。
+
+        GDDL 的 tier 是数值（35.0），Plat 的 tier 是档名（"10 - INSANE"）。
+        以前统一拼 "t{...}"，于是 Plat 命中显示成 "t10 - INSANE"；而两边都
+        没有难度时会直接印出 "(None)"。
+        """
+        monkeypatch.setattr(
+            cmd_search, "search_by_name",
+            lambda _n: SearchResults([
+                SearchResult(111, "GddlHit", tier="35.0", difficulty="Extreme Demon"),
+                SearchResult(222, "PlatHit", tier="10 - INSANE"),
+                SearchResult(333, "Bare"),
+            ]),
+        )
+        monkeypatch.setattr(cmd_search, "get_difficulty", lambda _i: None)
+
+        await run_handler(
+            gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="X"
+        )
+
+        text = sent_texts(fake_bot)[0]
+        assert "t35.0" in text
+        assert "t10 - INSANE" not in text
+        assert "10 - INSANE" in text
+        assert "(None)" not in text
+
     async def test_missing_difficulty_falls_back_to_gdapi(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1371,7 +1417,9 @@ class TestHandleGdsearch:
         asked: list[int] = []
         monkeypatch.setattr(
             cmd_search, "search_by_name",
-            lambda _n: [SearchResult(1, "A"), SearchResult(2, "B", difficulty="已知")],
+            lambda _n: SearchResults([
+                SearchResult(1, "A"), SearchResult(2, "B", difficulty="已知"),
+            ]),
         )
         monkeypatch.setattr(
             cmd_search, "get_difficulty",
@@ -1391,7 +1439,9 @@ class TestHandleGdsearch:
         self, fake_bot: FakeBot, make_group_event: Any,
         monkeypatch: pytest.MonkeyPatch, no_timeout_tasks: list[str],
     ) -> None:
-        results = [SearchResult(1, "A", difficulty="d"), SearchResult(2, "B", difficulty="d")]
+        results = SearchResults([
+            SearchResult(1, "A", difficulty="d"), SearchResult(2, "B", difficulty="d"),
+        ])
         monkeypatch.setattr(cmd_search, "search_by_name", lambda _n: results)
 
         event = make_group_event("*gdsearch")

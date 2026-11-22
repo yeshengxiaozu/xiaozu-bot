@@ -63,12 +63,15 @@ async def run(query: str, out: Path, do_reload: bool) -> int:
         print(f"== 按名字查 {query!r}")
         started = time.time()
         search = import_submodule("services.search")
-        results = search.search_by_name(query) or []
+        results = search.search_by_name(query)
         print(f"   命中 {len(results)} 条，用了 {time.time() - started:.1f}s")
         for i, r in enumerate(results, start=1):
             creator = f" by {r.creator}" if r.creator else ""
             tier = f" t{r.tier}" if r.tier else ""
             print(f"   {i}. {r.name}{creator}{tier} (ID: {r.id})")
+        if not results.sources_available:
+            print("! 所有名称数据源都没答上来，检查网络 / data/ 缓存后再试")
+            return 1
         if not results:
             print("! 一条都没查到。data/ 里没缓存的话这是正常的，先跑 run_updater.py")
             return 1

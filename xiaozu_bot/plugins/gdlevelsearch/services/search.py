@@ -1,6 +1,7 @@
 """Shared search helpers for gdsearch, gdrandom, and dailydemon."""
 
 import asyncio
+from collections.abc import Iterable
 from concurrent.futures import (
     CancelledError,
     ThreadPoolExecutor,
@@ -38,7 +39,12 @@ GDAPI_NAME_SEARCH_ENABLED = False
 
 
 def get_creator(level_id: int) -> str | None:
-    """Fetch a creator name from the history API as a last-resort fallback."""
+    """Fetch a creator name from the history API as a last-resort fallback.
+
+    Currently has no caller: name search stopped needing it once the local
+    indexes carried creators. Kept as an exported helper (and covered by
+    tests) so the fallback is available without re-deriving the endpoint.
+    """
     logger.warning("get_creator got called: " + str(level_id))
     try:
         data = http_request(
@@ -72,6 +78,30 @@ class SearchResult:
     difficulty: str | None = None
 
 
+class SearchResults(list):
+    """Name-search results plus whether any source actually answered.
+
+    ``None`` used to mean "every source failed" and ``[]`` meant "sources
+    answered, nothing matched". That distinction lived only in a comment, so a
+    caller returning the wrong empty value silently turned an outage into
+    "no such level". This stays a list (iteration, len, indexing, truthiness
+    all unchanged) and adds ``sources_available`` on top.
+
+    Invariant: ``sources_available`` is False only when the result is empty.
+    """
+
+    __slots__ = ("sources_available",)
+
+    def __init__(
+        self,
+        results: Iterable[SearchResult] = (),
+        *,
+        sources_available: bool = True,
+    ) -> None:
+        super().__init__(results)
+        self.sources_available = sources_available
+
+
 def _coerce_level_id(value: object) -> int | None:
     """Return a usable source ID without letting malformed rows stop search."""
     try:
@@ -79,6 +109,19 @@ def _coerce_level_id(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return level_id if level_id > 0 else None
+
+
+def _text(value: object) -> str:
+    """Coerce a source field to text.
+
+    Upstream JSON fields are typed loosely enough that a name can arrive as
+    null or a number. Calling ``.strip()`` on those raises AttributeError and,
+    because the merge loop is not wrapped in a try, a single odd row used to
+    take down the whole name search instead of just that one result.
+    """
+    if isinstance(value, str):
+        return value
+    return "" if value is None else str(value)
 
 
 def _add_search_result(
@@ -102,7 +145,7 @@ def _add_search_result(
         if not item.difficulty and difficulty:
             item.difficulty = difficulty
         return
-    results[level_id] = SearchResult(level_id, name, creator, tier, difficulty)
+    results[level_id] = SearchResult(level_id, _text(name), creator, tier, difficulty)
 
 
 # Two pools on purpose: a stalled network source must never queue an
@@ -212,7 +255,13 @@ def _gd_difficulty(level: GDLevel) -> str | None:
         return None
 
 
-def search_by_name(name: str) -> list[SearchResult] | None:
+def search_by_name(name: str) -> SearchResults:
+    """Exact-name search across every optional source.
+
+    Always returns ``SearchResults``. ``sources_available`` is False when no
+    provider answered at all (an outage, not a miss), which is the only case
+    the caller should report as "data sources unavailable".
+    """
     normalized = name.strip().lower()
     results: dict[int, SearchResult] = {}
 
@@ -230,14 +279,23 @@ def search_by_name(name: str) -> list[SearchResult] | None:
         source_id = _coerce_level_id(getattr(level, "ID", None))
         if source_id is None:
             continue
-        if getattr(level, "Name", "").strip().lower() == normalized:
+        if _text(getattr(level, "Name", "")).strip().lower() == normalized:
+            # difficulty is "Extreme Demon" / "Extreme Pemon"; without a
+            # difficulty string the bare " Demon" suffix is noise, so leave
+            # the field empty and let the list omit it.
+            gddl_difficulty = _text(getattr(level, "Difficulty", "")).strip()
+            gddl_difficulty = (
+                f"{gddl_difficulty}{' Pemon' if level.is_pemon() else ' Demon'}"
+                if gddl_difficulty
+                else None
+            )
             _add_search_result(
                 results,
                 source_id,
                 level.Name,
                 level.PublisherName,
                 str(round(level.Rating, 2)) if level.Rating else None,
-                level.Difficulty + (" Pemon" if level.is_pemon() else " Demon"),
+                gddl_difficulty,
             )
             logger.info(
                 f"Find a result in GDDL: tier {getattr(level, 'Rating', None) or 'Na'}"
@@ -312,17 +370,16 @@ def search_by_name(name: str) -> list[SearchResult] | None:
         logger.info(f"Find a result in GD server: {difficulty or 'Unknown'}")
 
     if results:
-        return list(results.values())
+        return SearchResults(results.values())
 
-    # Nothing matched. Returning None makes the command blame GDDL, so it may
-    # only mean "no source could answer at all". A healthy search that simply
-    # found nothing must report an empty list, otherwise every typo looks like
-    # an outage - and GDDL was the usual suspect simply because it is the
-    # slowest source and the first to miss the shared deadline.
+    # Nothing matched. A healthy search that simply found nothing must report
+    # an empty result set, otherwise every typo looks like an outage - and
+    # GDDL was the usual suspect simply because it is the slowest source and
+    # the first to miss the shared deadline.
     if any(value is not None for value in source_values.values()):
-        return []
+        return SearchResults()
     logger.warning(f"Every name lookup source was unavailable for {name!r}")
-    return None
+    return SearchResults(sources_available=False)
 
 
 def getlevelinfo(level_id: int) -> GDLevel | None:

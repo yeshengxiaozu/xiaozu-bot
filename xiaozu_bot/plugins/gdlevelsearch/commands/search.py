@@ -25,13 +25,22 @@ gdsearch = on_command("gdsearch")
 search_cache = {}
 timeout_tasks = {}
 GD_API_UNAVAILABLE_MESSAGE = "GD 关卡服务器暂时无法访问，请稍后重试"
-# 只有当**所有**数据源都没答上来时才走这条（search_by_name 返回 None）。
+# 只有当**所有**数据源都没答上来时才走这条（`results.sources_available` 为假）。
 # 之前只要 GDDL 一个源没答上来就报「GDDL 无法访问」，于是打错字、搜了个
 # 不存在的关卡也会甩锅给 GDDL。
 SOURCES_UNAVAILABLE_MESSAGE = "关卡数据源暂时无法访问，请稍后重试"
 # 少于这个长度的纯数字串当关卡名搜，不当 id。保持在 5（= 原来的 `len > 4`），
 # 因为 4 位 id 确实存在，改小会把它们当成名字；这里只是把魔数写明。
 MIN_ID_LENGTH = 5
+
+
+def _is_tier_number(tier: str) -> bool:
+    """True for a GDDL tier value ("35.0"), false for a chart tier name ("10 - INSANE")."""
+    try:
+        float(tier)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def has_cache(event: Event) -> bool:
@@ -93,7 +102,7 @@ async def handle_gdsearch(
 
     # 名称搜索（要打 GDDL，别堵事件循环）
     results = await asyncio.to_thread(search_by_name, name)
-    if results is None:
+    if not results.sources_available:
         await gdsearch.finish(SOURCES_UNAVAILABLE_MESSAGE)
     if not results:
         await gdsearch.finish(f"没有找到名为 '{name}' 的demon关卡")
@@ -113,9 +122,17 @@ async def handle_gdsearch(
     def _render_results() -> str:
         text = f"找到 {len(results)} 个名为 '{name}' 的demon关卡："
         for i, result in enumerate(results, start=1):
-            difficulty_str = f" ({result.difficulty or get_difficulty(result.id)})"
+            # 两个来源都可能没有难度（GDDL 搜索条目不带、名字搜索的 gdapi
+            # 补查又被开关关掉），那就干脆不写这一段，别给用户看 "(None)"。
+            difficulty = result.difficulty or get_difficulty(result.id)
+            difficulty_str = f" ({difficulty})" if difficulty else ""
             creator_str = f" by {result.creator}" if result.creator else ""
-            tier_str = f" t{result.tier}" if result.tier else ""
+            # tier 这个字段在不同来源里语义不同：GDDL 是档位数值（35.0），
+            # Plat 是档名（"10 - INSANE"）。只给纯数值加 "t" 前缀，否则会
+            # 拼出 "t10 - INSANE" 这种谁也看不懂的东西。
+            tier_str = ""
+            if result.tier:
+                tier_str = f" t{result.tier}" if _is_tier_number(result.tier) else f" {result.tier}"
             text += f"\n{i}. {result.name}{creator_str}{difficulty_str}{tier_str} (ID: {result.id})"
         return text + "\n输入序号以选中关卡,输入“结束”以中止搜索"
 
