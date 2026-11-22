@@ -2,10 +2,12 @@
 
 The rank index and its upper bound live in api/aredlapi.py, so the handler
 only has to parse the argument, reject out-of-range input, and hand the level
-id to the shared renderer.
+id to the shared renderer. Two arguments are treated as inclusive bounds and
+collapsed to a random rank before the usual lookup.
 """
 
 import asyncio
+import random
 
 from nonebot import logger, on_command
 from nonebot.internal.adapter import Bot, Event, Message
@@ -14,7 +16,10 @@ from nonebot.params import CommandArg
 from ..api.aredlapi import Aredl
 from ..services.search import send_result
 
-USAGE = "用法：*aredlrank <排名>，比如 *aredlrank 1"
+USAGE = (
+    "用法：*aredlrank <排名> 或 *aredlrank <边界1> <边界2>（顺序不限），"
+    "比如 *aredlrank 1 / *aredlrank 1 10"
+)
 
 
 aredlrank = on_command("aredlrank")
@@ -24,24 +29,35 @@ def resolve_rank(text: str) -> tuple[int | None, str]:
     """Turn the raw argument into a level id.
 
     Returns (level_id, error message); level_id is None when the lookup failed.
+    A single argument is used as-is; two arguments define inclusive bounds
+    for a random rank, regardless of their order.
     """
-    raw = text.strip()
-    if not raw:
+    parts = text.split()
+    if not parts or len(parts) > 2:
         return None, USAGE
 
-    try:
-        position = int(raw)
-    except ValueError:
-        return None, f"排名要是个整数，你写的是「{raw}」\n{USAGE}"
+    numbers: list[int] = []
+    for part in parts:
+        try:
+            numbers.append(int(part))
+        except ValueError:
+            return None, f"排名要是个整数，你写的是「{part}」\n{USAGE}"
+
+    lower, upper = numbers[0], numbers[-1]
+    if lower > upper:
+        lower, upper = upper, lower
 
     max_position = Aredl.getmaxposition()
     if max_position <= 0:
         logger.error("[aredlrank] AREDL 数据为空，无法按排名查询")
         return None, "AREDL 数据还没准备好，等会再试"
 
-    if not 1 <= position <= max_position:
-        return None, f"排名要在 1-{max_position} 之间，你写的是 {position}"
+    if not 1 <= lower <= upper <= max_position:
+        if lower == upper:
+            return None, f"排名要在 1-{max_position} 之间，你写的是 {lower}"
+        return None, f"排名范围要在 1-{max_position} 之间，你写的是 {lower}-{upper}"
 
+    position = lower if len(numbers) == 1 else random.randint(lower, upper)
     level = Aredl.getlevelbyposition(position)
     if level is None:
         # In range but absent from the index: the cached list has a gap.

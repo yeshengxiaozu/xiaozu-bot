@@ -2379,7 +2379,9 @@ class TestHandleDailyDemon:
 # *aredlrank
 # ==========================================================================
 class TestHandleAredlRank:
-    @pytest.mark.parametrize("arg", ["", "abc", "0", "-1", "11", "1 2"])
+    @pytest.mark.parametrize(
+        "arg", ["", "abc", "0", "-1", "11", "1 2 3", "1 abc", "abc 2", "0 5", "1 11"]
+    )
     async def test_bad_arguments_are_rejected(
         self,
         arg: str,
@@ -2387,7 +2389,7 @@ class TestHandleAredlRank:
         make_group_event: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """非数字、越界（0 / 负数 / 超过最大排名）、多个参数都只回一句话。"""
+        """Reject non-numeric, out-of-range, and malformed two-argument input."""
         asked: list[int] = []
         monkeypatch.setattr(cmd_aredlrank.Aredl, "getmaxposition", lambda: 10)
         monkeypatch.setattr(
@@ -2425,13 +2427,19 @@ class TestHandleAredlRank:
         stub_image: list[int],
     ) -> None:
         asked: list[int] = []
+        drawn: list[tuple[int, int]] = []
         monkeypatch.setattr(cmd_aredlrank.Aredl, "getmaxposition", lambda: 10)
+
+        def unexpected_draw(lower: int, upper: int) -> int:
+            drawn.append((lower, upper))
+            return -1
 
         def lookup(position: int) -> SimpleNamespace:
             asked.append(position)
             return SimpleNamespace(level_id=4242)
 
         monkeypatch.setattr(cmd_aredlrank.Aredl, "getlevelbyposition", lookup)
+        monkeypatch.setattr(cmd_aredlrank.random, "randint", unexpected_draw)
 
         await run_handler(
             gdlevelsearch.aredlrank,
@@ -2441,6 +2449,49 @@ class TestHandleAredlRank:
         )
 
         assert asked == [3]
+        assert drawn == []
+        assert stub_image == [4242]
+        assert len(image_segments(fake_bot)) == 1
+
+    @pytest.mark.parametrize(
+        ("arg", "bounds", "drawn_rank"),
+        [("2 8", (2, 8), 6), ("8 2", (2, 8), 6), ("5 5", (5, 5), 5)],
+    )
+    async def test_two_arguments_draw_rank_within_bounds(
+        self,
+        arg: str,
+        bounds: tuple[int, int],
+        drawn_rank: int,
+        fake_bot: FakeBot,
+        make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_image: list[int],
+    ) -> None:
+        """Two arguments define inclusive bounds in either order."""
+        drawn: list[tuple[int, int]] = []
+        asked: list[int] = []
+
+        def draw(lower: int, upper: int) -> int:
+            drawn.append((lower, upper))
+            return drawn_rank
+
+        def lookup(position: int) -> SimpleNamespace:
+            asked.append(position)
+            return SimpleNamespace(level_id=4242)
+
+        monkeypatch.setattr(cmd_aredlrank.Aredl, "getmaxposition", lambda: 10)
+        monkeypatch.setattr(cmd_aredlrank.Aredl, "getlevelbyposition", lookup)
+        monkeypatch.setattr(cmd_aredlrank.random, "randint", draw)
+
+        await run_handler(
+            gdlevelsearch.aredlrank,
+            fake_bot,
+            make_group_event("*aredlrank"),
+            arg=arg,
+        )
+
+        assert drawn == [bounds]
+        assert asked == [drawn_rank]
         assert stub_image == [4242]
         assert len(image_segments(fake_bot)) == 1
 

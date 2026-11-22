@@ -51,7 +51,7 @@ nb run --reload
 | `gdsearch <id/name>` | 查关卡（本地榜单 + GD 官方服务器） |
 | `gdfullsearch <关键词> [-a] [-d 难度] [-u 难度]` | 直连 GD 服务器搜；`-a` 连未评级，`-d` 只搜 demon，`-u` 只搜非 demon |
 | `gdratings <名或id> [-s 排序] [-asc] [-v]` | 看这关在 GDDL 上各人提交的 tier / enjoyment |
-| `aredlrank <排名>` | 直接出 AREDL 上该排名的关卡图 |
+| `aredlrank <排名>` / `aredlrank <边界1> <边界2>` | 直接出 AREDL 上该排名的关卡图；给两个数字则在两者之间随机抽一个排名（顺序不限） |
 | `guess_start` / `guess_giveup` | 猜图小游戏 |
 | `zhua` | 随机抓图 |
 | `jrrp` | 今日人品 |

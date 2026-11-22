@@ -32,6 +32,7 @@ async def handle_gdsearchhelp() -> None:
   -v        只看通关的人
 
 *aredlrank 排名 直接出AREDL上该排名的关卡（1到当前最大排名）
+             给两个数字则按边界随机抽一个排名（含两端，顺序不限）
 
 管理员可用 *gdsearch_manage help 查看手动管理命令帮助
 """  # noqa: N806
