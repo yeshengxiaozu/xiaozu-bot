@@ -1137,14 +1137,15 @@ class TestSearchLevelsResponse:
         assert page.levels[1].song_info is None
         assert page.levels[1].song_name == "Dash"
 
-    def test_unknown_custom_song_shows_stereo_madness(self, stub_requests: Any) -> None:
-        """custom_song_id 在歌曲段里找不到时 song_info 为 None。
+    def test_unknown_custom_song_is_not_mistaken_for_an_official_one(
+        self, stub_requests: Any
+    ) -> None:
+        """custom_song_id 在歌曲段里找不到时，song_info 为 None。
 
-        song_name 会**错误地**显示成 "Stereo Madness"：
-        用自定义歌曲的关卡，字段 12（official_song）真实值就是 0，
-        而 0 在 OFFICIAL_SONG_MAP 里正好是 Stereo Madness，
-        官方歌曲那条分支排在 custom 兜底前面，于是永远先命中。
-        这里钉的是现状，不是期望行为 —— 详见返回值里的 bug 列表。
+        用自定义歌曲的关卡，字段 12（official_song）真实值就是 0，而 0 在
+        OFFICIAL_SONG_MAP 里正好是 Stereo Madness。早先这里会**错误地**
+        显示成 "Stereo Madness"，把每一首查不到信息的新曲都归到官方曲上。
+        现在返回 Unknown，由渲染层继续去问 GDDL。
         """
         stub_requests.post(GD_LEVELS_URL, text=search_response(songs=""))
         page = gdapi.search_levels_page(query="x")
@@ -1152,7 +1153,8 @@ class TestSearchLevelsResponse:
         assert level.custom_song_id == 467339
         assert level.official_song == 0
         assert level.song_info is None
-        assert level.song_name == "Stereo Madness"
+        assert level.song_name == "Unknown"
+        assert level.song_author == "Unknown"
 
     def test_not_loaded_branch_needs_absent_official_song(
         self, stub_requests: Any

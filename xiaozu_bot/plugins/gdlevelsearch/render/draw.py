@@ -728,7 +728,9 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
     if nlw_info and getattr(nlw_info, "length", None):
         length_text = f"({nlw_info.length})"
     elif gddl_info and not gddl_info.is_pemon() and (seconds := getattr(gddl_meta, "seconds", None)) is not None:
-        length_text = f"({int(seconds // 60)}:{int(seconds) % 60})"
+        # Zero-pad the seconds so 65s reads "1:05", matching how lengths are
+        # written everywhere else. "1:5" is easy to misread.
+        length_text = f"({int(seconds // 60)}:{int(seconds) % 60:02d})"
     else:
         length = getattr(gdlevel, "length", None)
         if length is None and gddl_meta is not None:
@@ -798,15 +800,26 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
         song_name = nong_song.get("name", "")
         song_artist = nong_song.get("artist", "")
         song_id = "NONG"
-    elif gdlevel is None and gddl_meta is not None:
-        gddl_song = getattr(gddl_meta, "Song", None)
-        song_name = getattr(gddl_song, "Name", "")
-        song_artist = getattr(gddl_song, "Author", "")
-        song_id = getattr(gddl_song, "ID", "")
     else:
-        song_name = getattr(gdlevel, "song_name", "")
-        song_artist = getattr(gdlevel, "song_author", "")
-        song_id = getattr(gdlevel, "song_id", "")
+        # The in-game record wins over GDDL: it is what the level actually
+        # plays. GDLevel.song_name returns the literal "Unknown" when the
+        # custom song id is missing from the response's song block, so treat
+        # that as "no data" and fall through to GDDL instead of printing it.
+        game_name = getattr(gdlevel, "song_name", "") if gdlevel is not None else ""
+        if game_name and game_name != "Unknown":
+            song_name = game_name
+            song_artist = getattr(gdlevel, "song_author", "")
+            song_id = getattr(gdlevel, "song_id", "")
+        else:
+            gddl_song = getattr(gddl_meta, "Song", None)
+            song_name = getattr(gddl_song, "Name", "") or ""
+            song_artist = getattr(gddl_song, "Author", "") or ""
+            song_id = getattr(gddl_song, "ID", "")
+    # Never let None reach the canvas; the card prints whatever is here.
+    song_name = song_name or "Unknown"
+    song_artist = song_artist or "Unknown"
+    if song_id in (None, ""):
+        song_id = "Unknown"
     song_line1 = f"Song: {song_name}"
     song_line2 = f"Artist: {song_artist}  ID: {song_id}"
 

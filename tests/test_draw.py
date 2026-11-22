@@ -1053,3 +1053,119 @@ class TestAredlRankLine:
 
         assert fetched.aredl_solo_info is None
         assert fetched.aredl_two_player_info is None
+
+
+# ==========================================================================
+# 歌曲行与长度
+#
+# 歌曲优先级：NONG > 游戏内记录 > GDDL。游戏内记录返回字面量 "Unknown" 表示
+# 「这条记录里没有歌曲信息」，那不算有数据，要继续往后找。
+# 秒数转时长要和别处一样补零，1:05 不是 1:5。
+# ==========================================================================
+def _gd_with_song(**attrs: Any) -> GDLevel:
+    level = GDLevel()
+    level.level_id = 123
+    level.level_name = "Level"
+    level.is_demon = False
+    level.stars = 10
+    level.demon_difficulty = 3
+    level.epic = 0
+    level.feature_score = 0
+    level.description = ""
+    level.official_song = 0
+    level.custom_song_id = 0
+    for key, value in attrs.items():
+        setattr(level, key, value)
+    return level
+
+
+def _gddl_with_song(name: str = "GDDL Song", author: str = "GDDL Artist", song_id: int = 456,
+                    seconds: float | None = None, length: int = 4) -> GDDLLevel:
+    return GDDLLevel(
+        {
+            "ID": 123,
+            "Rating": 20.5,
+            "Enjoyment": 7.5,
+            "Deviation": 1.0,
+            "RatingCount": 10,
+            "EnjoymentCount": 11,
+            "SubmissionCount": 12,
+            "TwoPlayerRating": None,
+            "TwoPlayerEnjoyment": None,
+            "TwoPlayerDeviation": None,
+            "DefaultRating": None,
+            "Showcase": None,
+            "Meta": {
+                "ID": 123,
+                "Name": "GDDL Level",
+                "Description": None,
+                "SongID": song_id,
+                "Length": length,
+                "IsTwoPlayer": False,
+                "Difficulty": "Extreme",
+                "Rarity": 0,
+                "PublisherID": None,
+                "UploadedAt": None,
+                "seconds": seconds,
+                "Song": {"ID": song_id, "Name": name, "Author": author},
+            },
+        }
+    )
+
+
+class TestSongLine:
+    def test_the_game_record_wins_over_gddl(self) -> None:
+        data = _fetched(
+            gdlevel=_gd_with_song(
+                custom_song_id=900,
+                song_info={"name": "Game Song", "artist_name": "Game Artist"},
+            ),
+            gddl_info=_gddl_with_song(),
+        )
+
+        rendered = draw._build_render_data(data)
+
+        assert rendered.song_line1 == "Song: Game Song"
+        assert rendered.song_line2 == "Artist: Game Artist  ID: 900"
+
+    def test_an_unknown_game_song_falls_back_to_gddl(self) -> None:
+        """游戏内记录里查不到歌名（"Unknown"）时不该把这四个字印上去。"""
+        data = _fetched(
+            gdlevel=_gd_with_song(custom_song_id=900, song_info=None),
+            gddl_info=_gddl_with_song(),
+        )
+
+        assert draw._build_render_data(data).song_line1 == "Song: GDDL Song"
+
+    def test_nong_still_wins_over_both(self) -> None:
+        data = _fetched(
+            gdlevel=_gd_with_song(
+                custom_song_id=900,
+                song_info={"name": "Game Song", "artist_name": "Game Artist"},
+            ),
+            gddl_info=_gddl_with_song(),
+            nong_song={"name": "NONG Song", "artist": "Someone", "url": "https://x"},
+        )
+
+        rendered = draw._build_render_data(data)
+
+        assert rendered.song_line1 == "Song: NONG Song"
+        assert rendered.song_line2 == "Artist: Someone  ID: NONG"
+
+    def test_no_song_anywhere_prints_unknown_not_none(self) -> None:
+        rendered = draw._build_render_data(_fetched())
+
+        assert rendered.song_line1 == "Song: Unknown"
+        assert rendered.song_line2 == "Artist: Unknown  ID: Unknown"
+
+
+class TestLengthLine:
+    def test_seconds_are_zero_padded(self) -> None:
+        data = _fetched(gddl_info=_gddl_with_song(seconds=65))
+
+        assert draw._build_render_data(data).id_line.endswith("(1:05)")
+
+    def test_exact_minutes_still_pad(self) -> None:
+        data = _fetched(gddl_info=_gddl_with_song(seconds=120))
+
+        assert draw._build_render_data(data).id_line.endswith("(2:00)")

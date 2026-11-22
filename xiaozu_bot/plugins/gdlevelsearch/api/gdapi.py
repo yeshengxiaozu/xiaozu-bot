@@ -195,6 +195,12 @@ class GDLevel:
         # 优先自定义歌曲
         if self.song_info:
             return self.song_info.get("name")
+        # 用了自定义歌曲却拿不到 song_info（歌曲段里没这条）时，字段 12 通常是
+        # 0，而 0 在 OFFICIAL_SONG_MAP 里正好是 Stereo Madness。直接查官方表
+        # 会把每一首查不到信息的新曲都显示成 Stereo Madness，所以这里先返回
+        # Unknown，交给上层去问 GDDL。
+        if self.custom_song_id:
+            return "Unknown"
         # 官方歌曲
         off_id = self.official_song
         # 部分关卡可能 custom_song_id 为 0 但官方歌曲空，需要检查
@@ -209,6 +215,9 @@ class GDLevel:
         # 优先自定义歌曲
         if self.song_info:
             return self.song_info.get("artist_name")
+        # 同 song_name：自定义曲缺信息时不要退到官方表
+        if self.custom_song_id:
+            return "Unknown"
         # 官方歌曲
         off_id = self.official_song
         # 部分关卡可能 custom_song_id 为 0 但官方歌曲空，需要检查
