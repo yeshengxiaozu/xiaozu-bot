@@ -4,13 +4,13 @@ import httpx
 from nonebot import logger
 
 try:
-    from ..constants import HTTP_OK, USER_AGENT
+    from ..constants import HTTP_NOT_FOUND, HTTP_OK, USER_AGENT
     from . import gddl_store
     from .http import GDDL_RETRY_POLICY, RetryPolicy
     from .http import request as http_request
 except ImportError:  # standalone updater script mode
     import gddl_store
-    from constants import HTTP_OK, USER_AGENT
+    from constants import HTTP_NOT_FOUND, HTTP_OK, USER_AGENT
 
     from xiaozu_bot.plugins.gdlevelsearch.api.http import (
         GDDL_RETRY_POLICY,
@@ -74,6 +74,15 @@ def _headers() -> dict[str, str]:
         "Content-Type": "application/json",
         "Authorization": f"Bearer {apikey}",
     }
+
+
+def _body_head(response: httpx.Response, limit: int = 200) -> str:
+    """Return a single-line, length-capped view of a response body for logs."""
+    try:
+        text = " ".join(response.text.split())
+    except Exception:  # decode errors on a binary body
+        return "<unreadable body>"
+    return text[:limit] + ("..." if len(text) > limit else "")
 
 """
 SongDTO{
@@ -336,7 +345,13 @@ class Gddl:
 
     @staticmethod
     def getleveltags(level_id: str | int) -> list[dict[str, Any]]:
-        """Fetch the tags associated with a level from the GDDL API."""
+        """Fetch the tags associated with a level from the GDDL API.
+
+        Unknown tag IDs are dropped instead of raising: GDDL adds tags over
+        time, and TAG_NAMES is a local copy. One unrecognised tag must not
+        turn into "this level has no tags" for the caller, let alone into a
+        failed level lookup.
+        """
         url = f"https://gdladder.com/api/levels/{level_id}/tags"
         headers = _headers()
         try:
@@ -351,13 +366,35 @@ class Gddl:
         except httpx.HTTPError as e:
             logger.error(f"[gddl] 拉 tags 失败 level={level_id}: {e}")
             return []
-        if response.status_code == HTTP_OK:
+        if response.status_code != HTTP_OK:
+            logger.error(f"Error fetching level tags by ID: {level_id}")
+            return []
+        try:
             data = response.json()
-            return [
-                {"Name": TAG_NAMES[int(tag["TagID"])], "Count": tag["ReactCount"]} for tag in data
-            ]
-        logger.error(f"Error fetching level tags by ID: {level_id}")
-        return []
+        except (ValueError, TypeError):
+            logger.error(f"[gddl] tags 响应不是合法 JSON level={level_id}")
+            return []
+        if not isinstance(data, list):
+            logger.error(f"[gddl] tags 响应格式不对 level={level_id}")
+            return []
+        tags: list[dict[str, Any]] = []
+        for tag in data:
+            if not isinstance(tag, dict):
+                continue
+            try:
+                tag_id = int(tag["TagID"])
+                count = tag["ReactCount"]
+            except (KeyError, TypeError, ValueError):
+                logger.warning(f"[gddl] 跳过一条无法解析的 tag level={level_id}: {tag!r}")
+                continue
+            name = TAG_NAMES.get(tag_id)
+            if name is None:
+                logger.info(f"[gddl] 未知 tag ID {tag_id}，跳过（TAG_NAMES 需要更新）")
+                continue
+            if not isinstance(count, int):
+                continue
+            tags.append({"Name": name, "Count": count})
+        return tags
 
     @staticmethod
     def getlevelsbyname(name: str) -> list[GDDLSearchEntry] | None:
@@ -403,6 +440,17 @@ class Gddl:
 
         Snapshot fallback returns GDDLSearchEntry, which is degraded data and
         has no full Meta or Tags information.
+
+        A 200 response whose body is not a LevelDTO is reported with the status
+        code and a body snippet: the old catch-all logged only ``str(error)``,
+        so a KeyError('ID') was indistinguishable from a network failure and
+        the actual payload (an error object, an empty ``{}`` or an edge-injected
+        page) was lost.
+
+        "GDDL does not list this level" is not an error and is logged at info:
+        the endpoint answers 404 for it, and sometimes 200 with an empty body
+        when the ID only exists in GDDL's search index. Those are exactly the
+        cases that used to surface as ``Error fetching level by ID: 'ID'``.
         """
         url = f"https://gdladder.com/api/levels/{level_id}"
         headers = _headers()
@@ -415,19 +463,71 @@ class Gddl:
                 policy=GDDL_RETRY_POLICY,
                 allow_retry=True,
             )
-            if response.status_code != HTTP_OK:
+        except httpx.HTTPError as e:
+            logger.error(f"[gddl] 拉取关卡失败 level={level_id}: {e}")
+        else:
+            if response.status_code == HTTP_NOT_FOUND:
+                # Unrated levels and levels GDDL has not ingested yet land here
+                # on every render; that is normal, not a failure.
+                logger.info(f"[gddl] GDDL 未收录 level={level_id}（404），跳过")
+            elif response.status_code != HTTP_OK:
                 logger.warning(
                     f"[gddl] level-by-ID endpoint returned {response.status_code} "
                     f"level={level_id}"
                 )
             else:
-                data = response.json()
-                # with_tags=False avoids a second round trip; callers that want
-                # concurrency can fetch tags separately.
-                tags = Gddl.getleveltags(level_id) if with_tags else None
-                return GDDLLevel(data, tags)
-        except (httpx.HTTPError, ValueError, KeyError, TypeError) as e:
-            logger.error(f"Error fetching level by ID: {e}")
+                try:
+                    body_text = response.text
+                except Exception:  # undecodable body
+                    body_text = ""
+                if not body_text.strip():
+                    # 200 with an empty body means the same thing as 404 for
+                    # this endpoint: no level record behind that ID.
+                    logger.info(
+                        f"[gddl] GDDL 未收录 level={level_id}（200 空响应体），跳过"
+                    )
+                else:
+                    try:
+                        data = response.json()
+                    except (ValueError, TypeError):
+                        logger.warning(
+                            f"[gddl] level 响应不是合法 JSON level={level_id} "
+                            f"content-type={response.headers.get('content-type', '?')} "
+                            f"body={_body_head(response)}"
+                        )
+                    else:
+                        if not data or isinstance(data, str):
+                            # Empty payload, or a bare string such as
+                            # "Level not found": no record for this ID. This is
+                            # the shape the old KeyError('ID') came from.
+                            logger.info(
+                                f"[gddl] GDDL 未收录 level={level_id}"
+                                f"（200 空主体/纯文本 {_body_head(response)!r}），跳过"
+                            )
+                        else:
+                            # with_tags=False avoids a second round trip; callers
+                            # that want concurrency can fetch tags separately.
+                            # A tag failure must not discard the level payload:
+                            # tier and enjoyment are usable without the tags.
+                            tags = None
+                            if with_tags:
+                                try:
+                                    tags = Gddl.getleveltags(level_id)
+                                except Exception:
+                                    logger.exception(
+                                        f"[gddl] tags 获取失败，忽略 level={level_id}"
+                                    )
+                            try:
+                                return GDDLLevel(data, tags)
+                            except (KeyError, TypeError, ValueError) as e:
+                                # Parsed, non-empty, but not a LevelDTO: an error
+                                # object, a schema change or an injected page.
+                                logger.warning(
+                                    f"[gddl] level 负载不是 LevelDTO level={level_id} "
+                                    f"error={e!r} "
+                                    f"content-type={response.headers.get('content-type', '?')} "
+                                    f"body={_body_head(response)}"
+                                )
 
         if fallback:
             cached = gddl_store.get_by_id(level_id)

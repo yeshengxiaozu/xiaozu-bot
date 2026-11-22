@@ -683,6 +683,40 @@ class TestGddlTags:
         stub_requests.get("/tags", _requests.Timeout("t"))
         assert Gddl.getleveltags(500) == []
 
+    def test_unknown_tag_id_is_skipped(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        """GDDL 加了新 tag 而本地 TAG_NAMES 还没跟上时，只丢那一个。
+
+        以前是 TAG_NAMES[int(...)] 直接取，KeyError 会把整关的 GDDL 数据
+        （tier、enjoyment、Meta）一起判死。
+        """
+        stub_requests.get(
+            "/tags",
+            make_response(
+                json_data=[
+                    {"TagID": 1, "ReactCount": 9},
+                    {"TagID": 99, "ReactCount": 40},
+                ]
+            ),
+        )
+        assert Gddl.getleveltags(500) == [{"Name": "Cube", "Count": 9}]
+
+    @pytest.mark.parametrize(
+        "rows",
+        [
+            [{"ReactCount": 3}],
+            [{"TagID": "x", "ReactCount": 3}],
+            ["junk", None],
+            {"not": "a list"},
+        ],
+    )
+    def test_malformed_tag_rows_do_not_raise(
+        self, stub_requests: Any, make_response: Any, rows: Any
+    ) -> None:
+        stub_requests.get("/tags", make_response(json_data=rows))
+        assert Gddl.getleveltags(500) == []
+
     def test_tags_uses_gddl_timeout(
         self, stub_requests: Any, make_response: Any
     ) -> None:
@@ -772,6 +806,24 @@ class TestGddlLevelLookup:
         assert level is not None
         assert level.Tags == []
         assert len(stub_requests.calls) == 1
+
+    def test_tag_failure_does_not_discard_the_level(
+        self, stub_requests: Any, make_response: Any
+    ) -> None:
+        """tags 接口挂了，等级数据照收，只是没有 tag。
+
+        tier / enjoyment 和 tags 是两个请求，前者拿到的数据不该被后者拖下水。
+        """
+        stub_requests.get("/api/levels/123/tags", make_response(500, json_data=[]))
+        stub_requests.get(
+            "/api/levels/123",
+            make_response(json_data=make_level_payload(ID=123)),
+        )
+        level = Gddl.getlevelbyid(123)
+        assert level is not None
+        assert level.ID == 123
+        assert level.Rating == 20.5
+        assert level.Tags == []
 
     def test_getlevelbyid_non_200(
         self,
@@ -874,6 +926,136 @@ class TestGddlLevelLookup:
         )
         assert Gddl.getlevelbyid(123, with_tags=False) is None
         assert len(stub_requests.calls) == 2
+
+    @pytest.mark.parametrize(
+        "payload",
+        [{"detail": "Not Found"}, {"error": "rate limited"}],
+    )
+    def test_a_200_error_object_is_logged_with_the_body(
+        self,
+        empty_gddl_snapshot: None,
+        stub_requests: Any,
+        make_response: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        payload: dict[str, Any],
+    ) -> None:
+        """200 但主体是个错误对象：仍按异常形状记录，并带上响应体。
+
+        以前只记 `str(KeyError)` —— 日志里就三个字符 `'ID'`，看不出是限流
+        还是空档。现在能直接看到 content-type 和截断后的响应体。
+        """
+        messages: list[str] = []
+
+        class _Recorder:
+            def __getattr__(self, _name: str) -> Any:
+                return lambda msg, *a, **k: messages.append(str(msg))
+
+        monkeypatch.setattr(gddlapi, "logger", _Recorder())
+        stub_requests.get("/api/levels/123/tags", make_response(json_data=[]))
+        stub_requests.get("/api/levels/123", make_response(json_data=payload))
+
+        assert Gddl.getlevelbyid(123) is None
+        logged = "\n".join(messages)
+        assert "不是 LevelDTO" in logged
+        assert "error=KeyError('ID')" in logged
+        assert "body=" in logged
+
+    @pytest.mark.parametrize(
+        "response_kwargs",
+        [
+            {"json_data": {}},
+            {"json_data": []},
+            {"text": ""},
+            {"text": '"Level not found"'},
+        ],
+        ids=["empty-object", "empty-list", "empty-body", "json-string"],
+    )
+    def test_a_missing_level_is_logged_at_info(
+        self,
+        empty_gddl_snapshot: None,
+        stub_requests: Any,
+        make_response: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        response_kwargs: dict[str, Any],
+    ) -> None:
+        """GDDL 没有这个 ID 时回 200 空主体：这是"未收录"，不是错误。
+
+        线上那条 `Error fetching level by ID: 'ID'` 大部分就是这一类。
+        """
+        levels: list[tuple[str, str]] = []
+
+        class _Recorder:
+            def __getattr__(self, name: str) -> Any:
+                return lambda msg, *a, **k: levels.append((name, str(msg)))
+
+        monkeypatch.setattr(gddlapi, "logger", _Recorder())
+        stub_requests.get("/api/levels/123", make_response(**response_kwargs))
+
+        assert Gddl.getlevelbyid(123, with_tags=False) is None
+        logged = "\n".join(f"{level}:{msg}" for level, msg in levels)
+        assert "info:" in logged
+        assert "未收录" in logged
+        assert not any(level in {"warning", "error"} for level, _ in levels)
+
+    def test_a_404_is_logged_at_info_not_warning(
+        self,
+        empty_gddl_snapshot: None,
+        stub_requests: Any,
+        make_response: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """未收录的关卡每次出图都会走到 404，属于正常路径。"""
+        levels: list[tuple[str, str]] = []
+
+        class _Recorder:
+            def __getattr__(self, name: str) -> Any:
+                return lambda msg, *a, **k: levels.append((name, str(msg)))
+
+        monkeypatch.setattr(gddlapi, "logger", _Recorder())
+        stub_requests.get("/api/levels/123", make_response(404, json_data={}))
+
+        assert Gddl.getlevelbyid(123, with_tags=False) is None
+        assert [level for level, _ in levels if level in {"warning", "error"}] == []
+        assert any("未收录" in msg for _, msg in levels)
+
+    def test_an_empty_payload_still_uses_the_snapshot_fallback(
+        self,
+        gddl_snapshot: None,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        """负载不可用时 fallback 照旧生效，别因为日志改了就把兜底丢了。"""
+        stub_requests.get("/api/levels/123", make_response(json_data={}))
+
+        level = Gddl.getlevelbyid(123, with_tags=False, fallback=True)
+
+        assert isinstance(level, GDDLSearchEntry)
+        assert level.ID == 123
+
+    def test_an_unparsable_body_is_reported_with_its_head(
+        self,
+        empty_gddl_snapshot: None,
+        stub_requests: Any,
+        make_response: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """边缘节点塞回 HTML 时，日志里要能看出这是网页而不是 JSON。"""
+        messages: list[str] = []
+
+        class _Recorder:
+            def __getattr__(self, name: str) -> Any:
+                return lambda msg, *a, **k: messages.append(str(msg))
+
+        monkeypatch.setattr(gddlapi, "logger", _Recorder())
+        stub_requests.get(
+            "/api/levels/123",
+            make_response(200, text="<html><body>Just a moment...</body></html>"),
+        )
+
+        assert Gddl.getlevelbyid(123, with_tags=False) is None
+        logged = "\n".join(messages)
+        assert "不是合法 JSON" in logged
+        assert "Just a moment" in logged
 
 
 class TestGddlLocalFallback:
