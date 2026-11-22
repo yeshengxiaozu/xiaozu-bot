@@ -1664,6 +1664,53 @@ class TestFetchAredlLevels:
         aredlapi.fetch_aredl_levels()
         assert len(stub_requests.calls) == http_transport.DEFAULT_POLICY.attempts
 
+    def test_one_bad_row_does_not_drop_the_whole_chart(
+        self, stub_requests: Any
+    ) -> None:
+        """上游某个字段改名时，坏行跳过，好行照收。
+
+        以前是列表推导整份解析，一处 KeyError 就让当天的榜单更新静默失败。
+        """
+        bad = aredl_dict_payload(level_id=2)
+        del bad["tags"]
+        stub_requests.get(
+            AREDL_URL,
+            json_data=[aredl_dict_payload(level_id=1), bad, aredl_dict_payload(level_id=3)],
+        )
+
+        assert [lv.level_id for lv in aredlapi.fetch_aredl_levels()] == [1, 3]
+
+    def test_skipped_row_keeps_the_previous_snapshot_entry(
+        self, stub_requests: Any, aredl_workdir: Path
+    ) -> None:
+        """没能解析的那一条，用上一份快照里的同名 ID 顶上，而不是整条消失。"""
+        cache = aredl_workdir / "aredl_levels.json"
+        write_cache(
+            cache,
+            [
+                aredl_dict_payload(level_id=1, name="old-1"),
+                aredl_dict_payload(level_id=2, name="old-2"),
+            ],
+            age_seconds=25 * 3600,
+        )
+        bad = aredl_dict_payload(level_id=2, name="new-2")
+        del bad["tags"]
+        stub_requests.get(
+            AREDL_URL, json_data=[aredl_dict_payload(level_id=1, name="new-1"), bad]
+        )
+
+        levels = aredlapi.get_aredl_levels()
+
+        assert [(lv.level_id, lv.name) for lv in levels] == [
+            (1, "new-1"),
+            (2, "old-2"),
+        ]
+        saved = json.loads(cache.read_text(encoding="utf-8"))
+        assert [(row["level_id"], row["name"]) for row in saved["levels"]] == [
+            (1, "new-1"),
+            (2, "old-2"),
+        ]
+
 
 class TestFetchAreplLevels:
     def test_uses_the_arepl_endpoint(self, stub_requests: Any) -> None:

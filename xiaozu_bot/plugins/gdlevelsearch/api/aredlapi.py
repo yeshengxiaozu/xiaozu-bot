@@ -70,27 +70,75 @@ class AREDLLevel:
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
 
-def _fetch_levels(url: str) -> list[AREDLLevel]:
+def _parse_rows(rows: object) -> tuple[list[AREDLLevel], list[int], int]:
+    """Parse level rows one by one instead of all-or-nothing.
+
+    A single renamed or null field used to make the whole list comprehension
+    raise, which meant the daily refresh silently kept yesterday's chart. Now
+    the bad row is skipped and its level id is reported back so the caller can
+    reuse the previous snapshot entry for that specific level.
+
+    Returns (levels, skipped_ids, malformed_rows).
+    """
+    levels: list[AREDLLevel] = []
+    skipped_ids: list[int] = []
+    malformed = 0
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            malformed += 1
+            continue
+        try:
+            levels.append(AREDLLevel(row))
+        except (KeyError, TypeError, ValueError) as exc:
+            malformed += 1
+            level_id = row.get("level_id")
+            if isinstance(level_id, int) and level_id > 0:
+                skipped_ids.append(level_id)
+            logger.warning(
+                f"[aredlapi] 跳过一条无法解析的榜单记录 level_id={level_id}: {exc}"
+            )
+    return levels, skipped_ids, malformed
+
+
+def _fetch_levels(url: str) -> tuple[list[AREDLLevel], list[int]]:
     try:
         response = http_request(
             "GET", url, headers={"Content-Type": "application/json"}, timeout=AREDL_TIMEOUT
         )
     except httpx.HTTPError as e:
         logger.error(f"[aredlapi] 拉取失败 {url}: {e}")
-        return []
-    if response.status_code == HTTP_OK:
-        levels = response.json()
-        logger.info(f"successfully fetch {len(levels)} levels from {url}")
-        return [AREDLLevel(level) for level in levels]
-    logger.error(f"failed to fetch from {url}")
-    return []
+        return [], []
+    if response.status_code != HTTP_OK:
+        logger.error(f"failed to fetch from {url}")
+        return [], []
+    try:
+        rows = response.json()
+    except (ValueError, TypeError):
+        logger.error(f"[aredlapi] 响应不是合法 JSON: {url}")
+        return [], []
+    levels, skipped_ids, malformed = _parse_rows(rows)
+    if malformed:
+        logger.warning(
+            f"[aredlapi] {url}：{malformed} 条记录解析失败，"
+            f"其中 {len(skipped_ids)} 条有可用的 level_id"
+        )
+    logger.info(f"successfully fetch {len(levels)} levels from {url}")
+    return levels, skipped_ids
 
 
 def fetch_aredl_levels() -> list[AREDLLevel]:
-    return _fetch_levels("https://api.aredl.net/v2/api/aredl/levels")
+    return _fetch_levels("https://api.aredl.net/v2/api/aredl/levels")[0]
 
 
 def fetch_arepl_levels() -> list[AREDLLevel]:
+    return _fetch_levels("https://api.aredl.net/v2/api/arepl/levels")[0]
+
+
+def _fetch_aredl() -> tuple[list[AREDLLevel], list[int]]:
+    return _fetch_levels("https://api.aredl.net/v2/api/aredl/levels")
+
+
+def _fetch_arepl() -> tuple[list[AREDLLevel], list[int]]:
     return _fetch_levels("https://api.aredl.net/v2/api/arepl/levels")
 
 
@@ -101,17 +149,59 @@ def _load_cached_levels(path: Path) -> tuple[list[AREDLLevel], bool]:
     try:
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        levels = [AREDLLevel(level_data) for level_data in data.get("levels", [])]
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+    except (OSError, json.JSONDecodeError):
         logger.exception(f"[aredlapi] 缓存读不了，当过期处理: {path}")
         return [], False
+    if not isinstance(data, dict):
+        logger.warning(f"[aredlapi] 缓存顶层不是对象，当过期处理: {path}")
+        return [], False
+    levels, _skipped, malformed = _parse_rows(data.get("levels", []))
     timestamp = data.get("timestamp")
-    fresh = bool(timestamp and time.time() - timestamp < 24 * 3600)
+    # A cache that lost rows to parsing is not "fresh": refetch rather than
+    # serving a silently shrunken chart from disk.
+    fresh = bool(timestamp and time.time() - timestamp < 24 * 3600) and not malformed
     return levels, fresh
 
 
+def _retain_previous(
+    levels: list[AREDLLevel], skipped_ids: list[int], path: Path
+) -> tuple[list[AREDLLevel], int]:
+    """Reuse the previous snapshot entry for ids whose new row failed to parse.
+
+    Only the affected levels are carried over; everything else comes from this
+    run, so a format change in one field degrades to "that level is one day
+    stale" instead of "the whole chart is one day stale".
+    """
+    if not skipped_ids:
+        return levels, 0
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        rows = data.get("levels") if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return levels, 0
+    if not isinstance(rows, list):
+        return levels, 0
+
+    wanted = set(skipped_ids)
+    merged = list(levels)
+    retained = 0
+    for row in rows:
+        if not isinstance(row, dict) or row.get("level_id") not in wanted:
+            continue
+        try:
+            merged.append(AREDLLevel(row))
+        except (KeyError, TypeError, ValueError):
+            logger.warning(
+                f"[aredlapi] 旧快照里这条也解析不了 level_id={row.get('level_id')}"
+            )
+            continue
+        retained += 1
+    return merged, retained
+
+
 def _load_levels(
-    filename: str, label: str, fetcher: Callable[[], list[AREDLLevel]]
+    filename: str, label: str, fetcher: Callable[[], tuple[list[AREDLLevel], list[int]]]
 ) -> list[AREDLLevel]:
     path = WORK_FOLDER / filename
     cached_levels, fresh = _load_cached_levels(path)
@@ -119,7 +209,13 @@ def _load_levels(
         logger.info(f"successly load {len(cached_levels)} levels from {filename}")
         return cached_levels
     logger.info("cache expired, trying to re-fetch levels...")
-    fetched_levels = fetcher()
+    fetched_levels, skipped_ids = fetcher()
+    if skipped_ids:
+        fetched_levels, retained = _retain_previous(fetched_levels, skipped_ids, path)
+        logger.warning(
+            f"[aredlapi] {label}：{len(skipped_ids)} 条记录本次解析失败，"
+            f"沿用旧快照中的 {retained} 条"
+        )
     if not fetched_levels and cached_levels:
         logger.warning(f"[aredlapi] 刷新失败，继续使用过期的 {label} 缓存")
         return cached_levels
@@ -133,11 +229,11 @@ def _load_levels(
 
 
 def get_aredl_levels() -> list[AREDLLevel]:
-    return _load_levels("aredl_levels.json", "AREDL", fetch_aredl_levels)
+    return _load_levels("aredl_levels.json", "AREDL", _fetch_aredl)
 
 
 def get_arepl_levels() -> list[AREDLLevel]:
-    return _load_levels("arepl_levels.json", "AREPL", fetch_arepl_levels)
+    return _load_levels("arepl_levels.json", "AREPL", _fetch_arepl)
 
 
 aredllevels: list[AREDLLevel] = []
