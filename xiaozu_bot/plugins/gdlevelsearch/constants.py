@@ -37,4 +37,7 @@ SOURCE_LOOKUP_TIMEOUT = 5
 # 的 NLW / plat 都要排队，于是所有源一起错过 deadline、调用方判定"全部不可用"，
 # 表现为无论搜什么都报 GDDL 无响应。分池之后网络源再慢也挤不到索引源。
 SEARCH_INDEX_WORKERS = 4
-SEARCH_NETWORK_WORKERS = 4
+# 一条卡住的 GDDL 请求会一直占着 worker 到它自己超时（约 4s），因为运行中的
+# 线程取消不掉。只有 4 个 worker 时，群里几条并发搜索就能把它们全占满，下一条
+# 搜索随即错过公共 deadline，明明索引都健康却报"全部数据源不可用"。留一倍余量。
+SEARCH_NETWORK_WORKERS = 8
