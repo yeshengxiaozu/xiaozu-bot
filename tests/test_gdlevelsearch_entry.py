@@ -1295,7 +1295,36 @@ class TestHandleGdsearch:
         self, fake_bot: FakeBot, make_group_event: Any,
         monkeypatch: pytest.MonkeyPatch, stub_image: list[int],
     ) -> None:
-        """ID 命中出图，名字那边另有命中就再给一份可选的列表。"""
+        """ID 命中出图，名字那边另有命中就再给一份可选的列表，不加说明文字。"""
+        monkeypatch.setattr(
+            cmd_search, "getlevelinfo", lambda _i: gd_level(name="By ID")
+        )
+        monkeypatch.setattr(
+            cmd_search, "search_by_name",
+            lambda _n: SearchResults([
+                SearchResult(777, "Numeric Name", "Cr"),
+                SearchResult(888, "Other Name", "Cr"),
+            ]),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
+        )
+
+        # 先出 ID 对应的那张图，名字那两条进选择器
+        assert stub_image == [12345]
+        assert len(image_segments(fake_bot)) == 1
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 2
+        assert "777" in texts[1] and "888" in texts[1]
+        # 列表只有自己的表头，不再解释「另外按名称匹配到…」
+        assert "另外" not in texts[1]
+
+    async def test_id_match_plus_a_single_name_hit_renders_both(
+        self, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch, stub_image: list[int],
+    ) -> None:
+        """名字那边只有一条就直接出图，不停在选择器上。"""
         monkeypatch.setattr(
             cmd_search, "getlevelinfo", lambda _i: gd_level(name="By ID")
         )
@@ -1308,14 +1337,8 @@ class TestHandleGdsearch:
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
         )
 
-        # 先出 ID 对应的那张图
-        assert stub_image == [12345]
-        assert len(image_segments(fake_bot)) == 1
-        texts = sent_texts(fake_bot)
-        assert len(texts) == 2
-        # 名字那条只列出来等人选，不擅自再出一张图
-        assert "777" in texts[1]
-        assert "Numeric Name" in texts[1]
+        assert stub_image == [12345, 777]
+        assert gdlevelsearch.search_cache == {}
 
     async def test_name_hit_with_the_same_id_is_not_listed_twice(
         self, fake_bot: FakeBot, make_group_event: Any,
@@ -1360,6 +1383,8 @@ class TestHandleGdsearch:
         assert len(texts) == 1
         assert "12345" in texts[0]
         assert "11" in texts[0] and "22" in texts[0]
+        # 不再额外播报「没有 ID 为 X 的关卡」，直接给名称结果
+        assert "没有" not in texts[0]
         assert image_segments(fake_bot) == []
 
     async def test_unknown_id_says_so(

@@ -97,15 +97,9 @@ async def clear_search_cache(bot: Bot, event: Event, session_key: str) -> None:
         await bot.send(event, "输入超时,请重新再试")
 
 
-def _render_results(
-    results: SearchResults, query: str, header: str | None = None
-) -> str:
-    """Format the selectable list of name-search hits.
-
-    ``header`` replaces the default first line so callers can say where the
-    list came from (ID miss, extra hits next to an ID match, ...).
-    """
-    text = header or f"找到 {len(results)} 个名为 '{query}' 的demon关卡："
+def _render_results(results: SearchResults, query: str) -> str:
+    """Format the selectable list of name-search hits."""
+    text = f"找到 {len(results)} 个名为 '{query}' 的demon关卡："
     for i, result in enumerate(results, start=1):
         # 两个来源都可能没有难度（GDDL 搜索条目不带、名字搜索的 gdapi
         # 补查又被开关关掉）。没有难度就意味着还没评级，显式写 N/A，
@@ -129,19 +123,9 @@ async def _show_name_results(
     session_key: str,
     query: str,
     results: SearchResults,
-    *,
-    header: str | None = None,
-    always_list: bool = False,
 ) -> None:
-    """Show name-search hits: a lone hit is rendered, several become a picker.
-
-    ``always_list`` keeps a single hit in the picker, which is what an ID
-    match wants: the user already got one card and should not get a second
-    one rendered without asking.
-    """
-    if len(results) == 1 and not always_list:
-        if header:
-            await gdsearch.send(header)
+    """Show name-search hits: a lone hit is rendered, several become a picker."""
+    if len(results) == 1:
         await send_result(bot, event, int(results[0].id))
         await gdsearch.finish()
 
@@ -150,9 +134,7 @@ async def _show_name_results(
     timeout_tasks[session_key] = asyncio.create_task(
         clear_search_cache(bot, event, session_key)
     )
-    await gdsearch.finish(
-        await asyncio.to_thread(_render_results, results, query, header)
-    )
+    await gdsearch.finish(await asyncio.to_thread(_render_results, results, query))
 
 
 async def _handle_name_only(
@@ -190,31 +172,13 @@ async def handle_gdsearch(
 
     # 纯数字的输入两种解释都成立，别再按位数猜：ID 和名称同时查，谁有结果
     # 就显示谁，两边都有就都显示。ID 有结果时先出图（那是最精确的答案），
-    # 名称命中随其后作为可选项。
+    # 名称命中随其后，同样直接出图或进选择器，不额外加说明文字。
     id_level, results = await asyncio.gather(
         _lookup_level_by_id(level_id),
         asyncio.to_thread(search_by_name, name),
     )
 
-    if id_level is _ID_LOOKUP_UNAVAILABLE:
-        # ID 那半张答案拿不到，名称那半张还有就照常给，别整个报错。
-        if results:
-            await _show_name_results(
-                bot,
-                event,
-                session_key,
-                name,
-                results,
-                header=(
-                    f"GD 关卡服务器暂时无法访问，没能按 ID {level_id} 查询；"
-                    f"下面是按名称 '{name}' 匹配到的结果："
-                ),
-            )
-        if not results.sources_available:
-            await gdsearch.finish(SOURCES_UNAVAILABLE_MESSAGE)
-        await gdsearch.finish(GD_API_UNAVAILABLE_MESSAGE)
-
-    if id_level is not None:
+    if id_level is not _ID_LOOKUP_UNAVAILABLE and id_level is not None:
         # 同一个关卡可能同时被 ID 和名称命中，列表里去掉重复项。
         extra = SearchResults(
             (r for r in results if int(r.id) != level_id),
@@ -223,38 +187,17 @@ async def handle_gdsearch(
         # 官方记录已经拿到，交给出图复用，别再打一次 boomlings
         await send_result(bot, event, level_id, id_level)
         if extra:
-            await _show_name_results(
-                bot,
-                event,
-                session_key,
-                name,
-                extra,
-                header=f"另外按名称 '{name}' 还匹配到 {len(extra)} 个关卡：",
-                always_list=True,
-            )
+            await _show_name_results(bot, event, session_key, name, extra)
         await gdsearch.finish()
 
-    # 没有这个 ID：名称那边命中什么就展示什么，一个都没有才说没找到。
+    # ID 那半张没命中（或查不了）：名称那边命中什么就展示什么。
     if results:
-        await _show_name_results(
-            bot,
-            event,
-            session_key,
-            name,
-            results,
-            header=(
-                f"没有 ID 为 {level_id} 的关卡，"
-                f"按名称 '{name}' 匹配到 {len(results)} 个关卡："
-            ),
-        )
+        await _show_name_results(bot, event, session_key, name, results)
     if not results.sources_available:
-        await gdsearch.finish(
-            f"没有找到 ID 为 {level_id} 的关卡；"
-            f"{SOURCES_UNAVAILABLE_MESSAGE}"
-        )
-    await gdsearch.finish(
-        f"没有找到 ID 为 {level_id} 的关卡，也没有找到名为 '{name}' 的demon关卡"
-    )
+        await gdsearch.finish(SOURCES_UNAVAILABLE_MESSAGE)
+    if id_level is _ID_LOOKUP_UNAVAILABLE:
+        await gdsearch.finish(GD_API_UNAVAILABLE_MESSAGE)
+    await gdsearch.finish(f"没有找到 ID 为 {level_id} 的关卡")
 
 
 @gdsearchselect.handle()

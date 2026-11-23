@@ -15,7 +15,6 @@ gdsearchhelp = on_command("gdsearchhelp")
 async def handle_gdsearchhelp() -> None:
     HELP_STR = """使用*gdsearch 关卡名或id 以搜索关卡
 纯数字会同时按id和名称查，两边都查到就都显示
-（id结果直接出图，名称结果列成可选列表）
 数据来源包括GDDL NLW等chart AREDL
 以及Plat difficulty chart等plat chart
 可以使用*references (gddl/nlw/plat)查询对应的参考线
