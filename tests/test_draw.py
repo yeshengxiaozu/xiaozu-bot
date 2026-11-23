@@ -227,6 +227,114 @@ class TestWrapTextByWidth:
 
 
 # ==========================================================================
+# _layout_sidebar_text / _sidebar_line_height
+#
+# 侧边栏高度是固定的，长描述以前直接画到面板外面被裁掉。这里的契约是：
+# 默认字号放得下就别动，放不下就一级一级缩小，缩到能完整显示为止。
+# ==========================================================================
+def _sidebar_geometry() -> tuple[int, int]:
+    """(文字可用宽度, 文字可用高度)，和 _draw_sidebar 里算的是同一套"""
+    sb = draw._sidebar_rect()
+    avail_px = max(
+        draw.SIDEBAR_MIN_AVAIL_PX,
+        (sb[2] - draw.SIDEBAR_TEXT_RIGHT_MARGIN)
+        - (sb[0] + draw.SIDEBAR_TEXT_LEFT),
+    )
+    usable_height = (sb[3] - 20) - (sb[1] + 10)
+    return avail_px, usable_height
+
+
+def _body_of_length(length: int) -> str:
+    """造一段指定字符数的普通英文，用来验证按长度触发的那道门槛"""
+    return ("word " * (length // 5 + 2))[:length]
+
+
+class TestLayoutSidebarText:
+    def test_short_text_keeps_the_default_size(self) -> None:
+        avail_px, usable_height = _sidebar_geometry()
+        font, line_height, lines = draw._layout_sidebar_text(
+            "Description: short", avail_px, draw.RES_DIR / "ARIAL.TTF", usable_height
+        )
+
+        assert font.size == draw.FONT_SANS_SMALL
+        assert line_height == draw.SIDEBAR_LINE_HEIGHT
+        assert lines
+
+    def test_long_body_shrinks_and_then_fits(self) -> None:
+        """982 个字符是 Nhelv 的真实体量：默认字号要 880 px 高，面板只有 642"""
+        avail_px, usable_height = _sidebar_geometry()
+        font, line_height, lines = draw._layout_sidebar_text(
+            _body_of_length(982), avail_px, draw.RES_DIR / "ARIAL.TTF", usable_height
+        )
+
+        assert font.size < draw.FONT_SANS_SMALL
+        assert max(0, len(lines) - 1) * line_height <= usable_height
+
+    def test_the_threshold_alone_knocks_one_size_off(self) -> None:
+        """刚好到门槛就开始缩，差一个字符就还是默认字号
+
+        门槛是保守的起手式（600 以下也可能放不下，那种由实际测量兜住），
+        但「到门槛一定不会保持默认字号」这件事要能被钉住。
+        """
+        avail_px, usable_height = _sidebar_geometry()
+        font_path = draw.RES_DIR / "ARIAL.TTF"
+        exactly = _body_of_length(draw.SIDEBAR_OVERFLOW_CHARS)
+        just_under = _body_of_length(draw.SIDEBAR_OVERFLOW_CHARS - 1)
+
+        bigger, _, _ = draw._layout_sidebar_text(
+            just_under, avail_px, font_path, usable_height
+        )
+        smaller, _, _ = draw._layout_sidebar_text(
+            exactly, avail_px, font_path, usable_height
+        )
+
+        assert bigger.size == draw.FONT_SANS_SMALL
+        assert smaller.size < bigger.size
+
+    def test_a_modest_body_that_does_not_fit_still_shrinks(self) -> None:
+        """不到 600 也一样：塞不下就缩，长度门槛不是唯一判据"""
+        avail_px, usable_height = _sidebar_geometry()
+        text = _body_of_length(draw.SIDEBAR_OVERFLOW_CHARS - 1)
+
+        font, line_height, lines = draw._layout_sidebar_text(
+            text, avail_px, draw.RES_DIR / "ARIAL.TTF", usable_height // 4
+        )
+
+        assert font.size < draw.FONT_SANS_SMALL
+        assert max(0, len(lines) - 1) * line_height <= usable_height // 4
+
+    def test_shrinking_stops_at_the_readable_floor(self) -> None:
+        """再长也不会缩到看不清，最小字号下允许溢出"""
+        avail_px, _ = _sidebar_geometry()
+
+        font, _, _ = draw._layout_sidebar_text(
+            _body_of_length(6000), avail_px, draw.RES_DIR / "ARIAL.TTF", 10
+        )
+
+        assert font.size == draw.SIDEBAR_MIN_FONT_SIZE
+
+    def test_empty_body_keeps_the_default_size(self) -> None:
+        avail_px, usable_height = _sidebar_geometry()
+        font, line_height, lines = draw._layout_sidebar_text(
+            "", avail_px, draw.RES_DIR / "ARIAL.TTF", usable_height
+        )
+
+        assert (font.size, line_height, lines) == (
+            draw.FONT_SANS_SMALL,
+            draw.SIDEBAR_LINE_HEIGHT,
+            [],
+        )
+
+    def test_line_height_keeps_the_default_density(self) -> None:
+        assert draw._sidebar_line_height(draw.FONT_SANS_SMALL) == (
+            draw.SIDEBAR_LINE_HEIGHT
+        )
+        # 等比缩放：18 px 的字配 18 px 的行距，观感和默认字号一致
+        assert draw._sidebar_line_height(18) == 18
+        assert draw._sidebar_line_height(11) >= 11
+
+
+# ==========================================================================
 # create_vertical_gradient
 # ==========================================================================
 class TestCreateVerticalGradient:
@@ -821,8 +929,7 @@ class TestDetailTextSections:
         ]
         assert positions == sorted(positions)
 
-    async def test_note_reaches_the_card_through_the_real_pipeline(
-        self, monkeypatch: pytest.MonkeyPatch
+    async def test_note_reaches_the_card_through_the_real_pipeline(        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """_fetch_all_data 真的会把白名单里的 note 塞进 FetchedData"""
         monkeypatch.setattr(draw, "get_level_by_id", lambda _id: None)
@@ -848,6 +955,66 @@ class TestDetailTextSections:
         await create_image_from_gdlevel(123)
 
         assert rendered["detail_text"] == "Note: 白名单里的留言"
+
+
+# ==========================================================================
+# NLW 描述截断
+#
+# NLW 的评测动辄上千字符，整段塞进固定高度的侧边栏等于把别的段落全挤掉。
+# 截到 500 字符（含省略号），且尽量断在词边界上。
+# ==========================================================================
+class TestNlwDescriptionTruncation:
+    def test_short_description_is_untouched(self) -> None:
+        assert draw._truncate_nlw_description("short blurb") == "short blurb"
+
+    def test_exactly_at_the_limit_is_untouched(self) -> None:
+        text = "a" * draw.NLW_DESCRIPTION_MAX_CHARS
+
+        assert draw._truncate_nlw_description(text) == text
+
+    def test_over_the_limit_is_cut_to_the_limit(self) -> None:
+        text = "word " * 400
+
+        cut = draw._truncate_nlw_description(text)
+
+        assert len(cut) <= draw.NLW_DESCRIPTION_MAX_CHARS
+        assert cut.endswith("...")
+        assert text.startswith(cut[:-3])
+
+    def test_cut_lands_on_a_word_boundary(self) -> None:
+        text = "word " * 400
+
+        cut = draw._truncate_nlw_description(text)
+
+        # 省略号前面是一个完整的 word，不是半个词
+        assert cut[:-3].endswith("word")
+        assert not cut[:-3].endswith("word ")
+        assert "  " not in cut
+
+    def test_unbroken_run_still_gets_hard_cut(self) -> None:
+        """整段没有空格时没有词边界可用，只能硬切，但长度仍要守住"""
+        text = "x" * 2000
+
+        cut = draw._truncate_nlw_description(text)
+
+        assert cut == "x" * (draw.NLW_DESCRIPTION_MAX_CHARS - 3) + "..."
+
+    def test_pipeline_truncates_the_nlw_section_only(self) -> None:
+        long_nlw = "word " * 400
+        data = _fetched(
+            gdlevel=_Stub(description="desc"),
+            nlw_info=_Stub(source="NLW", description=long_nlw),
+            aredl_info=_Stub(description="aredl", name="a", position=1),
+        )
+        section = draw._truncate_nlw_description(long_nlw)
+
+        rendered = draw._build_render_data(data)
+
+        assert rendered.detail_text == (
+            f"Description: desc\n\nNLW Description: {section}"
+            "\n\nAREDL Description: aredl"
+        )
+        assert long_nlw not in rendered.detail_text
 
 
 # ==========================================================================

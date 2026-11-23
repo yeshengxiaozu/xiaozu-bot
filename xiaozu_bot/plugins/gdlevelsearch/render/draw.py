@@ -130,6 +130,16 @@ SIDEBAR_TEXT_LEFT = 18
 SIDEBAR_TEXT_RIGHT_MARGIN = 8
 SIDEBAR_MIN_AVAIL_PX = 100
 SIDEBAR_LINE_HEIGHT = 22
+# Hand testing: a sidebar body of roughly 630 characters already clips at the
+# default size, so 600 leaves a little headroom. Anything at or above it starts
+# one size smaller; the real fit check still runs afterwards.
+SIDEBAR_OVERFLOW_CHARS = 600
+# Floor for the auto-shrink. Under this the text stops being readable, so a
+# pathological description is allowed to clip rather than turn to dust.
+SIDEBAR_MIN_FONT_SIZE = 12
+# NLW reviews regularly run past a thousand characters and drown the sidebar.
+# Cap that one section; the other sources stay as they are.
+NLW_DESCRIPTION_MAX_CHARS = 500
 
 ICON_NEGATIVE_MARGIN = 3
 ICON_DEFAULT_H = 40
@@ -480,23 +490,61 @@ def _draw_thumbnail(img: Image.Image, data: LevelRenderData) -> Image.Image:
     return img
 
 
+def _sidebar_line_height(size: int) -> int:
+    """Keep the default text/line ratio while the font shrinks.
+
+    22 px text on a 22 px line is deliberately tight. Scaling both together
+    keeps that density instead of slowly opening gaps as the size drops.
+    """
+    return max(1, round(size * SIDEBAR_LINE_HEIGHT / FONT_SANS_SMALL))
+
+
+def _layout_sidebar_text(
+    text: str, avail_px: int, font_path: Path, usable_height: int
+) -> tuple[ImageFont.FreeTypeFont, int, list[str]]:
+    """Shrink the sidebar font until the wrapped body fits ``usable_height``.
+
+    Returns ``(font, line_height, wrapped_lines)``. Sizes step down 1 px at a
+    time and the first one that fits wins, so the text stays as large as the
+    panel allows. Bodies at or above ``SIDEBAR_OVERFLOW_CHARS`` skip the
+    default size because it is known to overflow -- that only saves a
+    measurement, the fit check below is what actually decides.
+    """
+    start_size = FONT_SANS_SMALL
+    if len(text) >= SIDEBAR_OVERFLOW_CHARS:
+        start_size -= 1
+    font = _load_font(font_path, SIDEBAR_MIN_FONT_SIZE)
+    line_height = _sidebar_line_height(SIDEBAR_MIN_FONT_SIZE)
+    lines: list[str] = []
+    for size in range(start_size, SIDEBAR_MIN_FONT_SIZE - 1, -1):
+        font = _load_font(font_path, size)
+        line_height = _sidebar_line_height(size)
+        lines = wrap_text_by_width(text, avail_px, font)
+        # First line sits at y_start, so only the gaps between lines count.
+        if max(0, len(lines) - 1) * line_height <= usable_height:
+            break
+    return font, line_height, lines
+
+
 def _draw_sidebar(img: Image.Image, data: LevelRenderData) -> Image.Image:
     W, H = CANVAS_W, CANVAS_H  # noqa: N806
-    font_small = _load_font(data.sans_font_path, FONT_SANS_SMALL)
     sb_rect = _sidebar_rect()
     sb_w = sb_rect[2] - sb_rect[0]
     text_left = sb_rect[0] + SIDEBAR_TEXT_LEFT
     text_right = sb_rect[2] - SIDEBAR_TEXT_RIGHT_MARGIN
     avail_px = max(SIDEBAR_MIN_AVAIL_PX, text_right - text_left)
-    wrapped_lines = wrap_text_by_width(data.detail_text, avail_px, font_small)
     max_y = sb_rect[3] - 20
-    y_text = sb_rect[1] + 10
+    y_start = sb_rect[1] + 10
+    font_small, line_height, wrapped_lines = _layout_sidebar_text(
+        data.detail_text, avail_px, data.sans_font_path, max_y - y_start
+    )
+    y_text = y_start
     last_y = y_text
     for _line in wrapped_lines:
         if y_text > max_y:
             break
-        last_y = y_text + SIDEBAR_LINE_HEIGHT
-        y_text += SIDEBAR_LINE_HEIGHT
+        last_y = y_text + line_height
+        y_text += line_height
     white_rect_height = last_y - sb_rect[1]
     bg_y_top = PANEL_MARGIN + white_rect_height + RIGHT_BG_SPACING
     bg_height = H - PANEL_BOTTOM_OFFSET - bg_y_top
@@ -518,12 +566,12 @@ def _draw_sidebar(img: Image.Image, data: LevelRenderData) -> Image.Image:
             logger.error("[gdlevelsearch.draw] ERROR: %s", e)
 
     draw = ImageDraw.Draw(img)
-    y_text = sb_rect[1] + 10
+    y_text = y_start
     for line in wrapped_lines:
         if y_text > max_y:
             break
         draw.text((text_left, y_text), line, fill=(0, 0, 0), font=font_small)
-        y_text += SIDEBAR_LINE_HEIGHT
+        y_text += line_height
 
     sidebar_mask = Image.new("L", (W, H), 0)
     ImageDraw.Draw(sidebar_mask).rounded_rectangle(sb_rect, radius=PANEL_RADIUS, fill=255)
@@ -702,6 +750,23 @@ def _aredl_rank_text(
     # or a caller-built stub; fall back to whatever aredl_dict exposed.
     ranked = solo or primary
     return f"AREDL #{ranked.position}"
+
+
+def _truncate_nlw_description(
+    text: str, limit: int = NLW_DESCRIPTION_MAX_CHARS
+) -> str:
+    """Cap an NLW blurb at ``limit`` characters including the ellipsis.
+
+    Cuts at the last word boundary when there is one so the card does not end
+    mid-word; a single unbroken run of characters still gets a hard cut.
+    """
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 3]
+    space = cut.rfind(" ")
+    if space > 0:
+        cut = cut[:space]
+    return cut.rstrip() + "..."
 
 
 def _tier_label_text(tier: object) -> str:
@@ -933,7 +998,10 @@ def _build_render_data(data: FetchedData) -> LevelRenderData:
         if chart_tags:
             sections.append(f"Difficulty Chart Tags: {', '.join(chart_tags)}")
     if nlw_info and getattr(nlw_info, "description", None):
-        sections.append(f"{nlw_info.source} Description: {nlw_info.description}")
+        sections.append(
+            f"{nlw_info.source} Description: "
+            f"{_truncate_nlw_description(nlw_info.description)}"
+        )
     if aredl_info and getattr(aredl_info, "description", None):
         sections.append(f"AREDL Description: {aredl_info.description}")
     detail_text = "\n\n".join(sections)
