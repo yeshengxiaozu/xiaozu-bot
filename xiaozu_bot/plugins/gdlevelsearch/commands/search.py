@@ -123,9 +123,10 @@ async def handle_gdsearch(
         text = f"找到 {len(results)} 个名为 '{name}' 的demon关卡："
         for i, result in enumerate(results, start=1):
             # 两个来源都可能没有难度（GDDL 搜索条目不带、名字搜索的 gdapi
-            # 补查又被开关关掉），那就干脆不写这一段，别给用户看 "(None)"。
+            # 补查又被开关关掉）。没有难度就意味着还没评级，显式写 N/A，
+            # 不要让用户看见 "(None)"。
             difficulty = result.difficulty or get_difficulty(result.id)
-            difficulty_str = f" ({difficulty})" if difficulty else ""
+            difficulty_str = f" ({difficulty or 'N/A'})"
             creator_str = f" by {result.creator}" if result.creator else ""
             # tier 这个字段在不同来源里语义不同：GDDL 是档位数值（35.0），
             # Plat 是档名（"10 - INSANE"）。只给纯数值加 "t" 前缀，否则会

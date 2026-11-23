@@ -1381,10 +1381,10 @@ class TestHandleGdsearch:
         ):
             assert token in texts[0], token
 
-    async def test_missing_difficulty_and_tier_are_omitted_not_printed_as_none(
+    async def test_missing_difficulty_shows_na_and_tier_prefix_only_for_numbers(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """没有难度就整段不写；tier 只有数值才加 "t" 前缀。
+        """没有难度写 N/A（= 还没评级）；tier 只有数值才加 "t" 前缀。
 
         GDDL 的 tier 是数值（35.0），Plat 的 tier 是档名（"10 - INSANE"）。
         以前统一拼 "t{...}"，于是 Plat 命中显示成 "t10 - INSANE"；而两边都
@@ -1408,6 +1408,8 @@ class TestHandleGdsearch:
         assert "t35.0" in text
         assert "t10 - INSANE" not in text
         assert "10 - INSANE" in text
+        # 两条没有难度的结果各写一个 N/A，且不能再出现 (None)
+        assert text.count("(N/A)") == 2
         assert "(None)" not in text
 
     async def test_missing_difficulty_falls_back_to_gdapi(
