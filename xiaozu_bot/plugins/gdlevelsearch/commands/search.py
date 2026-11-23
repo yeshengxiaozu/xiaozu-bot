@@ -12,6 +12,7 @@ from xiaozu_bot.utils.adapter_compat import get_user_context_id
 
 from ..api.gdapi import GDAPIUnavailable
 from ..services.search import (
+    SearchResults,
     _clear_all_sessions,
     get_difficulty,
     getlevelinfo,
@@ -29,9 +30,11 @@ GD_API_UNAVAILABLE_MESSAGE = "GD 关卡服务器暂时无法访问，请稍后�
 # 之前只要 GDDL 一个源没答上来就报「GDDL 无法访问」，于是打错字、搜了个
 # 不存在的关卡也会甩锅给 GDDL。
 SOURCES_UNAVAILABLE_MESSAGE = "关卡数据源暂时无法访问，请稍后重试"
-# 少于这个长度的纯数字串当关卡名搜，不当 id。保持在 5（= 原来的 `len > 4`），
-# 因为 4 位 id 确实存在，改小会把它们当成名字；这里只是把魔数写明。
-MIN_ID_LENGTH = 5
+
+# Sentinel for "the official server refused the ID lookup". Returning None
+# would be indistinguishable from "no level has this ID", and those two cases
+# need different wording.
+_ID_LOOKUP_UNAVAILABLE = object()
 
 
 def _is_tier_number(tier: str) -> bool:
@@ -41,6 +44,31 @@ def _is_tier_number(tier: str) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+def _parse_level_id(text: str) -> int | None:
+    """ID a pure-digit query could refer to, or None if it is not one.
+
+    Any digit count is accepted: GD has levels with 4-digit IDs and levels
+    whose *name* is a number, so the caller tries both routes instead of
+    guessing from the length. ``isdigit()`` is true for characters ``int()``
+    rejects ("²"), hence the guarded conversion.
+    """
+    if not text.isdigit():
+        return None
+    try:
+        level_id = int(text)
+    except ValueError:
+        return None
+    return level_id if level_id > 0 else None
+
+
+async def _lookup_level_by_id(level_id: int):
+    """Official record for ``level_id``, or the unavailable sentinel."""
+    try:
+        return await asyncio.to_thread(getlevelinfo, level_id)
+    except GDAPIUnavailable:
+        return _ID_LOOKUP_UNAVAILABLE
 
 
 def has_cache(event: Event) -> bool:
@@ -69,6 +97,77 @@ async def clear_search_cache(bot: Bot, event: Event, session_key: str) -> None:
         await bot.send(event, "输入超时,请重新再试")
 
 
+def _render_results(
+    results: SearchResults, query: str, header: str | None = None
+) -> str:
+    """Format the selectable list of name-search hits.
+
+    ``header`` replaces the default first line so callers can say where the
+    list came from (ID miss, extra hits next to an ID match, ...).
+    """
+    text = header or f"找到 {len(results)} 个名为 '{query}' 的demon关卡："
+    for i, result in enumerate(results, start=1):
+        # 两个来源都可能没有难度（GDDL 搜索条目不带、名字搜索的 gdapi
+        # 补查又被开关关掉）。没有难度就意味着还没评级，显式写 N/A，
+        # 不要让用户看见 "(None)"。
+        difficulty = result.difficulty or get_difficulty(result.id)
+        difficulty_str = f" ({difficulty or 'N/A'})"
+        creator_str = f" by {result.creator}" if result.creator else ""
+        # tier 这个字段在不同来源里语义不同：GDDL 是档位数值（35.0），
+        # Plat 是档名（"10 - INSANE"）。只给纯数值加 "t" 前缀，否则会
+        # 拼出 "t10 - INSANE" 这种谁也看不懂的东西。
+        tier_str = ""
+        if result.tier:
+            tier_str = f" t{result.tier}" if _is_tier_number(result.tier) else f" {result.tier}"
+        text += f"\n{i}. {result.name}{creator_str}{difficulty_str}{tier_str} (ID: {result.id})"
+    return text + "\n输入序号以选中关卡,输入“结束”以中止搜索"
+
+
+async def _show_name_results(
+    bot: Bot,
+    event: Event,
+    session_key: str,
+    query: str,
+    results: SearchResults,
+    *,
+    header: str | None = None,
+    always_list: bool = False,
+) -> None:
+    """Show name-search hits: a lone hit is rendered, several become a picker.
+
+    ``always_list`` keeps a single hit in the picker, which is what an ID
+    match wants: the user already got one card and should not get a second
+    one rendered without asking.
+    """
+    if len(results) == 1 and not always_list:
+        if header:
+            await gdsearch.send(header)
+        await send_result(bot, event, int(results[0].id))
+        await gdsearch.finish()
+
+    # 多结果缓存
+    search_cache[session_key] = results
+    timeout_tasks[session_key] = asyncio.create_task(
+        clear_search_cache(bot, event, session_key)
+    )
+    await gdsearch.finish(
+        await asyncio.to_thread(_render_results, results, query, header)
+    )
+
+
+async def _handle_name_only(
+    bot: Bot, event: Event, session_key: str, name: str
+) -> None:
+    """The plain name path, used when the input cannot be an ID."""
+    # 名称搜索（要打 GDDL，别堵事件循环）
+    results = await asyncio.to_thread(search_by_name, name)
+    if not results.sources_available:
+        await gdsearch.finish(SOURCES_UNAVAILABLE_MESSAGE)
+    if not results:
+        await gdsearch.finish(f"没有找到名为 '{name}' 的demon关卡")
+    await _show_name_results(bot, event, session_key, name, results)
+
+
 @gdsearch.handle()
 async def handle_gdsearch(
     bot: Bot, event: Event, arg: Message = CommandArg()
@@ -84,60 +183,78 @@ async def handle_gdsearch(
     # 清除旧缓存/任务，两个选择器的都要清（同时只能活一个）
     _clear_all_sessions(event)
 
-    # ID 搜索
-    if len(name) >= MIN_ID_LENGTH and name.isdigit():
-        level_id = int(name)
-        try:
-            gdlevel = await asyncio.to_thread(getlevelinfo, level_id)
-        except GDAPIUnavailable:
-            await gdsearch.finish(GD_API_UNAVAILABLE_MESSAGE)
-        # 服务不可用时上面已经 finish 了；走到这里说明服务正常但没这个 id。
-        if gdlevel is None:
-            await gdsearch.finish(
-                f"没有找到 ID 为 {level_id} 的关卡（可能尚未发布，或搜索结果没有返回它）"
-            )
-        # 官方记录已经拿到，交给出图复用，别再打一次 boomlings
-        await send_result(bot, event, level_id, gdlevel)
+    level_id = _parse_level_id(name)
+    if level_id is None:
+        await _handle_name_only(bot, event, session_key, name)
         return
 
-    # 名称搜索（要打 GDDL，别堵事件循环）
-    results = await asyncio.to_thread(search_by_name, name)
-    if not results.sources_available:
-        await gdsearch.finish(SOURCES_UNAVAILABLE_MESSAGE)
-    if not results:
-        await gdsearch.finish(f"没有找到名为 '{name}' 的demon关卡")
-
-    if len(results) == 1:
-        await send_result(bot, event, int(results[0].id))
-        await gdsearch.finish()
-
-    # 多结果缓存
-    search_cache[session_key] = results
-    timeout_tasks[session_key] = asyncio.create_task(
-        clear_search_cache(bot, event, session_key)
+    # 纯数字的输入两种解释都成立，别再按位数猜：ID 和名称同时查，谁有结果
+    # 就显示谁，两边都有就都显示。ID 有结果时先出图（那是最精确的答案），
+    # 名称命中随其后作为可选项。
+    id_level, results = await asyncio.gather(
+        _lookup_level_by_id(level_id),
+        asyncio.to_thread(search_by_name, name),
     )
 
-    # 缺 difficulty 的条目要挨个去打 gdapi，条数多的时候是一串同步请求，
-    # 整段丢线程池里做
-    def _render_results() -> str:
-        text = f"找到 {len(results)} 个名为 '{name}' 的demon关卡："
-        for i, result in enumerate(results, start=1):
-            # 两个来源都可能没有难度（GDDL 搜索条目不带、名字搜索的 gdapi
-            # 补查又被开关关掉）。没有难度就意味着还没评级，显式写 N/A，
-            # 不要让用户看见 "(None)"。
-            difficulty = result.difficulty or get_difficulty(result.id)
-            difficulty_str = f" ({difficulty or 'N/A'})"
-            creator_str = f" by {result.creator}" if result.creator else ""
-            # tier 这个字段在不同来源里语义不同：GDDL 是档位数值（35.0），
-            # Plat 是档名（"10 - INSANE"）。只给纯数值加 "t" 前缀，否则会
-            # 拼出 "t10 - INSANE" 这种谁也看不懂的东西。
-            tier_str = ""
-            if result.tier:
-                tier_str = f" t{result.tier}" if _is_tier_number(result.tier) else f" {result.tier}"
-            text += f"\n{i}. {result.name}{creator_str}{difficulty_str}{tier_str} (ID: {result.id})"
-        return text + "\n输入序号以选中关卡,输入“结束”以中止搜索"
+    if id_level is _ID_LOOKUP_UNAVAILABLE:
+        # ID 那半张答案拿不到，名称那半张还有就照常给，别整个报错。
+        if results:
+            await _show_name_results(
+                bot,
+                event,
+                session_key,
+                name,
+                results,
+                header=(
+                    f"GD 关卡服务器暂时无法访问，没能按 ID {level_id} 查询；"
+                    f"下面是按名称 '{name}' 匹配到的结果："
+                ),
+            )
+        if not results.sources_available:
+            await gdsearch.finish(SOURCES_UNAVAILABLE_MESSAGE)
+        await gdsearch.finish(GD_API_UNAVAILABLE_MESSAGE)
 
-    await gdsearch.finish(await asyncio.to_thread(_render_results))
+    if id_level is not None:
+        # 同一个关卡可能同时被 ID 和名称命中，列表里去掉重复项。
+        extra = SearchResults(
+            (r for r in results if int(r.id) != level_id),
+            sources_available=results.sources_available,
+        )
+        # 官方记录已经拿到，交给出图复用，别再打一次 boomlings
+        await send_result(bot, event, level_id, id_level)
+        if extra:
+            await _show_name_results(
+                bot,
+                event,
+                session_key,
+                name,
+                extra,
+                header=f"另外按名称 '{name}' 还匹配到 {len(extra)} 个关卡：",
+                always_list=True,
+            )
+        await gdsearch.finish()
+
+    # 没有这个 ID：名称那边命中什么就展示什么，一个都没有才说没找到。
+    if results:
+        await _show_name_results(
+            bot,
+            event,
+            session_key,
+            name,
+            results,
+            header=(
+                f"没有 ID 为 {level_id} 的关卡，"
+                f"按名称 '{name}' 匹配到 {len(results)} 个关卡："
+            ),
+        )
+    if not results.sources_available:
+        await gdsearch.finish(
+            f"没有找到 ID 为 {level_id} 的关卡；"
+            f"{SOURCES_UNAVAILABLE_MESSAGE}"
+        )
+    await gdsearch.finish(
+        f"没有找到 ID 为 {level_id} 的关卡，也没有找到名为 '{name}' 的demon关卡"
+    )
 
 
 @gdsearchselect.handle()

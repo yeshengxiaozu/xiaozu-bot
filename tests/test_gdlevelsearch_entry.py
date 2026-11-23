@@ -1243,16 +1243,17 @@ class TestHandleGdsearch:
         assert len(sent_texts(fake_bot)) == 1
         assert image_segments(fake_bot) == []
 
-    @pytest.mark.parametrize("text", ["128", "1234", "12a45", "abcde"])
-    async def test_short_or_non_numeric_input_goes_down_the_name_path(
+    @pytest.mark.parametrize("text", ["12a45", "abcde", "²"])
+    async def test_non_numeric_input_only_searches_by_name(
         self, text: str, fake_bot: FakeBot, make_group_event: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """走 id 分支的条件是 `len(name) > 4 and name.isdigit()`
-
-        4 位数字（GD 早期关卡确实有）会被当成名字去搜，这是当前真实行为。
-        """
+        """不是纯数字就只走名字；"²" 这种 isdigit() 为真但 int() 解析不了的
+        Unicode 数字也必须留在名字这一侧。"""
         seen: list[str] = []
+        monkeypatch.setattr(
+            cmd_search, "getlevelinfo", lambda _i: pytest.fail("非纯数字不该查 ID")
+        )
         monkeypatch.setattr(
             cmd_search, "search_by_name", lambda n: seen.append(n) or SearchResults()
         )
@@ -1261,32 +1262,116 @@ class TestHandleGdsearch:
         )
         assert seen == [text]
 
-    async def test_five_digit_input_goes_down_the_id_path(
+    @pytest.mark.parametrize("text", ["1", "128", "1234", "12345"])
+    async def test_pure_digits_query_id_and_name_together(
+        self, text: str, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch, stub_image: list[int],
+    ) -> None:
+        """纯数字不再按位数分流：位数是多少都同时查 ID 和名字。
+
+        4 位数字既可能是早期关卡的 ID，也可能是某关的名字，靠长度猜必错一边。
+        """
+        id_calls: list[int] = []
+        name_calls: list[str] = []
+        monkeypatch.setattr(
+            cmd_search, "getlevelinfo",
+            lambda i: (id_calls.append(i), gd_level(name="By ID"))[1],
+        )
+        monkeypatch.setattr(
+            cmd_search, "search_by_name",
+            lambda n: name_calls.append(n) or SearchResults(),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg=text
+        )
+
+        assert id_calls == [int(text)]
+        assert name_calls == [text]
+        assert stub_image == [int(text)]
+        assert len(image_segments(fake_bot)) == 1
+
+    async def test_id_and_name_hits_are_both_shown(
         self, fake_bot: FakeBot, make_group_event: Any,
         monkeypatch: pytest.MonkeyPatch, stub_image: list[int],
     ) -> None:
-        seen = stub_image
-        monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: gd_level(name="By ID"))
+        """ID 命中出图，名字那边另有命中就再给一份可选的列表。"""
+        monkeypatch.setattr(
+            cmd_search, "getlevelinfo", lambda _i: gd_level(name="By ID")
+        )
         monkeypatch.setattr(
             cmd_search, "search_by_name",
-            lambda n: pytest.fail("id 分支不该再去搜名字"),
+            lambda _n: SearchResults([SearchResult(777, "Numeric Name", "Cr")]),
         )
 
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
         )
-        assert seen == [12345]
+
+        # 先出 ID 对应的那张图
+        assert stub_image == [12345]
         assert len(image_segments(fake_bot)) == 1
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 2
+        # 名字那条只列出来等人选，不擅自再出一张图
+        assert "777" in texts[1]
+        assert "Numeric Name" in texts[1]
+
+    async def test_name_hit_with_the_same_id_is_not_listed_twice(
+        self, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch, stub_image: list[int],
+    ) -> None:
+        """名字搜索把同一个关卡也带回来时，列表里不该出现重复的 ID。"""
+        monkeypatch.setattr(
+            cmd_search, "getlevelinfo", lambda _i: gd_level(name="By ID")
+        )
+        monkeypatch.setattr(
+            cmd_search, "search_by_name",
+            lambda _n: SearchResults([SearchResult(12345, "12345")]),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
+        )
+
+        assert stub_image == [12345]
+        assert len(sent_texts(fake_bot)) == 1
+        assert gdlevelsearch.search_cache == {}
+
+    async def test_unknown_id_still_lists_name_hits(
+        self, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """ID 查不到但名字查到了：照样把名字的结果给出去。"""
+        monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: None)
+        monkeypatch.setattr(
+            cmd_search, "search_by_name",
+            lambda _n: SearchResults([
+                SearchResult(11, "A", difficulty="d"),
+                SearchResult(22, "B", difficulty="d"),
+            ]),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
+        )
+
+        texts = sent_texts(fake_bot)
+        assert len(texts) == 1
+        assert "12345" in texts[0]
+        assert "11" in texts[0] and "22" in texts[0]
+        assert image_segments(fake_bot) == []
 
     async def test_unknown_id_says_so(
         self, fake_bot: FakeBot, make_group_event: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(cmd_search, "getlevelinfo", lambda _i: None)
+        monkeypatch.setattr(cmd_search, "search_by_name", lambda _n: SearchResults())
         await run_handler(
             gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
         )
-        # 行为是「查不到就回一句话，不出图」
+        # 行为是「两边都查不到就回一句话，不出图」
         assert len(sent_texts(fake_bot)) == 1
         assert image_segments(fake_bot) == []
 
@@ -1298,6 +1383,7 @@ class TestHandleGdsearch:
             raise GDAPIUnavailable("offline")
 
         monkeypatch.setattr(cmd_search, "getlevelinfo", _unavailable)
+        monkeypatch.setattr(cmd_search, "search_by_name", lambda _n: SearchResults())
         await run_handler(
             gdlevelsearch.gdsearch,
             fake_bot,
@@ -1309,6 +1395,28 @@ class TestHandleGdsearch:
         assert cmd_search.GD_API_UNAVAILABLE_MESSAGE in sent_texts(fake_bot)
         assert stub_image == []
         assert image_segments(fake_bot) == []
+
+    async def test_gdapi_network_failure_still_shows_name_hits(
+        self, fake_bot: FakeBot, make_group_event: Any,
+        monkeypatch: pytest.MonkeyPatch, stub_image: list[int],
+    ) -> None:
+        """ID 那半张查不了，名字那半张有结果就照常给，不要整条报错。"""
+
+        def _unavailable(_id: int) -> Any:
+            raise GDAPIUnavailable("offline")
+
+        monkeypatch.setattr(cmd_search, "getlevelinfo", _unavailable)
+        monkeypatch.setattr(
+            cmd_search, "search_by_name",
+            lambda _n: SearchResults([SearchResult(9, "Only")]),
+        )
+
+        await run_handler(
+            gdlevelsearch.gdsearch, fake_bot, make_group_event("*gdsearch"), arg="12345"
+        )
+
+        assert stub_image == [9]
+        assert cmd_search.GD_API_UNAVAILABLE_MESSAGE not in sent_texts(fake_bot)
 
     async def test_no_name_match_says_so(
         self, fake_bot: FakeBot, make_group_event: Any, monkeypatch: pytest.MonkeyPatch

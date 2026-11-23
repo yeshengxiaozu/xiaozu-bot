@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _bootstrap import REPO_ROOT, import_submodule
 
-MIN_ID_LEN = 5  # 和 commands/search.py 的 MIN_ID_LENGTH 保持一致
+MIN_ID_LEN = 5  # bot 里已改成「纯数字就同时查 ID 和名字」，脚本只输出一条，仍按位数二选一
 
 
 def _get_level(gdapi, level_id: int):
