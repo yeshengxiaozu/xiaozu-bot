@@ -294,21 +294,28 @@ GDDL 是独立于主流水线的后台任务，快照发布为
 `[UPDATER] daily update job registered`；如果只看到 APScheduler 的日志而没有这条，
 先检查插件加载是否在 startup 阶段报错。
 
-### IDL 数据源（2026-11-14 上游改版）
+### IDL 数据源（2026-11-23 起：Main / Extended 重新分页）
 
-`updater/jobs/idl.py` 抓 insanedemonlist.com。旧页面是 Pages Router，条目长成
-`\"level\":{...}`，Main / Extended 各 75 条。现在 `/extended` 直接 307 回 `/main`，
-`/main` 一页给全部 top 150；数据在 Next.js App Router 的 RSC flight chunk
-（`self.__next_f.push`）里，形如 `{"levels":[{...}]}`，而且整个 chunk 是 JS 字符串，
-里面的 JSON 引号被二次转义成 `\"`。旧正则因此可以抓到 0 条、直接抛
-「预期 150 个条目，实际获取 0 个」。
+`updater/jobs/idl.py` 抓 insanedemonlist.com。这个站反复改 RSC 结构，
+目前已出现过三种布局，解析器按优先级依次尝试、命中即停：
 
-现在的解析顺序：反转义一层 → 定位 `"levels":[` → 括号平衡截出数组 → `json.loads`，
-字段取 `name` / `position` / `publisher`（publisher 即页面上的 creator）。
-`/main` 给不出连续 1..150 时才会再请求 `/extended`，并按 position 去重，
-所以重定向不会把 150 条算成 300 条。条数或排名不连续就抛错，staging 不落盘。
-以后再报「找不到 levels 数组」，先 `curl -L https://insanedemonlist.com/main`
-看 `"levels":` 这个键还在不在、字段名有没有换。
+1. `"level":{...}` —— 当前布局，每个关卡一个对象作为组件 props。
+   `/main` 给 1..75、`/extended` 给 76..150，各 75 条，`/extended` 不再 307 跳回。
+2. `"levels":[...]` —— 2026-11-14 的布局，`/main` 单页给全部 150 条，
+   `/extended` 307 跳回 `/main`。
+3. Pages Router 时代的 `\"level\":{...}` 转义碎片（字段顺序固定）—— 最后兜底的正则。
+
+RSC flight chunk（`self.__next_f.push`）是 JS 字符串，JSON 引号被二次转义成
+`\"`；解析器先反转义一层，再做括号平衡 + `json.loads`。每种格式都要求条目
+含 `name` / `position` / `publisher`，缺字段就换下一种；三种都不行就抛
+带标记命中数的 RuntimeError，绝不落盘。输出结构不变：
+`{"timestamp", "levels":[{position, name, creator}]}`，creator 是 publisher 小写。
+
+`/main` 不完整才补拉 `/extended`，全程按 position 去重，所以重复渲染或跳转
+不会把 150 条翻倍；最后校验恰好 150 条且排名连续 1..150。
+再报错时先按第 1 步那样 `curl -L` 两个页面，对照日志里 `[IDL]` 打出的
+`markers=`（`raw_level` / `decoded_level` / `decoded_levels` 和字段计数），
+判断是换了键名还是换了字段名。
 
 想先小范围试试，用这个 —— 它只发 1 个 API 请求，而且产出的
 `tpl.json` 属于中间文件（不在 `PUBLISHED_FILES` 里），

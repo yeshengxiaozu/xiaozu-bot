@@ -1471,10 +1471,35 @@ class TestPemonlistFetch:
 
 
 # ==========================================================================
-# jobs/idl.py —— 从 insanedemonlist 的 Next.js RSC flight chunk 里解出 levels
+# jobs/idl.py —— 三种历史 RSC 布局都要能解析，并合并 /main + /extended
 # ==========================================================================
-def _idl_text(levels: list[tuple]) -> str:
-    """Build one escaped RSC flight chunk carrying a levels array."""
+def _idl_rsc(decoded: str) -> str:
+    """Wrap decoded RSC text in one JS-string escaping layer."""
+    return decoded.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _idl_object_text(levels: list[tuple], *, drop_publisher: bool = False) -> str:
+    """Current layout: one ``"level":{...}`` component prop per record."""
+    chunks = []
+    for name, position, publisher in levels:
+        obj = {
+            "id": f"id-{position}",
+            "formerRank": None,
+            "name": name,
+            "position": position,
+            # Nested arrays and extra fields mimic the upstream payload.
+            "packs": [{"id": "p", "name": "Pack", "position": 47}],
+        }
+        if not drop_publisher:
+            obj["publisher"] = publisher
+        chunks.append(
+            '["$","$L14",null,{"level":' + json.dumps(obj, ensure_ascii=False) + "}]"
+        )
+    return _idl_rsc('self.__next_f.push([1,"' + ", ".join(chunks) + '"])')
+
+
+def _idl_levels_array_text(levels: list[tuple]) -> str:
+    """2026-11 layout: a single ``"levels":[...]`` array."""
     payload = [
         {
             "id": f"id-{position}",
@@ -1482,32 +1507,52 @@ def _idl_text(levels: list[tuple]) -> str:
             "name": name,
             "position": position,
             "publisher": publisher,
-            # Nested arrays and extra fields mimic the upstream payload.
             "packs": [{"id": "p", "name": "Pack", "position": 47}],
         }
         for name, position, publisher in levels
     ]
-    encoded = json.dumps(payload, ensure_ascii=False)
-    escaped = encoded.replace("\\", "\\\\").replace('"', '\\"')
-    return 'self.__next_f.push([1,"{\\"levels\\":' + escaped + '}\\n"])'
+    decoded = (
+        'self.__next_f.push([1,"{"levels":'
+        + json.dumps(payload, ensure_ascii=False)
+        + '}"])'
+    )
+    return _idl_rsc(decoded)
+
+
+def _idl_legacy_text(levels: list[tuple]) -> str:
+    """Oldest layout: escaped fragments that are not valid JSON objects."""
+    chunks = []
+    for name, position, publisher in levels:
+        chunks.append(
+            '\\"level\\":{\\"id\\":\\"x\\",\\"formerRank\\":null,'
+            f'\\"name\\":\\"{name}\\",'
+            f'\\"position\\":{position},'
+            f'\\"publisher\\":\\"{publisher}\\",'
+            '\\"extra\\":$undefined'
+        )
+    return ", ".join(chunks)
+
+
+def _idl_full() -> list[tuple]:
+    return [(f"Level {i}", i, f"C{i}") for i in range(1, 151)]
 
 
 class TestIdlFetch:
-    def test_抓到_150_条_按排名排序_写进_staging(
+    def test_当前格式_main_75_加_extended_75_合并成_150(
         self,
         data_dirs: SimpleNamespace,
         monkeypatch: pytest.MonkeyPatch,
         stub_requests: Any,
         make_response: Any,
     ) -> None:
-        # /main now carries all 150 entries; a complete page needs no /extended.
-        levels = [(f"Level {i}", i, f"Creator{i}") for i in range(2, 151)]
-        levels.append(("⠀Level 1 ", 1, "Creator1"))
-        levels.reverse()
         monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
         stub_requests.get(
             "insanedemonlist.com/main",
-            make_response(200, text=_idl_text(levels)),
+            make_response(200, text=_idl_object_text(_idl_full()[:75])),
+        )
+        stub_requests.get(
+            "insanedemonlist.com/extended",
+            make_response(200, text=_idl_object_text(_idl_full()[75:])),
         )
 
         idl.fetch()
@@ -1517,15 +1562,19 @@ class TestIdlFetch:
         assert [item["position"] for item in payload["levels"]] == [
             str(i) for i in range(1, 151)
         ]
-        # 名字裁空白、作者转小写
         assert payload["levels"][0] == {
             "position": "1",
             "name": "Level 1",
-            "creator": "creator1",
+            "creator": "c1",
         }
-        assert stub_requests.urls == [idl.MAIN_URL]
+        assert payload["levels"][-1] == {
+            "position": "150",
+            "name": "Level 150",
+            "creator": "c150",
+        }
+        assert stub_requests.urls == [idl.MAIN_URL, idl.EXTENDED_URL]
 
-    def test_main_只有前_75_条时_再抓_extended_合并(
+    def test_旧_levels_数组格式_150_条全在_main_仍兼容(
         self,
         data_dirs: SimpleNamespace,
         monkeypatch: pytest.MonkeyPatch,
@@ -1535,15 +1584,7 @@ class TestIdlFetch:
         monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
         stub_requests.get(
             "insanedemonlist.com/main",
-            make_response(
-                200, text=_idl_text([(f"Level {i}", i, f"C{i}") for i in range(1, 76)])
-            ),
-        )
-        stub_requests.get(
-            "insanedemonlist.com/extended",
-            make_response(
-                200, text=_idl_text([(f"Level {i}", i, f"C{i}") for i in range(76, 151)])
-            ),
+            make_response(200, text=_idl_levels_array_text(_idl_full())),
         )
 
         idl.fetch()
@@ -1552,7 +1593,70 @@ class TestIdlFetch:
         assert [item["position"] for item in payload["levels"]] == [
             str(i) for i in range(1, 151)
         ]
-        assert stub_requests.urls == [idl.MAIN_URL, idl.EXTENDED_URL]
+        assert stub_requests.urls == [idl.MAIN_URL]
+
+    def test_更老_legacy_正则格式仍兼容(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get(
+            "insanedemonlist.com/main",
+            make_response(200, text=_idl_legacy_text(_idl_full())),
+        )
+
+        idl.fetch()
+
+        payload = _read_json(data_dirs.staging / "idl.json")
+        assert [item["position"] for item in payload["levels"]] == [
+            str(i) for i in range(1, 151)
+        ]
+
+    def test_格式命中但缺字段时回退到下一个格式(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        # Both layouts in one page: the object layout lacks publisher and
+        # must be rejected, then the levels array takes over.
+        page = _idl_object_text(_idl_full(), drop_publisher=True)
+        page += _idl_levels_array_text(_idl_full())
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get("insanedemonlist.com/main", make_response(200, text=page))
+
+        idl.fetch()
+
+        payload = _read_json(data_dirs.staging / "idl.json")
+        assert [item["position"] for item in payload["levels"]] == [
+            str(i) for i in range(1, 151)
+        ]
+
+    def test_RSC_重复渲染同一排名时按_position_去重(
+        self,
+        data_dirs: SimpleNamespace,
+        monkeypatch: pytest.MonkeyPatch,
+        stub_requests: Any,
+        make_response: Any,
+    ) -> None:
+        full = _idl_full()
+        monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
+        stub_requests.get(
+            "insanedemonlist.com/main",
+            make_response(200, text=_idl_object_text(full + full)),
+        )
+
+        idl.fetch()
+
+        payload = _read_json(data_dirs.staging / "idl.json")
+        assert [item["position"] for item in payload["levels"]] == [
+            str(i) for i in range(1, 151)
+        ]
+        assert stub_requests.urls == [idl.MAIN_URL]
 
     def test_extended_重定向回_main_时按排名去重(
         self,
@@ -1561,15 +1665,15 @@ class TestIdlFetch:
         stub_requests: Any,
         make_response: Any,
     ) -> None:
-        full = [(f"Level {i}", i, f"C{i}") for i in range(1, 151)]
+        full = _idl_full()
         monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
         stub_requests.get(
             "insanedemonlist.com/main",
-            make_response(200, text=_idl_text(full[:149])),
+            make_response(200, text=_idl_object_text(full[:149])),
         )
         stub_requests.get(
             "insanedemonlist.com/extended",
-            make_response(200, text=_idl_text(full)),
+            make_response(200, text=_idl_object_text(full)),
         )
 
         idl.fetch()
@@ -1590,7 +1694,8 @@ class TestIdlFetch:
         levels.append(('Quote " and \\ slash', 1, "Creator1"))
         monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
         stub_requests.get(
-            "insanedemonlist.com/main", make_response(200, text=_idl_text(levels))
+            "insanedemonlist.com/main",
+            make_response(200, text=_idl_object_text(levels)),
         )
 
         idl.fetch()
@@ -1608,11 +1713,11 @@ class TestIdlFetch:
         monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
         stub_requests.get(
             "insanedemonlist.com/main",
-            make_response(200, text=_idl_text([("Only", 1, "c")])),
+            make_response(200, text=_idl_object_text([("Only", 1, "c")])),
         )
         stub_requests.get(
             "insanedemonlist.com/extended",
-            make_response(200, text=_idl_text([("Only", 1, "c")])),
+            make_response(200, text=_idl_object_text([("Only", 1, "c")])),
         )
 
         with pytest.raises(RuntimeError, match="150"):
@@ -1630,17 +1735,18 @@ class TestIdlFetch:
         broken.append(("Duplicate #1", 1, "c"))
         monkeypatch.setattr(idl, "OUTPUT_PATH", data_dirs.staging / "idl.json")
         stub_requests.get(
-            "insanedemonlist.com/main", make_response(200, text=_idl_text(broken))
+            "insanedemonlist.com/main", make_response(200, text=_idl_object_text(broken))
         )
         stub_requests.get(
-            "insanedemonlist.com/extended", make_response(200, text=_idl_text(broken))
+            "insanedemonlist.com/extended",
+            make_response(200, text=_idl_object_text(broken)),
         )
 
         with pytest.raises(RuntimeError, match="150"):
             idl.fetch()
         assert not (data_dirs.staging / "idl.json").exists()
 
-    def test_页面里没有_levels_数组直接报错_不落盘(
+    def test_所有格式都匹配不到_抛明确错误_不落盘(
         self,
         data_dirs: SimpleNamespace,
         monkeypatch: pytest.MonkeyPatch,
@@ -1653,7 +1759,7 @@ class TestIdlFetch:
             make_response(200, text="<html>no levels here</html>"),
         )
 
-        with pytest.raises(RuntimeError, match="levels"):
+        with pytest.raises(RuntimeError, match="没有任何已知格式"):
             idl.fetch()
         assert not (data_dirs.staging / "idl.json").exists()
         assert stub_requests.urls == [idl.MAIN_URL]
