@@ -2313,8 +2313,8 @@ class TestHdsColumns:
             f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!A:A",
             f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!C:C",
             f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!D:D",
+            f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!E:E",
             f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!F:F",
-            f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!G:G",
         ]
         assert service.get_calls[0]["ranges"] == [
             f"'{constants.HDS_PLATFORMER_LEVELS_NAME}'!B:B"

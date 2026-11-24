@@ -56,8 +56,8 @@ def fetch_platformer_cells(service, sheet_name: str) -> dict[str, list]:
     videos = SheetAPI.get_hyperlink_column(service, HDS_ID, sheet_name, 'B')
     creators = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'C')
     checkpoints = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'D')
-    skillsets = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'F')
-    descriptions = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'G')
+    skillsets = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'E')
+    descriptions = SheetAPI.get_column_values(service, HDS_ID, sheet_name, 'F')
 
     return {
         'levels': levels,
