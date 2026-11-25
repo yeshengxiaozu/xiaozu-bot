@@ -715,7 +715,8 @@ class TestConstants:
     def test_改名表的几个代表项(self) -> None:
         # 不数条数：改名表会随开发增删，规模断言只会让加一行改名的改动
         # 无谓变红；代表项本身错了才是真的抄错表。
-        assert constants.FRUITY_CREATORS_HDS == {}
+        assert constants.FRUITY_CREATORS_HDS["durainhead"] == "durianhead"
+        assert constants.FRUITY_CREATORS_HDS["iIHogartIi"] == "IHogartI"
 
         assert constants.FRUITY_LEVELS_NLW["Graphite Wordle"] == "Graphite World"
         assert constants.FRUITY_LEVELS_NLW["troll levle"] == "troll level"

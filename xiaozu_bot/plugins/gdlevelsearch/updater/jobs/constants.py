@@ -45,12 +45,26 @@ FRUITY_CREATORS_NLW = {
     'The Joker (179114) & more': 'Joker179114 & more',
     'swoli & SportzCarz11': 'swoli',
     'KazaGD, no one else slayerkirb': 'KazaGD',
-    's                                                          a  h     i      e     s                              a     m    g     l': 'shimigels',
+    's                                                          a  h     i      e     s                              a     m    g     l': 'shmigels',
     'handsomeorange "& more"': 'handsomeorange ',
     '"Cinny" & Renn241': 'Renn241',
     '"vaen" & Renn241': 'Renn241',
     'Swib (not SimpleFlips)': 'Swib',
     'Swib (again, not SimpleFlips)': 'Swib',
+    'Blueskiii': 'Blueskii',
+    'At424': 'At242',
+    'Zeroniumm': 'Zeronium',
+    'Zeroniumm & more': 'Zeronium',
+    'Andromidy': 'Andromity',
+    'Emariiii': 'Emariii',
+    ' G I & more': 'T G I',
+    'shimigels': 'shmigels',
+    'th4n1ma & more': 'the4n1ma',
+    'ThePurgatory115': 'ThePurgatory',
+    'iMinAY': 'MinAY',
+    'notGed': 'notged25',
+    'krenogd': 'kreno',
+    'rynoxious & more': 'Rynoxiouss',
     '': '',
 }
 
@@ -70,6 +84,9 @@ FRUITY_LEVELS_HDS = {
 
 FRUITY_CREATORS_HDS = {
     # NO IDEA BUT DONT DELETE
+    'durainhead': 'durianhead',
+    'EnezoGD': 'EnenzoGD',
+    'iIHogartIi': 'IHogartI',
 }
 
 # ------------------------------
@@ -93,6 +110,22 @@ FRUITY_LEVELS_IDS = {
 FRUITY_CREATORS_IDS = {
     'Kapycta9️⃣9️⃣9️⃣': 'Kapycta999',
     'Shocksidan': 'Shocksidian',
+    'Blueskiii and more': 'Blueskii & more',
+    'Blueskiii & more': 'Blueskii & more',
+    'fladdalt': 'fladalt',
+    'Kazenishi & More': 'Kazeshini',
+    'KingEggplant897': 'KingEggplant987',
+    'kosmobold': 'cosmokobold',
+    'Kracko0': 'KrackoO',
+    'llert': 'llertt',
+    'Noreiga': 'Noriega',
+    'ryouu': 'ryoou',
+    'sccyt': 'sscyt',
+    'TOA5T3R': 'T0A5T3R',
+    'NikVer and more': 'nikverr',
+    'Umbraveliathan': 'Umbraleviathan',
+    'lLRELL': 'ILRELL',
+    'sendxx': 'sendoxx',
 }
 
 # ------------------------------
