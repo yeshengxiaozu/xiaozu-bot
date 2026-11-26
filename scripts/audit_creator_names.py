@@ -52,9 +52,12 @@ SHEETS = (
 MORE_SUFFIX = re.compile(r"(?:,?\s*(?:and|&|\+)\s*more)\s*$", re.IGNORECASE)
 SPLIT = re.compile(r"\s*(?:,|&|\+|\band\b)\s*", re.IGNORECASE)
 
-# 已知的、和 GDDL 不一致但确实正确的写法，跳过不报。
-# blueskii：GDDL 自己多写了一个 i，sheet 里两个 i 是对的。
-KNOWN_OK = {"blueskii"}
+# 已知的、和 GDDL 不一致但确实正确的写法，跳过不报。三条都用 Boomlings 按关卡 ID
+# 核对过：sheet（以及 Boomlings）对，GDDL 自己写错了。
+#   blueskii  GDDL 多写一个 i
+#   at424     GDDL 写成 At242
+#   nikver    GDDL 写成 nikverr，Boomlings 是 nikver19
+KNOWN_OK = {"blueskii", "at424", "nikver"}
 
 
 def clean(text: str) -> str:
